@@ -1,0 +1,242 @@
+// Muslim Rentals – Prisma Schema
+// PostgreSQL database schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  name              String
+  passwordHash      String?
+  googleId          String?   @unique
+  avatarUrl         String?
+  phone             String?
+  bio               String?
+  role              UserRole  @default(USER)
+  isVerified        Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  isBanned          Boolean   @default(false)
+  banReason         String?
+  refreshToken      String?
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  listings          Listing[]
+  savedListings     SavedListing[]
+  sentMessages      Message[]        @relation("SentMessages")
+  conversations     ConversationParticipant[]
+  reports           Report[]
+  notifications     Notification[]
+
+  @@index([email])
+  @@index([googleId])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+// ─── Listings ─────────────────────────────────────────────────────────────────
+model Listing {
+  id              String          @id @default(uuid())
+  title           String
+  description     String
+  price           Float
+  currency        String          @default("CAD")
+  bedrooms        Float
+  bathrooms       Int
+  audience        ListingAudience
+  city            String
+  town            String?
+  province        String?
+  neighbourhood   String?
+  address         String?
+  lat             Float
+  lng             Float
+  contactInfo     String
+  isActive        Boolean         @default(true)
+  isFeatured      Boolean         @default(false)
+  viewCount       Int             @default(0)
+  status          ListingStatus   @default(ACTIVE)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  expiresAt       DateTime?
+
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  images          ListingImage[]
+  amenities       ListingAmenity[]
+  savedBy         SavedListing[]
+  conversations   Conversation[]
+  reports         Report[]
+
+  @@index([city])
+  @@index([userId])
+  @@index([status])
+  @@index([lat, lng])
+}
+
+enum ListingAudience {
+  BROTHERS
+  SISTERS
+  COUPLES
+  FAMILIES
+  ALL
+}
+
+enum ListingStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  REMOVED
+}
+
+// ─── Listing Images ───────────────────────────────────────────────────────────
+model ListingImage {
+  id          String   @id @default(uuid())
+  url         String
+  key         String   // S3 key for deletion
+  alt         String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+}
+
+// ─── Amenities ────────────────────────────────────────────────────────────────
+model ListingAmenity {
+  id        String  @id @default(uuid())
+  name      String
+
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, name])
+}
+
+// ─── Saved Listings ───────────────────────────────────────────────────────────
+model SavedListing {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+}
+
+// ─── Conversations ────────────────────────────────────────────────────────────
+model Conversation {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([listingId])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime?
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+}
+
+// ─── Messages ─────────────────────────────────────────────────────────────────
+model Message {
+  id             String       @id @default(uuid())
+  body           String
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+// ─── Cities ───────────────────────────────────────────────────────────────────
+model City {
+  id        String  @id @default(uuid())
+  name      String
+  province  String
+  lat       Float?
+  lng       Float?
+  population Int?
+
+  @@unique([name, province])
+  @@index([name])
+}
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+model Report {
+  id          String       @id @default(uuid())
+  reason      String
+  description String?
+  status      ReportStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  resolvedAt  DateTime?
+  resolution  String?
+
+  reporterId  String
+  reporter    User         @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  listingId   String?
+  listing     Listing?     @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+model Notification {
+  id        String   @id @default(uuid())
+  type      String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

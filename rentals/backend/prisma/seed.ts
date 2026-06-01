@@ -1,0 +1,112 @@
+/**
+ * Database seeder — cities only.
+ * Mosque seeding has been removed as the mosque feature is no longer part of the platform.
+ */
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+const CANADIAN_CITIES = [
+  { name: 'Calgary',          province: 'AB', lat: 51.0447,  lng: -114.0719 },
+  { name: 'Edmonton',         province: 'AB', lat: 53.5461,  lng: -113.4938 },
+  { name: 'Lethbridge',       province: 'AB', lat: 49.6956,  lng: -112.8451 },
+  { name: 'Red Deer',         province: 'AB', lat: 52.2681,  lng: -113.8112 },
+  { name: 'Airdrie',          province: 'AB', lat: 51.2917,  lng: -114.0144 },
+  { name: 'Spruce Grove',     province: 'AB', lat: 53.5449,  lng: -113.9003 },
+  { name: 'Grande Prairie',   province: 'AB', lat: 55.1707,  lng: -118.7884 },
+  { name: 'Medicine Hat',     province: 'AB', lat: 50.0417,  lng: -110.6775 },
+  { name: 'Fort McMurray',    province: 'AB', lat: 56.7267,  lng: -111.3797 },
+  { name: 'Abbotsford',       province: 'BC', lat: 49.0504,  lng: -122.3045 },
+  { name: 'Burnaby',          province: 'BC', lat: 49.2488,  lng: -122.9805 },
+  { name: 'Coquitlam',        province: 'BC', lat: 49.2838,  lng: -122.7932 },
+  { name: 'Kelowna',          province: 'BC', lat: 49.888,   lng: -119.496  },
+  { name: 'Kamloops',         province: 'BC', lat: 50.6745,  lng: -120.3273 },
+  { name: 'Langley',          province: 'BC', lat: 49.1044,  lng: -122.6601 },
+  { name: 'Nanaimo',          province: 'BC', lat: 49.1659,  lng: -123.9401 },
+  { name: 'Prince George',    province: 'BC', lat: 53.9171,  lng: -122.7497 },
+  { name: 'Richmond',         province: 'BC', lat: 49.1666,  lng: -123.1336 },
+  { name: 'Surrey',           province: 'BC', lat: 49.1913,  lng: -122.849  },
+  { name: 'Vancouver',        province: 'BC', lat: 49.2827,  lng: -123.1207 },
+  { name: 'Victoria',         province: 'BC', lat: 48.4284,  lng: -123.3656 },
+  { name: 'Brandon',          province: 'MB', lat: 49.8485,  lng: -99.9501  },
+  { name: 'Winnipeg',         province: 'MB', lat: 49.8951,  lng: -97.1384  },
+  { name: 'Steinbach',        province: 'MB', lat: 49.5256,  lng: -96.6836  },
+  { name: 'Thompson',         province: 'MB', lat: 55.7435,  lng: -97.8558  },
+  { name: 'Fredericton',      province: 'NB', lat: 45.9636,  lng: -66.6431  },
+  { name: 'Moncton',          province: 'NB', lat: 46.0878,  lng: -64.7782  },
+  { name: 'Saint John',       province: 'NB', lat: 45.2733,  lng: -66.0633  },
+  { name: "St. John's",       province: 'NL', lat: 47.5615,  lng: -52.7126  },
+  { name: 'Corner Brook',     province: 'NL', lat: 48.9517,  lng: -57.9325  },
+  { name: 'Mount Pearl',      province: 'NL', lat: 47.5192,  lng: -52.8058  },
+  { name: 'Yellowknife',      province: 'NT', lat: 62.454,   lng: -114.3718 },
+  { name: 'Halifax',          province: 'NS', lat: 44.6488,  lng: -63.5752  },
+  { name: 'Sydney',           province: 'NS', lat: 46.1368,  lng: -60.1942  },
+  { name: 'Iqaluit',          province: 'NU', lat: 63.7467,  lng: -68.517   },
+  { name: 'Barrie',           province: 'ON', lat: 44.3894,  lng: -79.6903  },
+  { name: 'Brampton',         province: 'ON', lat: 43.7315,  lng: -79.7624  },
+  { name: 'Brantford',        province: 'ON', lat: 43.1394,  lng: -80.2644  },
+  { name: 'Burlington',       province: 'ON', lat: 43.3255,  lng: -79.799   },
+  { name: 'Cambridge',        province: 'ON', lat: 43.3616,  lng: -80.3144  },
+  { name: 'Greater Sudbury',  province: 'ON', lat: 46.4917,  lng: -80.993   },
+  { name: 'Guelph',           province: 'ON', lat: 43.5448,  lng: -80.2482  },
+  { name: 'Hamilton',         province: 'ON', lat: 43.2557,  lng: -79.8711  },
+  { name: 'Kingston',         province: 'ON', lat: 44.2312,  lng: -76.486   },
+  { name: 'Kitchener',        province: 'ON', lat: 43.4516,  lng: -80.4925  },
+  { name: 'London',           province: 'ON', lat: 42.9849,  lng: -81.2453  },
+  { name: 'Markham',          province: 'ON', lat: 43.8561,  lng: -79.337   },
+  { name: 'Mississauga',      province: 'ON', lat: 43.589,   lng: -79.6441  },
+  { name: 'Niagara Falls',    province: 'ON', lat: 43.0896,  lng: -79.0849  },
+  { name: 'North Bay',        province: 'ON', lat: 46.3091,  lng: -79.4608  },
+  { name: 'Oakville',         province: 'ON', lat: 43.4675,  lng: -79.6877  },
+  { name: 'Oshawa',           province: 'ON', lat: 43.8971,  lng: -78.8658  },
+  { name: 'Ottawa',           province: 'ON', lat: 45.4215,  lng: -75.6972  },
+  { name: 'Peterborough',     province: 'ON', lat: 44.3091,  lng: -78.3197  },
+  { name: 'Pickering',        province: 'ON', lat: 43.8355,  lng: -79.0893  },
+  { name: 'Richmond Hill',    province: 'ON', lat: 43.8828,  lng: -79.4403  },
+  { name: 'Sarnia',           province: 'ON', lat: 42.9994,  lng: -82.3089  },
+  { name: 'Sault Ste. Marie', province: 'ON', lat: 46.5136,  lng: -84.3358  },
+  { name: 'St. Catharines',   province: 'ON', lat: 43.1594,  lng: -79.2469  },
+  { name: 'Thunder Bay',      province: 'ON', lat: 48.3809,  lng: -89.2477  },
+  { name: 'Timmins',          province: 'ON', lat: 48.4758,  lng: -81.3305  },
+  { name: 'Toronto',          province: 'ON', lat: 43.6532,  lng: -79.3832  },
+  { name: 'Vaughan',          province: 'ON', lat: 43.8563,  lng: -79.5085  },
+  { name: 'Waterloo',         province: 'ON', lat: 43.4643,  lng: -80.5204  },
+  { name: 'Windsor',          province: 'ON', lat: 42.3149,  lng: -83.0364  },
+  { name: 'Charlottetown',    province: 'PE', lat: 46.2382,  lng: -63.1311  },
+  { name: 'Gatineau',         province: 'QC', lat: 45.4766,  lng: -75.7013  },
+  { name: 'Laval',            province: 'QC', lat: 45.6066,  lng: -73.7124  },
+  { name: 'Lévis',            province: 'QC', lat: 46.6886,  lng: -71.1816  },
+  { name: 'Longueuil',        province: 'QC', lat: 45.5315,  lng: -73.5185  },
+  { name: 'Montréal',         province: 'QC', lat: 45.5017,  lng: -73.5673  },
+  { name: 'Québec',           province: 'QC', lat: 46.8139,  lng: -71.208   },
+  { name: 'Repentigny',       province: 'QC', lat: 45.7422,  lng: -73.4604  },
+  { name: 'Saguenay',         province: 'QC', lat: 48.4001,  lng: -71.0603  },
+  { name: 'Sherbrooke',       province: 'QC', lat: 45.4042,  lng: -71.8929  },
+  { name: 'Terrebonne',       province: 'QC', lat: 45.7049,  lng: -73.7196  },
+  { name: 'Trois-Rivières',   province: 'QC', lat: 46.3432,  lng: -72.5432  },
+  { name: 'Moose Jaw',        province: 'SK', lat: 50.3934,  lng: -105.5519 },
+  { name: 'Prince Albert',    province: 'SK', lat: 53.2033,  lng: -105.7531 },
+  { name: 'Regina',           province: 'SK', lat: 50.4452,  lng: -104.6189 },
+  { name: 'Saskatoon',        province: 'SK', lat: 52.1579,  lng: -106.6702 },
+  { name: 'Whitehorse',       province: 'YT', lat: 60.7212,  lng: -135.0568 },
+];
+
+async function main() {
+  console.log('🌱 Seeding database...');
+
+  console.log('🏙️ Seeding cities...');
+  for (const city of CANADIAN_CITIES) {
+    await prisma.city.upsert({
+      where:  { name_province: { name: city.name, province: city.province } },
+      update: {},
+      create: city,
+    });
+  }
+  console.log(`✅ Seeded ${CANADIAN_CITIES.length} cities`);
+
+  console.log('🎉 Seeding complete!');
+}
+
+main()
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

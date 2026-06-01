@@ -292,7 +292,7 @@ export default function Home() {
           </p>
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6">
             {[
-              { icon: '🤝', title: 'Community-first', desc: 'A trusted platform built by and for Canada's Muslim community.' },
+              { icon: '🤝', title: 'Community-first', desc: "A trusted platform built by and for Canada's Muslim community." },
               { icon: '🛡️', title: 'Safe community', desc: 'Listings reviewed for safety. Report issues easily.' },
               { icon: '💬', title: 'Real-time chat', desc: 'Message landlords securely. No email required.' },
               { icon: '🇨🇦', title: 'Across Canada', desc: 'From Vancouver to Halifax — every province covered.' },

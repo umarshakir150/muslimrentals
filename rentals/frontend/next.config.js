@@ -1,10 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
-
   images: {
-    unoptimized: true,
-
     remotePatterns: [
       { protocol: 'https', hostname: '**.amazonaws.com' },
       { protocol: 'https', hostname: '**.r2.cloudflarestorage.com' },
@@ -13,7 +9,6 @@ const nextConfig = {
       { protocol: 'https', hostname: '**.cloudfront.net' },
     ],
   },
-
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },

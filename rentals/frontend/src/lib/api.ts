@@ -2,7 +2,7 @@ import { useAuthStore } from '@/store/authStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
-// Safe JSON parser — never crashes on HTML/non-JSON responses
+// Safe JSON parser - never crashes on HTML/non-JSON responses
 async function safeJson(res: Response): Promise<any> {
   const text = await res.text();
   try {
@@ -71,11 +71,24 @@ class ApiClient {
     const data = await safeJson(res);
 
     if (!res.ok) {
-      // Friendly message for common auth errors
+      // Use the server's own message when it exists and is a plain string (not HTML).
+      // Only override with a friendly fallback when the server message is absent/unhelpful.
       let message = data.message || 'Request failed';
-      if (res.status === 401) message = 'Account not found or incorrect password. Please check your credentials.';
-      if (res.status === 404 && endpoint.includes('/auth')) message = 'Account not found. Please sign up first.';
-      if (res.status === 409) message = 'An account with this email already exists. Please log in instead.';
+
+      // Strip any accidental HTML that slipped through safeJson
+      if (message.includes('<!DOCTYPE') || message.includes('<html')) {
+        message = 'Request failed. Please try again.';
+      }
+
+      // For 401 on login specifically, give a clean unified message
+      if (res.status === 401 && endpoint === '/auth/login') {
+        message = data.message || 'Incorrect email or password. Please try again.';
+      }
+
+      // 409 = duplicate email on register
+      if (res.status === 409) {
+        message = data.message || 'An account with this email already exists. Please log in.';
+      }
       const error = new Error(message);
       (error as any).status = res.status;
       (error as any).errors = data.errors;

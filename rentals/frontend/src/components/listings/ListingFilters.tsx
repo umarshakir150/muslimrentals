@@ -1,235 +1,238 @@
 'use client';
 
 import { useState } from 'react';
-import { SlidersHorizontal, X, ChevronDown } from 'lucide-react';
+import { SlidersHorizontal, X, Search, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useFilterStore } from '@/store/filterStore';
 import { cn, formatCAD } from '@/lib/utils';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 
+// Audience labels without emojis for a cleaner horizontal bar
+const AUDIENCE_OPTIONS = [
+  { v: 'all',      label: 'Everyone' },
+  { v: 'BROTHERS', label: 'Brothers' },
+  { v: 'SISTERS',  label: 'Sisters' },
+  { v: 'COUPLES',  label: 'Couples' },
+  { v: 'FAMILIES', label: 'Families' },
+];
+
+const SORT_OPTIONS = [
+  { v: 'newest',    label: 'Newest' },
+  { v: 'priceLow',  label: 'Price: Low' },
+  { v: 'priceHigh', label: 'Price: High' },
+  { v: 'beds',      label: 'Most beds' },
+];
+
 export default function ListingFilters() {
   const { filters, setFilter, setFilters, resetFilters } = useFilterStore();
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
-  const audienceOptions = [
-    { v: 'all', label: 'Everyone' },
-    { v: 'BROTHERS', label: '🧔 Brothers' },
-    { v: 'SISTERS', label: '🧕 Sisters' },
-    { v: 'COUPLES', label: '💑 Couples' },
-    { v: 'FAMILIES', label: '👨‍👩‍👧 Families' },
-  ];
+  const hasActiveFilters =
+    !!filters.city ||
+    (filters.audience && filters.audience !== 'all') ||
+    filters.furnished ||
+    filters.parking ||
+    filters.utilities ||
+    (filters.minBeds && filters.minBeds > 0) ||
+    (filters.minBaths && filters.minBaths > 0) ||
+    (filters.maxPrice && filters.maxPrice < 5000);
 
-  const FilterPanel = () => (
-    <div className="space-y-5">
-      {/* Search */}
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Keyword</label>
-        <input
-          type="text"
-          value={filters.keyword || ''}
-          onChange={e => setFilter('keyword', e.target.value)}
-          placeholder="Search listings..."
-          className="input-field"
-        />
-      </div>
+  return (
+    <div className="w-full">
+      {/* ── Row 1: main search + city + audience + sort + more button ── */}
+      <div className="flex flex-wrap gap-2 items-center">
 
-      {/* City */}
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">City</label>
-        <CityAutocomplete
-          value={filters.city || ''}
-          onChange={(city, coords) => {
-            setFilters({ city, ...(coords ? { lat: coords[0], lng: coords[1] } : {}) });
-          }}
-          placeholder="Search city..."
-        />
-      </div>
+        {/* Keyword search */}
+        <div className="relative flex-1 min-w-[160px] max-w-xs">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+          <input
+            type="text"
+            value={filters.keyword || ''}
+            onChange={e => setFilter('keyword', e.target.value)}
+            placeholder="Search listings..."
+            className="input-field pl-8 py-2.5 text-sm h-10"
+          />
+        </div>
 
-      {/* Audience */}
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Suitable for</label>
-        <div className="flex flex-wrap gap-2">
-          {audienceOptions.map(opt => (
+        {/* City */}
+        <div className="flex-1 min-w-[160px] max-w-xs">
+          <CityAutocomplete
+            value={filters.city || ''}
+            onChange={(city, coords) =>
+              setFilters({ city, ...(coords ? { lat: coords[0], lng: coords[1] } : {}) })
+            }
+            placeholder="City..."
+            className="py-2.5 text-sm h-10"
+          />
+        </div>
+
+        {/* Audience pills */}
+        <div className="flex gap-1.5 flex-wrap">
+          {AUDIENCE_OPTIONS.map(opt => (
             <button
               key={opt.v}
               onClick={() => setFilter('audience', opt.v as any)}
-              className={cn('px-3.5 py-2 rounded-full text-sm font-semibold border-2 transition-all',
-                filters.audience === opt.v ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-ink/10 text-muted hover:border-brand-300')}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-xs font-semibold border transition-all whitespace-nowrap',
+                filters.audience === opt.v
+                  ? 'border-brand-500 bg-brand-50 text-brand-700'
+                  : 'border-ink/10 text-muted bg-white hover:border-brand-300 hover:text-ink'
+              )}
             >
               {opt.label}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Beds / Baths */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Min. bedrooms</label>
+        {/* Sort */}
+        <div className="relative">
           <select
-            value={filters.minBeds || 0}
-            onChange={e => setFilter('minBeds', parseInt(e.target.value))}
-            className="input-field appearance-none"
+            value={filters.sort || 'newest'}
+            onChange={e => setFilter('sort', e.target.value as any)}
+            className="appearance-none bg-white border border-ink/10 rounded-full px-4 pr-8 py-2 text-xs font-semibold text-ink cursor-pointer hover:border-brand-300 focus:outline-none focus:border-brand-500 h-9"
           >
-            <option value={0}>Any</option>
-            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
+            {SORT_OPTIONS.map(o => (
+              <option key={o.v} value={o.v}>{o.label}</option>
+            ))}
           </select>
+          <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
         </div>
-        <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Min. bathrooms</label>
-          <select
-            value={filters.minBaths || 0}
-            onChange={e => setFilter('minBaths', parseInt(e.target.value))}
-            className="input-field appearance-none"
-          >
-            <option value={0}>Any</option>
-            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
-          </select>
-        </div>
-      </div>
 
-      {/* Price range */}
-      <div>
-        <div className="flex justify-between mb-2">
-          <label className="text-xs font-semibold text-muted uppercase tracking-wider">Max price</label>
-          <span className="text-sm font-bold text-brand-700">{formatCAD(filters.maxPrice || 5000)}/mo</span>
-        </div>
-        <input
-          type="range"
-          min={500}
-          max={10000}
-          step={100}
-          value={filters.maxPrice || 5000}
-          onChange={e => setFilter('maxPrice', parseInt(e.target.value))}
-          className="w-full"
-        />
-        <div className="flex justify-between text-xs text-muted mt-1">
-          <span>$500</span>
-          <span>$10,000+</span>
-        </div>
-      </div>
-
-      {/* Radius */}
-      <div>
-        <div className="flex justify-between mb-2">
-          <label className="text-xs font-semibold text-muted uppercase tracking-wider">Search radius</label>
-          <span className="text-sm font-bold text-brand-700">{filters.radiusKm} km</span>
-        </div>
-        <input
-          type="range"
-          min={5}
-          max={250}
-          step={5}
-          value={filters.radiusKm || 80}
-          onChange={e => setFilter('radiusKm', parseInt(e.target.value))}
-          className="w-full"
-        />
-      </div>
-
-      {/* Amenity toggles */}
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Amenities</label>
-        <div className="space-y-2">
-          {[
-            { key: 'furnished', label: 'Furnished' },
-            { key: 'parking', label: 'Parking included' },
-            { key: 'utilities', label: 'Utilities included' },
-          ].map(({ key, label }) => (
-            <label key={key} className="flex items-center justify-between cursor-pointer group">
-              <span className="text-sm font-medium group-hover:text-brand-700 transition-colors">{label}</span>
-              <div
-                onClick={() => setFilter(key as any, !filters[key as keyof typeof filters])}
-                className={cn(
-                  'w-11 h-6 rounded-full border-2 transition-all relative cursor-pointer',
-                  filters[key as keyof typeof filters] ? 'bg-brand-600 border-brand-600' : 'bg-gray-100 border-gray-200'
-                )}
-              >
-                <div className={cn(
-                  'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all',
-                  filters[key as keyof typeof filters] ? 'left-5' : 'left-0.5'
-                )} />
-              </div>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Sort */}
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Sort by</label>
-        <select
-          value={filters.sort || 'newest'}
-          onChange={e => setFilter('sort', e.target.value as any)}
-          className="input-field appearance-none"
-        >
-          <option value="newest">Newest first</option>
-          <option value="priceLow">Price: Low to high</option>
-          <option value="priceHigh">Price: High to low</option>
-          <option value="beds">Most bedrooms</option>
-        </select>
-      </div>
-
-      {/* Reset */}
-      <button onClick={resetFilters} className="w-full py-2.5 rounded-xl border-2 border-ink/10 text-sm font-semibold text-muted hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-all">
-        Reset all filters
-      </button>
-    </div>
-  );
-
-  return (
-    <>
-      {/* Desktop sidebar */}
-      <div className="hidden lg:block">
-        <FilterPanel />
-      </div>
-
-      {/* Mobile filter button + drawer */}
-      <div className="lg:hidden">
+        {/* More filters toggle */}
         <button
-          onClick={() => setMobileOpen(true)}
-          className="flex items-center gap-2 px-5 py-3 bg-white border border-ink/10 rounded-full shadow-card text-sm font-semibold hover:border-brand-400 transition-colors"
+          onClick={() => setMoreOpen(v => !v)}
+          className={cn(
+            'flex items-center gap-1.5 px-3.5 py-2 rounded-full border text-xs font-semibold transition-all h-9',
+            moreOpen || hasActiveFilters
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-ink/10 bg-white text-muted hover:border-brand-300 hover:text-ink'
+          )}
         >
-          <SlidersHorizontal size={16} />
-          Filters
-          {(filters.city || filters.audience !== 'all' || filters.furnished || filters.parking) && (
-            <span className="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center font-bold">!</span>
+          <SlidersHorizontal size={13} />
+          More
+          {hasActiveFilters && (
+            <span className="w-4 h-4 rounded-full bg-brand-600 text-white text-[9px] flex items-center justify-center font-bold">
+              !
+            </span>
           )}
         </button>
 
-        <AnimatePresence>
-          {mobileOpen && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[90] bg-ink/50 backdrop-blur-sm"
-              onClick={() => setMobileOpen(false)}
-            >
-              <motion.div
-                initial={{ x: '-100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '-100%' }}
-                transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-                className="absolute left-0 top-0 bottom-0 w-[90vw] max-w-sm bg-white overflow-y-auto shadow-elevated"
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between px-5 py-4 border-b border-ink/8 sticky top-0 bg-white z-10">
-                  <h3 className="font-semibold">Filters</h3>
-                  <button onClick={() => setMobileOpen(false)} className="p-2 rounded-full hover:bg-gray-100">
-                    <X size={18} />
-                  </button>
-                </div>
-                <div className="p-5">
-                  <FilterPanel />
-                </div>
-                <div className="sticky bottom-0 bg-white border-t border-ink/8 px-5 py-4">
-                  <button onClick={() => setMobileOpen(false)} className="btn-brand w-full py-3">Apply filters</button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Reset (only shown when filters are active) */}
+        {hasActiveFilters && (
+          <button
+            onClick={resetFilters}
+            className="flex items-center gap-1 px-3 py-2 rounded-full border border-red-200 text-xs font-semibold text-red-500 bg-red-50 hover:bg-red-100 transition-all h-9"
+          >
+            <X size={12} /> Reset
+          </button>
+        )}
       </div>
-    </>
+
+      {/* ── Row 2: expandable "more filters" panel ── */}
+      <AnimatePresence>
+        {moreOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-3 p-4 bg-white border border-ink/8 rounded-2xl shadow-card">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+
+                {/* Min beds */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                    Min beds
+                  </label>
+                  <select
+                    value={filters.minBeds || 0}
+                    onChange={e => setFilter('minBeds', parseInt(e.target.value))}
+                    className="input-field appearance-none py-2 text-sm"
+                  >
+                    <option value={0}>Any</option>
+                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
+                  </select>
+                </div>
+
+                {/* Min baths */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                    Min baths
+                  </label>
+                  <select
+                    value={filters.minBaths || 0}
+                    onChange={e => setFilter('minBaths', parseInt(e.target.value))}
+                    className="input-field appearance-none py-2 text-sm"
+                  >
+                    <option value={0}>Any</option>
+                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
+                  </select>
+                </div>
+
+                {/* Max price */}
+                <div className="col-span-2 sm:col-span-1">
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-muted uppercase tracking-wider">Max price</label>
+                    <span className="text-xs font-bold text-brand-700">{formatCAD(filters.maxPrice || 5000)}/mo</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={500} max={10000} step={100}
+                    value={filters.maxPrice || 5000}
+                    onChange={e => setFilter('maxPrice', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted mt-0.5">
+                    <span>$500</span><span>$10k+</span>
+                  </div>
+                </div>
+
+                {/* Radius */}
+                <div className="col-span-2 sm:col-span-1">
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-muted uppercase tracking-wider">Radius</label>
+                    <span className="text-xs font-bold text-brand-700">{filters.radiusKm} km</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={5} max={250} step={5}
+                    value={filters.radiusKm || 80}
+                    onChange={e => setFilter('radiusKm', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Amenity toggles */}
+                <div className="col-span-2 sm:col-span-2">
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Amenities</label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { key: 'furnished', label: 'Furnished' },
+                      { key: 'parking',   label: 'Parking' },
+                      { key: 'utilities', label: 'Utilities incl.' },
+                    ].map(({ key, label }) => (
+                      <button
+                        key={key}
+                        onClick={() => setFilter(key as any, !filters[key as keyof typeof filters])}
+                        className={cn(
+                          'px-3 py-1.5 rounded-full text-xs font-semibold border transition-all',
+                          filters[key as keyof typeof filters]
+                            ? 'border-brand-500 bg-brand-50 text-brand-700'
+                            : 'border-ink/10 text-muted bg-white hover:border-brand-300 hover:text-ink'
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

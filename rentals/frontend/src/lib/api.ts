@@ -2,6 +2,20 @@ import { useAuthStore } from '@/store/authStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
+// Safe JSON parser — never crashes on HTML/non-JSON responses
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Backend returned HTML or non-JSON (e.g. 404 page from Render)
+    if (res.status === 404) return { message: 'Not found.' };
+    if (res.status === 500) return { message: 'Server error. Please try again later.' };
+    if (res.status === 0 || !res.ok) return { message: 'Unable to reach the server. Please check your connection.' };
+    return { message: 'An unexpected error occurred.' };
+  }
+}
+
 class ApiClient {
   private async refreshAccessToken(): Promise<string | null> {
     try {
@@ -10,7 +24,7 @@ class ApiClient {
         credentials: 'include',
       });
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = await safeJson(res);
       return data.data?.accessToken || null;
     } catch {
       return null;
@@ -31,11 +45,16 @@ class ApiClient {
 
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
-    const res = await fetch(`${API_URL}${endpoint}`, {
-      ...options,
-      headers,
-      credentials: 'include',
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+        credentials: 'include',
+      });
+    } catch {
+      throw new Error('Unable to reach the server. Please check your connection.');
+    }
 
     if (res.status === 401 && retry) {
       const newToken = await this.refreshAccessToken();
@@ -49,10 +68,15 @@ class ApiClient {
       }
     }
 
-    const data = await res.json();
+    const data = await safeJson(res);
 
     if (!res.ok) {
-      const error = new Error(data.message || 'Request failed');
+      // Friendly message for common auth errors
+      let message = data.message || 'Request failed';
+      if (res.status === 401) message = 'Account not found or incorrect password. Please check your credentials.';
+      if (res.status === 404 && endpoint.includes('/auth')) message = 'Account not found. Please sign up first.';
+      if (res.status === 409) message = 'An account with this email already exists. Please log in instead.';
+      const error = new Error(message);
       (error as any).status = res.status;
       (error as any).errors = data.errors;
       throw error;
@@ -79,13 +103,18 @@ class ApiClient {
 
   async upload<T>(endpoint: string, formData: FormData): Promise<T> {
     const { accessToken } = useAuthStore.getState();
-    const res = await fetch(`${API_URL}${endpoint}`, {
-      method: 'POST',
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-      body: formData,
-      credentials: 'include',
-    });
-    const data = await res.json();
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}${endpoint}`, {
+        method: 'POST',
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+        body: formData,
+        credentials: 'include',
+      });
+    } catch {
+      throw new Error('Unable to reach the server.');
+    }
+    const data = await safeJson(res);
     if (!res.ok) throw new Error(data.message || 'Upload failed');
     return data;
   }
@@ -135,8 +164,6 @@ export const messagesApi = {
   sendMessage: (convId: string, body: string) => api.post<{ data: any }>(`/messages/conversations/${convId}/messages`, { body }),
   getUnreadCount: () => api.get<{ data: { count: number } }>('/messages/unread-count'),
 };
-
-
 
 // ─── Cities API ───────────────────────────────────────────────────────────────
 export const citiesApi = {

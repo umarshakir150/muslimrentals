@@ -9,7 +9,6 @@ import { useAuthStore, useUser } from '@/store/authStore';
 import { authApi, messagesApi } from '@/lib/api';
 import { cn, initials } from '@/lib/utils';
 import AuthModal from '@/components/auth/AuthModal';
-import PostListingModal from '@/components/listings/PostListingModal';
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -18,7 +17,6 @@ export default function Navbar() {
   const { clearAuth } = useAuthStore();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
-  const [postOpen, setPostOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [scrolled, setScrolled] = useState(false);
@@ -47,8 +45,8 @@ export default function Navbar() {
 
   const navLinks = [
     { href: '/', label: 'Home' },
-    { href: '/#browse', label: 'Browse' },
-    { href: '/#map', label: 'Map' },
+    { href: '/browse', label: 'Browse' },
+    { href: '/map', label: 'Map' },
     { href: '/safety', label: 'Safety' },
     { href: '/contact', label: 'Contact' },
   ];
@@ -68,7 +66,7 @@ export default function Navbar() {
                 <circle cx="17" cy="4" r="1.5" fill="white" stroke="none"/>
               </svg>
             </div>
-            <span className="hidden sm:block">Muslim Rentals</span>
+            <span className="hidden sm:block">muslimrentals.ca</span>
           </Link>
 
           {/* Desktop Nav Links */}
@@ -160,18 +158,18 @@ export default function Navbar() {
                   </AnimatePresence>
                 </div>
 
-                <button onClick={() => setPostOpen(true)} className="btn-brand text-sm px-5 py-2.5 hidden sm:flex">
+                <Link href="/post" className="btn-brand text-sm px-5 py-2.5 hidden sm:flex">
                   Post rental
-                </button>
+                </Link>
               </>
             ) : (
               <>
                 <button onClick={() => setAuthOpen(true)} className="btn-ghost text-sm px-5 py-2.5 hidden sm:flex">
-                  Sign in
+                  Log in
                 </button>
-                <button onClick={() => setPostOpen(true)} className="btn-brand text-sm px-5 py-2.5">
+                <Link href="/post" className="btn-brand text-sm px-5 py-2.5">
                   Post rental
-                </button>
+                </Link>
               </>
             )}
 
@@ -204,10 +202,10 @@ export default function Navbar() {
                 <div className="flex gap-2 mt-3 pt-3 border-t border-ink/8">
                   {!user && (
                     <button onClick={() => { setAuthOpen(true); setMobileOpen(false); }}
-                      className="btn-ghost text-sm flex-1 py-2.5">Sign in</button>
+                      className="btn-ghost text-sm flex-1 py-2.5">Log in</button>
                   )}
-                  <button onClick={() => { setPostOpen(true); setMobileOpen(false); }}
-                    className="btn-brand text-sm flex-1 py-2.5">Post rental</button>
+                  <Link href="/post" onClick={() => setMobileOpen(false)}
+                    className="btn-brand text-sm flex-1 py-2.5 text-center">Post rental</Link>
                 </div>
               </div>
             </motion.div>
@@ -216,7 +214,6 @@ export default function Navbar() {
       </header>
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
-      <PostListingModal open={postOpen} onClose={() => setPostOpen(false)} />
     </>
   );
 }

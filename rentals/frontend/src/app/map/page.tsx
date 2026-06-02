@@ -33,7 +33,7 @@ export default function MapPage() {
       const res = await listingsApi.getAll({ limit: 200, sort: 'newest' });
       setListings(res.data);
     } catch {
-      // Silently fail — map will just show empty
+      // Silently fail - map will just show empty
     } finally { setLoading(false); }
   }, []);
 
@@ -50,7 +50,7 @@ export default function MapPage() {
           </div>
           <div
             className="bg-white border border-ink/8 rounded-3xl shadow-card overflow-hidden"
-            style={{ height: 'calc(100dvh - 220px)', minHeight: 400 }}
+            style={{ height: 'calc(100dvh - 200px)', minHeight: 450, position: 'relative' }}
           >
             {loading ? (
               <div className="w-full h-full bg-brand-50 flex items-center justify-center">
@@ -60,13 +60,15 @@ export default function MapPage() {
                 </div>
               </div>
             ) : (
-              <FullMap
-                listings={listings}
-                center={mapCenter}
-                radiusKm={filters.radiusKm || 80}
-                onCentreChange={setMapCenter}
-                onListingClick={setSelectedListing}
-              />
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <FullMap
+                  listings={listings}
+                  center={mapCenter}
+                  radiusKm={filters.radiusKm || 80}
+                  onCentreChange={setMapCenter}
+                  onListingClick={setSelectedListing}
+                />
+              </div>
             )}
           </div>
         </div>

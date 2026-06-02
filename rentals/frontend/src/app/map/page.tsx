@@ -7,18 +7,9 @@ import { listingsApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useFilterStore } from '@/store/filterStore';
 
-const FullMap = dynamic(() => import('@/components/map/FullMap'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full bg-brand-50 flex items-center justify-center">
-      <div className="text-center">
-        <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-sm text-muted">Loading map...</p>
-      </div>
-    </div>
-  )
-});
-
+// FullMap is heavy - load client-side only. No SSR loading fallback needed
+// because the map container is always rendered with real dimensions.
+const FullMap = dynamic(() => import('@/components/map/FullMap'), { ssr: false });
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 
 export default function MapPage() {
@@ -33,44 +24,76 @@ export default function MapPage() {
       const res = await listingsApi.getAll({ limit: 200, sort: 'newest' });
       setListings(res.data);
     } catch {
-      // Silently fail - map will just show empty
-    } finally { setLoading(false); }
+      // Silently fail - map shows empty
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
 
   return (
-    <div className="min-h-dvh flex flex-col">
+    // page root: full viewport height, no overflow clip so Leaflet can measure
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
       <Navbar />
-      <div className="pt-[72px] flex-1 flex flex-col">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full">
-          <div className="mb-4">
-            <h1 className="section-title text-2xl md:text-3xl mb-1">Rental map</h1>
-            <p className="text-muted text-sm">Find rentals across Canada. Click any marker to view details.</p>
-          </div>
-          <div
-            className="bg-white border border-ink/8 rounded-3xl shadow-card overflow-hidden"
-            style={{ height: 'calc(100dvh - 200px)', minHeight: 450, position: 'relative' }}
-          >
-            {loading ? (
-              <div className="w-full h-full bg-brand-50 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                  <p className="text-sm text-muted">Loading map...</p>
-                </div>
+
+      {/* content area below navbar */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '72px', minHeight: 0 }}>
+        <div style={{ maxWidth: '1280px', width: '100%', margin: '0 auto', padding: '24px 24px 0', flexShrink: 0 }}>
+          <h1 className="section-title text-2xl md:text-3xl mb-0.5">Rental map</h1>
+          <p className="text-muted text-sm mb-4">Find rentals across Canada. Click any marker to view details.</p>
+        </div>
+
+        {/*
+          Map card: flex-1 so it fills remaining height exactly.
+          overflow-hidden + border-radius for visual styling.
+          position:relative so the loading overlay can be absolute.
+          NO conditional render - FullMap is ALWAYS in the DOM so Leaflet
+          measures the real container dimensions.
+        */}
+        <div
+          className="border border-ink/8 shadow-card bg-white"
+          style={{
+            flex: 1,
+            margin: '0 24px 24px',
+            maxWidth: 'calc(1280px - 0px)',
+            alignSelf: 'center',
+            width: 'calc(100% - 48px)',
+            borderRadius: '24px',
+            overflow: 'hidden',
+            position: 'relative',
+            minHeight: '400px',
+          }}
+        >
+          {/* Loading overlay - sits on top of map, doesn't hide it */}
+          {loading && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 1000,
+                background: 'rgba(245,240,232,0.85)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <div className="text-center">
+                <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm text-muted">Loading listings...</p>
               </div>
-            ) : (
-              <div style={{ position: 'absolute', inset: 0 }}>
-                <FullMap
-                  listings={listings}
-                  center={mapCenter}
-                  radiusKm={filters.radiusKm || 80}
-                  onCentreChange={setMapCenter}
-                  onListingClick={setSelectedListing}
-                />
-              </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Map always rendered - never conditionally mounted */}
+          <FullMap
+            listings={listings}
+            center={mapCenter}
+            radiusKm={filters.radiusKm || 80}
+            onCentreChange={setMapCenter}
+            onListingClick={setSelectedListing}
+          />
         </div>
       </div>
 

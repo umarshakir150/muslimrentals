@@ -61,9 +61,12 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       toast({ title: 'Account created!', description: `Welcome, ${res.data.user.name}!` });
       onClose();
     } catch (err: any) {
-      const msg = err.message?.includes('<!DOCTYPE') || err.message?.includes('Unexpected token')
-        ? 'Sign up failed. Please try again or contact support.'
-        : err.message || 'Sign up failed. Please try again.';
+      // Never show raw HTML parse errors or login-specific wording on the register form
+      let msg: string = err.message || 'Sign up failed. Please try again.';
+      if (msg.includes('<!DOCTYPE') || msg.includes('Unexpected token') || msg.includes('not valid JSON')) {
+        msg = 'Sign up failed. Please try again or contact support.';
+      }
+      // Do NOT remap to "Account not found" here - that is a login message, not a register message
       toast({ variant: 'destructive', title: 'Sign up failed', description: msg });
     } finally { setLoading(false); }
   }

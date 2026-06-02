@@ -80,26 +80,28 @@ export default function BrowsePage() {
     <div className="min-h-dvh">
       <Navbar />
       <div className="pt-[72px]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
-            <div>
-              <h1 className="section-title text-3xl md:text-4xl mb-1">Browse rentals</h1>
-              <p className="text-muted text-sm">
-                {loading ? 'Loading listings...' : hasError ? 'Could not load listings. Try refreshing.' : `${total} listings across Canada`}
-              </p>
-            </div>
-            <ListingFilters />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+          <div className="mb-5">
+            <h1 className="section-title text-3xl md:text-4xl mb-1">Browse rentals</h1>
+            <p className="text-muted text-sm">
+              {loading ? 'Loading listings...' : hasError ? 'Could not load listings. Try refreshing.' : `${total} listings across Canada`}
+            </p>
           </div>
 
-          <div className="lg:grid lg:grid-cols-[260px_1fr] gap-8">
-            {/* Sidebar filters */}
-            <div className="hidden lg:block">
-              <div className="bg-white border border-ink/8 rounded-2xl p-5 shadow-card sticky top-[88px]">
+          <div className="lg:grid lg:grid-cols-[260px_1fr] gap-8 items-start">
+            {/* Sidebar filters - desktop only */}
+            <div className="hidden lg:block sticky top-[88px]">
+              <div className="bg-white border border-ink/8 rounded-2xl p-5 shadow-card">
                 <h3 className="font-semibold mb-4 flex items-center gap-2 text-sm">
                   <Search size={15} className="text-muted" /> Filter listings
                 </h3>
                 <ListingFilters />
               </div>
+            </div>
+
+            {/* Mobile filter strip - below lg */}
+            <div className="lg:hidden mb-4">
+              <ListingFilters />
             </div>
 
             {/* Grid */}

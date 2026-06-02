@@ -1,25 +1,40 @@
 import { useAuthStore } from '@/store/authStore';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+// ─── Base URL normalisation ───────────────────────────────────────────────────
+// NEXT_PUBLIC_API_URL may be set as either:
+//   https://xxx.onrender.com          (without /api/v1)
+//   https://xxx.onrender.com/api/v1   (with /api/v1)
+// We normalise to always strip the trailing /api/v1 and re-add it in request(),
+// so all endpoint strings like '/auth/register' work correctly either way.
+function buildBaseUrl(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+  // If the env var already ends with /api/v1 (or /api/v1/), strip it -
+  // request() will prepend /api/v1 itself.
+  return raw.replace(/\/api\/v1$/, '');
+}
 
-// Safe JSON parser - never crashes on HTML/non-JSON responses
+const BASE_URL = buildBaseUrl();
+
+// ─── Safe JSON parser ─────────────────────────────────────────────────────────
+// Never crashes on HTML/non-JSON responses (e.g. Render cold-start page, 404 HTML).
 async function safeJson(res: Response): Promise<any> {
   const text = await res.text();
+  if (!text || !text.trim()) return {};
   try {
     return JSON.parse(text);
   } catch {
-    // Backend returned HTML or non-JSON (e.g. 404 page from Render)
-    if (res.status === 404) return { message: 'Not found.' };
+    // Backend returned HTML or plain text - build a clean message from status
+    if (res.status === 404) return { message: 'Endpoint not found. Please contact support if this persists.' };
     if (res.status === 500) return { message: 'Server error. Please try again later.' };
-    if (res.status === 0 || !res.ok) return { message: 'Unable to reach the server. Please check your connection.' };
-    return { message: 'An unexpected error occurred.' };
+    if (res.status === 503) return { message: 'Service temporarily unavailable. Please try again.' };
+    return { message: `Request failed (${res.status}). Please try again.` };
   }
 }
 
 class ApiClient {
   private async refreshAccessToken(): Promise<string | null> {
     try {
-      const res = await fetch(`${API_URL}/auth/refresh`, {
+      const res = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
       });
@@ -45,9 +60,13 @@ class ApiClient {
 
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
+    // Always build URL as BASE_URL + /api/v1 + endpoint
+    // e.g. https://xxx.onrender.com + /api/v1 + /auth/register
+    const url = `${BASE_URL}/api/v1${endpoint}`;
+
     let res: Response;
     try {
-      res = await fetch(`${API_URL}${endpoint}`, {
+      res = await fetch(url, {
         ...options,
         headers,
         credentials: 'include',
@@ -71,24 +90,23 @@ class ApiClient {
     const data = await safeJson(res);
 
     if (!res.ok) {
-      // Use the server's own message when it exists and is a plain string (not HTML).
-      // Only override with a friendly fallback when the server message is absent/unhelpful.
       let message = data.message || 'Request failed';
 
-      // Strip any accidental HTML that slipped through safeJson
+      // Sanitise - never expose raw HTML to users
       if (message.includes('<!DOCTYPE') || message.includes('<html')) {
         message = 'Request failed. Please try again.';
       }
 
-      // For 401 on login specifically, give a clean unified message
+      // 401 on login: backend already sends "Invalid email or password."
       if (res.status === 401 && endpoint === '/auth/login') {
-        message = data.message || 'Incorrect email or password. Please try again.';
+        message = data.message || 'Incorrect email or password.';
       }
 
-      // 409 = duplicate email on register
+      // 409 on register: duplicate email
       if (res.status === 409) {
         message = data.message || 'An account with this email already exists. Please log in.';
       }
+
       const error = new Error(message);
       (error as any).status = res.status;
       (error as any).errors = data.errors;
@@ -116,9 +134,10 @@ class ApiClient {
 
   async upload<T>(endpoint: string, formData: FormData): Promise<T> {
     const { accessToken } = useAuthStore.getState();
+    const url = `${BASE_URL}/api/v1${endpoint}`;
     let res: Response;
     try {
-      res = await fetch(`${API_URL}${endpoint}`, {
+      res = await fetch(url, {
         method: 'POST',
         headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
         body: formData,
@@ -157,7 +176,9 @@ export const authApi = {
 export const listingsApi = {
   getAll: (params: Record<string, string | number | boolean | undefined>) => {
     const qs = new URLSearchParams(
-      Object.entries(params).filter(([_, v]) => v !== undefined && v !== '' && v !== false).map(([k, v]) => [k, String(v)])
+      Object.entries(params)
+        .filter(([_, v]) => v !== undefined && v !== '' && v !== false)
+        .map(([k, v]) => [k, String(v)])
     ).toString();
     return api.get<{ data: any[]; pagination: any }>(`/listings?${qs}`);
   },
@@ -166,15 +187,18 @@ export const listingsApi = {
   update: (id: string, data: any) => api.patch<{ data: any }>(`/listings/${id}`, data),
   delete: (id: string) => api.delete(`/listings/${id}`),
   save: (id: string) => api.post<{ success: boolean; saved: boolean }>(`/listings/${id}/save`, {}),
-  report: (id: string, reason: string, description?: string) => api.post(`/listings/${id}/report`, { reason, description }),
+  report: (id: string, reason: string, description?: string) =>
+    api.post(`/listings/${id}/report`, { reason, description }),
 };
 
 // ─── Messages API ─────────────────────────────────────────────────────────────
 export const messagesApi = {
   getConversations: () => api.get<{ data: any[] }>('/messages/conversations'),
   getConversation: (id: string) => api.get<{ data: any }>(`/messages/conversations/${id}`),
-  startConversation: (listingId: string, body: string) => api.post<{ data: any }>('/messages/conversations', { listingId, body }),
-  sendMessage: (convId: string, body: string) => api.post<{ data: any }>(`/messages/conversations/${convId}/messages`, { body }),
+  startConversation: (listingId: string, body: string) =>
+    api.post<{ data: any }>('/messages/conversations', { listingId, body }),
+  sendMessage: (convId: string, body: string) =>
+    api.post<{ data: any }>(`/messages/conversations/${convId}/messages`, { body }),
   getUnreadCount: () => api.get<{ data: { count: number } }>('/messages/unread-count'),
 };
 

@@ -42,10 +42,13 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
     try {
       const res = await authApi.login(data);
       setAuth(res.data.user, res.data.accessToken);
-      toast({ title: 'Welcome back!', description: `Signed in as ${res.data.user.name}` });
+      toast({ title: 'Welcome back!', description: `Logged in as ${res.data.user.name}` });
       onClose();
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      const msg = err.message?.includes('<!DOCTYPE') || err.message?.includes('Unexpected token')
+        ? 'Account not found. Please sign up first.'
+        : err.message || 'Login failed. Please try again.';
+      toast({ variant: 'destructive', title: 'Login failed', description: msg });
     } finally { setLoading(false); }
   }
 
@@ -55,10 +58,13 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       const { confirmPassword: _, ...rest } = data;
       const res = await authApi.register(rest);
       setAuth(res.data.user, res.data.accessToken);
-      toast({ title: 'Account created!', description: `Welcome, ${res.data.user.name}. Ahlan wa sahlan!` });
+      toast({ title: 'Account created!', description: `Welcome, ${res.data.user.name}!` });
       onClose();
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      const msg = err.message?.includes('<!DOCTYPE') || err.message?.includes('Unexpected token')
+        ? 'Sign up failed. Please try again or contact support.'
+        : err.message || 'Sign up failed. Please try again.';
+      toast({ variant: 'destructive', title: 'Sign up failed', description: msg });
     } finally { setLoading(false); }
   }
 
@@ -95,8 +101,8 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
                   {tab === 'forgot' ? 'Reset password' : tab === 'login' ? 'Welcome back' : 'Create account'}
                 </h2>
                 <p className="text-sm text-muted">
-                  {tab === 'login' ? 'Sign in to access your listings and messages.' :
-                   tab === 'register' ? 'Join the Muslim Rentals community.' :
+                  {tab === 'login' ? 'Log in to access your listings and messages.' :
+                   tab === 'register' ? 'Sign up to join the community.' :
                    'Enter your email to receive a reset link.'}
                 </p>
               </div>
@@ -111,7 +117,7 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
                 {(['login', 'register'] as const).map(t => (
                   <button key={t} onClick={() => setTab(t)}
                     className={cn('flex-1 py-2 text-sm font-semibold rounded-lg transition-all', tab === t ? 'bg-white shadow-sm text-brand-700' : 'text-muted hover:text-ink')}>
-                    {t === 'login' ? 'Sign in' : 'Register'}
+                    {t === 'login' ? 'Log in' : 'Sign up'}
                   </button>
                 ))}
               </div>
@@ -139,8 +145,12 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
                     </div>
                   </div>
                   <button type="submit" disabled={loading} className="btn-brand w-full justify-center py-3 mt-2">
-                    {loading ? <Loader2 size={18} className="animate-spin" /> : 'Sign in'}
+                    {loading ? <Loader2 size={18} className="animate-spin" /> : 'Log in'}
                   </button>
+                  <p className="text-sm text-center text-muted">
+                    No account?{' '}
+                    <button type="button" onClick={() => setTab('register')} className="text-brand-600 font-semibold hover:underline">Sign up</button>
+                  </p>
                 </form>
               )}
 
@@ -173,8 +183,12 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
                     {registerForm.formState.errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{registerForm.formState.errors.confirmPassword.message}</p>}
                   </div>
                   <button type="submit" disabled={loading} className="btn-brand w-full justify-center py-3 mt-2">
-                    {loading ? <Loader2 size={18} className="animate-spin" /> : 'Create account'}
+                    {loading ? <Loader2 size={18} className="animate-spin" /> : 'Sign up'}
                   </button>
+                  <p className="text-sm text-center text-muted">
+                    Already have an account?{' '}
+                    <button type="button" onClick={() => setTab('login')} className="text-brand-600 font-semibold hover:underline">Log in</button>
+                  </p>
                 </form>
               )}
 
@@ -189,7 +203,7 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
                     {loading ? <Loader2 size={18} className="animate-spin" /> : 'Send reset link'}
                   </button>
                   <button type="button" onClick={() => setTab('login')} className="w-full text-sm text-muted text-center hover:text-brand-600 transition-colors">
-                    ← Back to sign in
+                    Back to log in
                   </button>
                 </form>
               )}

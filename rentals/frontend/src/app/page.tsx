@@ -12,7 +12,7 @@ export default function Home() {
 
   const features = [
     { icon: Shield, title: 'Trusted community', desc: 'Listings reviewed for safety. Report issues easily.' },
-    { icon: MessageSquare, title: 'Real-time messaging', desc: 'Message landlords directly — no email required.' },
+    { icon: MessageSquare, title: 'Real-time messaging', desc: 'Message landlords securely after creating a free account.' },
     { icon: MapIcon, title: 'Map view', desc: 'Find rentals near you across Canada.' },
     { icon: Users, title: 'Community-first', desc: "Built by and for Canada's Muslim community." },
   ];
@@ -32,7 +32,7 @@ export default function Home() {
                 <em className="text-brand-600 not-italic">rooted</em> in your values
               </h1>
               <p className="text-lg text-muted mb-8 max-w-xl mx-auto leading-relaxed">
-                Halal-friendly rentals across Canada — priced fairly, posted by your community.
+                Halal-friendly rentals across Canada, priced fairly and posted by your community.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -123,7 +123,7 @@ export default function Home() {
           </div>
           <div className="border-t border-white/10 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3">
             <p className="text-white/40 text-sm">© {new Date().getFullYear()} muslimrentals.ca. All rights reserved.</p>
-            <p className="text-white/30 text-xs">Made for the Canadian Ummah</p>
+            <p className="text-white/30 text-xs">Made for the Ummah</p>
           </div>
         </div>
       </footer>

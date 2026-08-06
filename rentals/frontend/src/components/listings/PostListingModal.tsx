@@ -44,6 +44,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   const isAuth = useIsAuthenticated();
   const [authOpen, setAuthOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const [validating, setValidating] = useState(false);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
@@ -118,11 +119,22 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   }
 
   async function nextStep() {
-    const fieldsToValidate: (keyof FormData)[] = step === 1
-      ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
-      : ['city', 'contactInfo'];
-    const valid = await trigger(fieldsToValidate);
-    if (valid) setStep(s => s + 1);
+    // Guard against double-invocation while validation is in flight: without
+    // this, a second click landing during the brief async window between
+    // trigger() resolving and the step-3 re-render could hit the "Post
+    // listing" submit button that takes this same button's place, submitting
+    // one step early with no photos attached.
+    if (validating) return;
+    setValidating(true);
+    try {
+      const fieldsToValidate: (keyof FormData)[] = step === 1
+        ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
+        : ['city', 'contactInfo'];
+      const valid = await trigger(fieldsToValidate);
+      if (valid) setStep(s => s + 1);
+    } finally {
+      setValidating(false);
+    }
   }
 
   const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); onClose(); } };
@@ -340,11 +352,20 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                     </button>
                   )}
                   {step < 3 ? (
-                    <button type="button" onClick={nextStep} className="btn-brand flex-1 py-3">
+                    // Distinct `key`s from the submit button below force React to
+                    // fully unmount/remount this element on the step transition
+                    // instead of patching the existing DOM node's `type` attribute
+                    // from "button" to "submit" in place. Patching in place left
+                    // the browser treating the just-clicked, still-focused node as
+                    // a submit button and firing a spurious native submit right
+                    // after - reusing the same node also carries over its "just
+                    // activated by a real click" state, which a submit-type button
+                    // in that state can trigger a default action for.
+                    <button key="continue" type="button" onClick={nextStep} disabled={validating} className="btn-brand flex-1 py-3 disabled:opacity-60">
                       Continue →
                     </button>
                   ) : (
-                    <button type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+                    <button key="submit" type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
                       {loading ? <><Loader2 size={16} className="animate-spin" /> Posting...</> : 'Post listing'}
                     </button>
                   )}

@@ -15,16 +15,21 @@ const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'
 export default function MapPage() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const { filters, mapCenter, setMapCenter } = useFilterStore();
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
+    setHasError(false);
     try {
-      const res = await listingsApi.getAll({ limit: 200, sort: 'newest' });
+      // Backend caps `limit` at 50 (see listingQuerySchema in listings.ts) -
+      // requesting more always failed validation (422), which silently left
+      // the map empty even when listings existed.
+      const res = await listingsApi.getAll({ limit: 50, sort: 'newest' });
       setListings(res.data);
     } catch {
-      // Silently fail - map shows empty
+      setHasError(true);
     } finally {
       setLoading(false);
     }
@@ -52,7 +57,12 @@ export default function MapPage() {
           measures the real container dimensions.
         */}
         <div
-          className="border border-ink/8 shadow-card bg-white"
+          // `isolate` (isolation: isolate) gives this wrapper its own stacking
+          // context so Leaflet's internal panes/controls - which use z-indices
+          // up to 1000 internally - are contained here and can never render
+          // above the header, dropdowns, or modals, which live in later
+          // stacking contexts (see the zIndex scale in tailwind.config.ts).
+          className="border border-ink/8 shadow-card bg-white isolate z-map"
           style={{
             flex: 1,
             margin: '0 24px 24px',
@@ -83,6 +93,35 @@ export default function MapPage() {
                 <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
                 <p className="text-sm text-muted">Loading listings...</p>
               </div>
+            </div>
+          )}
+
+          {/* Empty / error banners - map stays interactive underneath */}
+          {!loading && (hasError || listings.length === 0) && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 16,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 500,
+              }}
+              className="bg-white/95 backdrop-blur-sm border border-ink/8 shadow-card rounded-2xl px-5 py-3 text-center max-w-sm mx-4"
+              role="status"
+            >
+              {hasError ? (
+                <>
+                  <p className="text-sm font-semibold text-ink">Unable to load the map</p>
+                  <p className="text-xs text-muted mt-0.5 mb-2">Something went wrong loading listings.</p>
+                  <button onClick={fetchListings} className="text-xs font-semibold text-brand-600 hover:underline">
+                    Try again
+                  </button>
+                </>
+              ) : (
+                <p className="text-sm font-semibold text-ink">
+                  No rentals are currently available to display on the map.
+                </p>
+              )}
             </div>
           )}
 

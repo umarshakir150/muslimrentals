@@ -6,11 +6,32 @@ import { useAuthStore } from '@/store/authStore';
 //   https://xxx.onrender.com/api/v1   (with /api/v1)
 // We normalise to always strip the trailing /api/v1 and re-add it in request(),
 // so all endpoint strings like '/auth/register' work correctly either way.
+//
+// If NEXT_PUBLIC_API_URL is missing entirely, falling back to an empty string
+// used to send every request to a *relative* URL (e.g. '/api/v1/auth/register'),
+// which silently hits this Next.js app instead of the backend and returns Next's
+// own HTML 404 page - surfacing a confusing "Endpoint not found" message to users.
+// In development we fall back to the documented local backend port (4000) so the
+// app works out of the box; in any other environment a missing var is treated as
+// a real configuration error so it fails loudly for developers/ops instead of
+// silently misrouting requests.
 function buildBaseUrl(): string {
-  const raw = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-  // If the env var already ends with /api/v1 (or /api/v1/), strip it -
-  // request() will prepend /api/v1 itself.
-  return raw.replace(/\/api\/v1$/, '');
+  const raw = (process.env.NEXT_PUBLIC_API_URL || '').trim().replace(/\/$/, '');
+  if (raw) return raw.replace(/\/api\/v1$/, '');
+
+  if (process.env.NODE_ENV !== 'production') {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[api] NEXT_PUBLIC_API_URL is not set - falling back to http://localhost:4000 for local development.'
+    );
+    return 'http://localhost:4000';
+  }
+
+  // eslint-disable-next-line no-console
+  console.error(
+    '[api] NEXT_PUBLIC_API_URL is not configured. The app cannot reach the backend API.'
+  );
+  return '';
 }
 
 const BASE_URL = buildBaseUrl();
@@ -51,6 +72,14 @@ class ApiClient {
     options: RequestInit = {},
     retry = true
   ): Promise<T> {
+    // BASE_URL is only empty when NEXT_PUBLIC_API_URL is missing in a
+    // non-development environment (see buildBaseUrl above). Fail fast with an
+    // honest message instead of fetching a relative URL that would 404 against
+    // this Next.js app itself and surface a misleading "endpoint not found" error.
+    if (!BASE_URL) {
+      throw new Error('Service temporarily unavailable. Please try again later.');
+    }
+
     const { accessToken } = useAuthStore.getState();
 
     const headers: Record<string, string> = {

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { X, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { cn } from '@/lib/utils';
+import { cn, friendlyApiError } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 
 interface AuthModalProps { open: boolean; onClose: () => void; }
@@ -45,10 +45,11 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       toast({ title: 'Welcome back!', description: `Logged in as ${res.data.user.name}` });
       onClose();
     } catch (err: any) {
-      const msg = err.message?.includes('<!DOCTYPE') || err.message?.includes('Unexpected token')
-        ? 'Account not found. Please sign up first.'
-        : err.message || 'Login failed. Please try again.';
-      toast({ variant: 'destructive', title: 'Login failed', description: msg });
+      toast({
+        variant: 'destructive',
+        title: 'Login failed',
+        description: friendlyApiError(err, 'Login failed. Please try again.'),
+      });
     } finally { setLoading(false); }
   }
 
@@ -61,13 +62,11 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       toast({ title: 'Account created!', description: `Welcome, ${res.data.user.name}!` });
       onClose();
     } catch (err: any) {
-      // Never show raw HTML parse errors or login-specific wording on the register form
-      let msg: string = err.message || 'Sign up failed. Please try again.';
-      if (msg.includes('<!DOCTYPE') || msg.includes('Unexpected token') || msg.includes('not valid JSON')) {
-        msg = 'Sign up failed. Please try again or contact support.';
-      }
-      // Do NOT remap to "Account not found" here - that is a login message, not a register message
-      toast({ variant: 'destructive', title: 'Sign up failed', description: msg });
+      toast({
+        variant: 'destructive',
+        title: 'Sign up failed',
+        description: friendlyApiError(err, 'Sign up failed. Please try again or contact support.'),
+      });
     } finally { setLoading(false); }
   }
 
@@ -78,7 +77,11 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       toast({ title: 'Reset email sent', description: 'Check your inbox for the reset link.' });
       setTab('login');
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: friendlyApiError(err, 'Could not send reset email. Please try again.'),
+      });
     } finally { setLoading(false); }
   }
 
@@ -87,7 +90,7 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       {open && (
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
+          className="fixed inset-0 z-overlay flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
           <motion.div

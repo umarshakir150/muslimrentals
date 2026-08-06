@@ -53,6 +53,38 @@ export function initials(name: string): string {
   return name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase();
 }
 
+// ─── API error formatting ───────────────────────────────────────────────────
+// Turns a thrown ApiClient error into a short, user-safe message. Never surfaces
+// raw backend/HTML/stack details - falls back to a generic message instead.
+export function friendlyApiError(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  if (!(err instanceof Error)) return fallback;
+
+  const status = (err as any).status as number | undefined;
+  const fieldErrors = (err as any).errors as { field: string; message: string }[] | undefined;
+
+  // No status = fetch itself threw (offline, DNS failure, CORS, backend down).
+  if (status == null) {
+    return err.message || 'Unable to reach the server. Please check your connection and try again.';
+  }
+
+  // Zod validation errors (422) - surface the first field-level message, which
+  // is already a safe, human-readable string (e.g. "Password must contain at
+  // least 8 character(s)"), rather than the generic "Validation failed."
+  if (status === 422 && fieldErrors?.length) {
+    return fieldErrors[0].message;
+  }
+
+  if (status === 409) return err.message || 'An account with this email already exists.';
+  if (status === 401) return err.message || 'Incorrect email or password.';
+  if (status === 429) return err.message || 'Too many attempts. Please wait a moment and try again.';
+  if (status >= 500) return 'Something went wrong on our end. Please try again in a moment.';
+
+  // Anything else operational (400/403/404 etc.) - the backend already sends
+  // safe, user-facing text for these (see errorHandler.ts), so pass it through.
+  const looksRaw = /<!DOCTYPE|<html|Unexpected token|not valid JSON/i.test(err.message);
+  return looksRaw ? fallback : (err.message || fallback);
+}
+
 // Fuzzy city search
 export function fuzzySearch(query: string, options: string[]): string[] {
   const q = query.toLowerCase().trim();

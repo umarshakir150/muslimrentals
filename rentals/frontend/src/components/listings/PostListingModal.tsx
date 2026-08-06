@@ -113,7 +113,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
+            className="fixed inset-0 z-overlay flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
             onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
             <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
               className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-elevated text-center">
@@ -134,7 +134,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     <AnimatePresence>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm"
+          className="fixed inset-0 z-overlay flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm"
           onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
           <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 60 }}
             transition={{ type: 'spring', damping: 25, stiffness: 280 }}
@@ -232,10 +232,11 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                         <CityAutocomplete
                           value={city || ''}
                           onChange={(city, coords) => {
-                            setValue('city', city);
+                            setValue('city', city, { shouldValidate: true });
                             if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
                           }}
                           placeholder="Search city..."
+                          label="City"
                         />
                         {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}
                       </div>

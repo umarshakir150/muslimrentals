@@ -2,12 +2,14 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
+import { AlertCircle, SearchX, Home as HomeIcon } from 'lucide-react';
 import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
+import EmptyState from '@/components/ui/EmptyState';
 import { listingsApi, messagesApi } from '@/lib/api';
 import { Listing } from '@/types';
-import { useFilterStore } from '@/store/filterStore';
+import { useFilterStore, hasActiveFilters } from '@/store/filterStore';
 import { useToast } from '@/components/ui/use-toast';
 import { useIsAuthenticated } from '@/store/authStore';
 import AuthModal from '@/components/auth/AuthModal';
@@ -31,6 +33,7 @@ export default function BrowsePage() {
   const { filters } = useFilterStore();
   const { toast } = useToast();
   const isAuth = useIsAuthenticated();
+  const filtersActive = hasActiveFilters(filters);
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -118,18 +121,38 @@ export default function BrowsePage() {
               ))}
             </div>
           ) : hasError ? (
-            <div className="text-center py-20">
-              <p className="text-muted mb-4">Unable to load listings right now.</p>
-              <button onClick={fetchListings} className="btn-brand px-6 py-2.5 text-sm">Try again</button>
-            </div>
+            <EmptyState
+              visual={<AlertCircle size={40} className="mx-auto mb-4 text-red-400" />}
+              title="Unable to load listings"
+              description="Something went wrong loading listings right now. Please try again."
+              action={<button onClick={fetchListings} className="btn-brand px-6 py-2.5 text-sm">Try again</button>}
+            />
           ) : listings.length === 0 ? (
-            <div className="text-center py-20">
-              <h3 className="font-serif text-2xl mb-2">No listings found</h3>
-              <p className="text-muted mb-6">Try adjusting your filters or searching a different city.</p>
-              <button onClick={() => useFilterStore.getState().resetFilters()} className="btn-brand px-8 py-3">
-                Clear filters
-              </button>
-            </div>
+            filtersActive ? (
+              <EmptyState
+                visual={<SearchX size={40} className="mx-auto mb-4 text-muted opacity-40" />}
+                title="No listings found"
+                description="Try adjusting your filters or searching a different city."
+                action={
+                  <button onClick={() => useFilterStore.getState().resetFilters()} className="btn-brand px-8 py-3">
+                    Clear filters
+                  </button>
+                }
+              />
+            ) : (
+              <EmptyState
+                visual={<HomeIcon size={40} className="mx-auto mb-4 text-muted opacity-40" />}
+                title="No listings yet"
+                description="Be the first to post a rental in your area."
+                action={
+                  isAuth ? (
+                    <button onClick={() => setPostOpen(true)} className="btn-brand px-8 py-3">Create listing</button>
+                  ) : (
+                    <button onClick={() => setAuthOpen(true)} className="btn-brand px-8 py-3">Sign in to post</button>
+                  )
+                }
+              />
+            )
           ) : (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {listings.map((listing, i) => (
@@ -162,7 +185,7 @@ export default function BrowsePage() {
 
       {messageTarget && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
+          className="fixed inset-0 z-overlay flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
           onClick={e => { if (e.target === e.currentTarget) setMessageTarget(null); }}
         >
           <motion.div

@@ -7,17 +7,48 @@ import { useAuthStore } from '@/store/authStore';
 // We normalise to always strip the trailing /api/v1 and re-add it in request(),
 // so all endpoint strings like '/auth/register' work correctly either way.
 //
-// If NEXT_PUBLIC_API_URL is missing entirely, falling back to an empty string
-// used to send every request to a *relative* URL (e.g. '/api/v1/auth/register'),
-// which silently hits this Next.js app instead of the backend and returns Next's
-// own HTML 404 page - surfacing a confusing "Endpoint not found" message to users.
-// In development we fall back to the documented local backend port (4000) so the
-// app works out of the box; in any other environment a missing var is treated as
-// a real configuration error so it fails loudly for developers/ops instead of
-// silently misrouting requests.
+// If NEXT_PUBLIC_API_URL is missing OR malformed, falling back to an empty
+// string used to send every request to a *relative* URL (e.g.
+// '/api/v1/auth/register'), which silently hits this Next.js app instead of
+// the backend and returns Next's own HTML 404 page - surfacing a confusing
+// "Endpoint not found" message to users. This has happened in practice from a
+// mis-set Netlify env var (the variable's *value* field containing the key
+// name itself, e.g. "NEXT_PUBLIC_API_URL https://..."), which fetch() doesn't
+// reject - it just silently treats the string as a relative path. We validate
+// the value is a well-formed absolute http(s) URL before ever using it, so a
+// bad value fails loudly instead of silently misrouting every request.
+//
+// In development we fall back to the documented local backend port (4000) so
+// the app works out of the box; in any other environment a missing/invalid
+// var is treated as a real configuration error so it fails loudly for
+// developers/ops instead of silently misrouting requests.
+function isValidAbsoluteHttpUrl(value: string): boolean {
+  if (/\s/.test(value)) return false; // e.g. "NEXT_PUBLIC_API_URL https://..." pasted whole
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function buildBaseUrl(): string {
   const raw = (process.env.NEXT_PUBLIC_API_URL || '').trim().replace(/\/$/, '');
-  if (raw) return raw.replace(/\/api\/v1$/, '');
+
+  if (raw) {
+    if (isValidAbsoluteHttpUrl(raw)) return raw.replace(/\/api\/v1$/, '');
+
+    // eslint-disable-next-line no-console
+    console.error(
+      `[api] NEXT_PUBLIC_API_URL is malformed: "${raw}". It must be a plain absolute ` +
+      'http(s) URL with nothing else in it (e.g. "https://your-backend.onrender.com") - ' +
+      'no variable name, quotes, or extra whitespace in the value. Check the environment ' +
+      'variable\'s value field in your hosting provider\'s dashboard (e.g. Netlify Site ' +
+      'settings → Environment variables), for every context that needs it ' +
+      '(Production, Deploy Previews, Branch deploys).'
+    );
+    return '';
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     // eslint-disable-next-line no-console

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon } from 'lucide-react';
+import { MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon } from 'lucide-react';
 import { useAuthStore, useUser } from '@/store/authStore';
 import { authApi, messagesApi } from '@/lib/api';
 import { cn, initials } from '@/lib/utils';

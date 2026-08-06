@@ -39,7 +39,7 @@ export default function ContactPage() {
             <div className="bg-brand-50 border border-brand-200 rounded-3xl p-10 text-center">
               <div className="text-5xl mb-4">✅</div>
               <h2 className="font-serif text-2xl mb-2">Message sent!</h2>
-              <p className="text-muted">JazakAllahu khayran. We'll reply within 24 hours.</p>
+              <p className="text-muted">JazakAllahu khayran. We&rsquo;ll reply within 24 hours.</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="bg-white border border-ink/8 rounded-3xl p-6 shadow-card space-y-4">

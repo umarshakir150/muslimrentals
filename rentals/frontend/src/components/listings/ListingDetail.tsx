@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
-import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink } from 'lucide-react';
+import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react';
 import { Listing } from '@/types';
 import { formatCAD, audienceLabel, audienceColor, formatTimeAgo, cn } from '@/lib/utils';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
+import { useEscapeKey } from '@/lib/useEscapeKey';
 
 interface ListingDetailProps {
   listing: Listing | null;
@@ -24,6 +25,8 @@ export default function ListingDetail({ listing, onClose, onMessage }: ListingDe
   const isAuth = useIsAuthenticated();
   const user = useUser();
   const { toast } = useToast();
+
+  useEscapeKey(onClose, !!listing);
 
   if (!listing) return null;
   const imgs = listing.images || [];
@@ -143,8 +146,6 @@ export default function ListingDetail({ listing, onClose, onMessage }: ListingDe
                   </div>
                 </div>
               )}
-
-
 
               {/* Posted by */}
               <div className="flex items-center gap-3 py-3 px-4 bg-gray-50 rounded-2xl mb-5">

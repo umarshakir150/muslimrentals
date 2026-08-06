@@ -12,7 +12,7 @@ export default function SafetyPage() {
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-16">
           <div className="mb-10">
             <h1 className="text-4xl font-serif mb-4">Staying safe on Muslim Rentals</h1>
-            <p className="text-muted text-lg leading-relaxed">Your safety is our top priority. We've compiled guidelines specifically for the Muslim community navigating the rental process.</p>
+            <p className="text-muted text-lg leading-relaxed">Your safety is our top priority. We&rsquo;ve compiled guidelines specifically for the Muslim community navigating the rental process.</p>
           </div>
 
           {[

@@ -10,6 +10,7 @@ import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { cn, friendlyApiError } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
+import { useEscapeKey } from '@/lib/useEscapeKey';
 
 interface AuthModalProps { open: boolean; onClose: () => void; }
 
@@ -32,6 +33,8 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
   const [loading, setLoading] = useState(false);
   const { setAuth } = useAuthStore();
   const { toast } = useToast();
+
+  useEscapeKey(onClose, open);
 
   const loginForm = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
   const registerForm = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });

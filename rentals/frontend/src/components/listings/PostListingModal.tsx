@@ -5,14 +5,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
+import { X, Upload, Loader2, ImageIcon } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { listingsApi } from '@/lib/api';
+import { api, listingsApi } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
-import { cn } from '@/lib/utils';
+import { cn, friendlyApiError } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
+import { useEscapeKey } from '@/lib/useEscapeKey';
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
 
@@ -85,16 +86,34 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (!isAuth) { setAuthOpen(true); return; }
     setLoading(true);
     try {
-      const listing = await listingsApi.create({
+      const created = await listingsApi.create({
         ...data,
         amenities: selectedAmenities,
-        imageUrls: [], // Images would be uploaded separately via /uploads endpoint
+        imageUrls: [],
       });
+
+      if (images.length > 0) {
+        try {
+          const formData = new FormData();
+          images.forEach(file => formData.append('images', file));
+          await api.upload(`/uploads/listing-images/${created.data.id}`, formData);
+        } catch (uploadErr: any) {
+          // The listing itself was created successfully - a failed photo
+          // upload (e.g. storage not configured yet) shouldn't look like the
+          // whole submission failed, but the user still needs to know.
+          toast({
+            variant: 'destructive',
+            title: 'Listing posted, but photos failed to upload',
+            description: friendlyApiError(uploadErr, 'You can add photos later from your listing.'),
+          });
+        }
+      }
+
       setSuccess(true);
       toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
       setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      toast({ variant: 'destructive', title: 'Error', description: friendlyApiError(err, 'Could not post listing. Please try again.') });
     } finally { setLoading(false); }
   }
 
@@ -107,6 +126,8 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   }
 
   const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); onClose(); } };
+
+  useEscapeKey(handleClose, open);
 
   if (!isAuth && open) return (
     <>

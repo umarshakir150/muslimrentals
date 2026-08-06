@@ -101,7 +101,7 @@ export default function Home() {
                 <span className="font-serif text-xl">muslimrentals.ca</span>
               </div>
               <p className="text-white/60 text-sm leading-relaxed max-w-xs">
-                A halal-friendly rental platform built for Canada's Muslim community. Find your home with trust.
+                A halal-friendly rental platform built for Canada&rsquo;s Muslim community. Find your home with trust.
               </p>
             </div>
             <div>

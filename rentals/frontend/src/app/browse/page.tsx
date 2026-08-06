@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { useState, useCallback, useEffect } from 'react';
 import { AlertCircle, SearchX, Home as HomeIcon } from 'lucide-react';
 import Navbar from '@/components/layout/Navbar';
@@ -14,11 +15,13 @@ import { useToast } from '@/components/ui/use-toast';
 import { useIsAuthenticated } from '@/store/authStore';
 import AuthModal from '@/components/auth/AuthModal';
 import { motion } from 'framer-motion';
+import { useEscapeKey } from '@/lib/useEscapeKey';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
 
 export default function BrowsePage() {
+  const router = useRouter();
   const [listings, setListings] = useState<Listing[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -65,6 +68,8 @@ export default function BrowsePage() {
   }, [filters]);
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
+
+  useEscapeKey(() => setMessageTarget(null), !!messageTarget);
 
   async function handleSendMessage(e: React.FormEvent) {
     e.preventDefault();
@@ -161,7 +166,7 @@ export default function BrowsePage() {
                   listing={listing}
                   index={i}
                   onView={setSelectedListing}
-                  onMap={() => {}}
+                  onMap={(l) => { useFilterStore.getState().setMapCenter([l.lat, l.lng]); router.push('/map'); }}
                   onMessage={(l) => { if (!isAuth) setAuthOpen(true); else setMessageTarget(l); }}
                 />
               ))}

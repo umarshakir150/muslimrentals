@@ -2,22 +2,27 @@
 
 import { useState, useEffect } from 'react';
 import Navbar from '@/components/layout/Navbar';
+import EmptyState from '@/components/ui/EmptyState';
 import { api } from '@/lib/api';
-import { useUser } from '@/store/authStore';
-import { useRouter } from 'next/navigation';
-import { Loader2, Users, Home, Flag, MessageSquare } from 'lucide-react';
+import { useUser, useIsAuthenticated } from '@/store/authStore';
+import { Loader2, Users, Home, Flag, MessageSquare, ShieldAlert } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import AuthModal from '@/components/auth/AuthModal';
 
 export default function AdminPage() {
   const user = useUser();
-  const router = useRouter();
+  const isAuth = useIsAuthenticated();
   const [stats, setStats] = useState<any>(null);
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authOpen, setAuthOpen] = useState(false);
   const { toast } = useToast();
 
+  const isAdmin = !!user && user.role !== 'USER';
+
   useEffect(() => {
-    if (user && user.role === 'USER') { router.push('/'); return; }
+    if (!isAdmin) { setLoading(false); return; }
+    setLoading(true);
     Promise.all([
       api.get<any>('/admin/stats'),
       api.get<any>('/admin/reports'),
@@ -25,9 +30,40 @@ export default function AdminPage() {
       setStats(s.data);
       setReports(r.data || []);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [user]);
+  }, [isAdmin]);
 
-  if (!user || user.role === 'USER') return null;
+  if (!isAuth) {
+    return (
+      <div className="min-h-dvh">
+        <Navbar />
+        <main className="pt-[72px] max-w-7xl mx-auto px-4 sm:px-6">
+          <EmptyState
+            visual={<ShieldAlert size={40} className="mx-auto mb-4 text-muted opacity-40" />}
+            title="Sign in required"
+            description="You need to be signed in as an admin to view this page."
+            action={<button onClick={() => setAuthOpen(true)} className="btn-brand px-8 py-3">Sign in</button>}
+          />
+        </main>
+        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-dvh">
+        <Navbar />
+        <main className="pt-[72px] max-w-7xl mx-auto px-4 sm:px-6">
+          <EmptyState
+            visual={<ShieldAlert size={40} className="mx-auto mb-4 text-muted opacity-40" />}
+            title="Access denied"
+            description="This page is only available to admins and moderators."
+            action={<a href="/" className="btn-brand px-8 py-3 inline-block">Back to home</a>}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh">

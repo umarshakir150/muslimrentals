@@ -69,7 +69,7 @@ const listingQuerySchema = z.object({
   radiusKm:  z.coerce.number().min(1).max(500).optional(),
   page:      z.coerce.number().int().min(1).max(1000).default(1),
   limit:     z.coerce.number().int().min(1).max(50).default(20),
-  sort:      z.enum(['newest', 'priceLow', 'priceHigh', 'beds']).default('newest'),
+  sort:      z.enum(['newest', 'priceLow', 'priceHigh']).default('newest'),
   keyword:   z.string().max(200).trim().optional(),
   amenities: z.string().max(500).optional(),  // comma-separated
   furnished: z.enum(['true', 'false']).optional(),
@@ -124,9 +124,8 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
     }
 
     const orderBy: any =
-      q.sort === 'priceLow'  ? { price: 'asc' }      :
-      q.sort === 'priceHigh' ? { price: 'desc' }     :
-      q.sort === 'beds'      ? { bedrooms: 'desc' }  :
+      q.sort === 'priceLow'  ? { price: 'asc' }   :
+      q.sort === 'priceHigh' ? { price: 'desc' }  :
       { createdAt: 'desc' };
 
     const skip = (q.page - 1) * q.limit;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 export interface Toast {
   id: string;
@@ -30,12 +30,13 @@ export function toast({ title, description, variant = 'default' }: Omit<Toast, '
 export function useToast() {
   const [localToasts, setLocalToasts] = useState<Toast[]>(toasts);
 
-  const subscribe = useCallback(() => {
+  // useEffect (not useState) so the listener is actually removed on unmount -
+  // every previous mount of a component calling useToast() leaked a listener
+  // forever, since useState's initializer has no cleanup mechanism.
+  useEffect(() => {
     listeners.push(setLocalToasts);
     return () => { listeners = listeners.filter(l => l !== setLocalToasts); };
   }, []);
-
-  useState(() => { const unsub = subscribe(); return unsub; });
 
   return { toast, toasts: localToasts, dismiss: (id: string) => dispatch({ type: 'remove', id }) };
 }

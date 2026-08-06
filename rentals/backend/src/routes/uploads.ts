@@ -27,14 +27,37 @@ import { AppError } from '../middleware/errorHandler';
 const router = Router();
 
 // ─── S3 client — credentials exclusively from env (OWASP A02) ─────────────────
-const s3 = new S3Client({
-  region: process.env.AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-  ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
-});
+// AWS_S3_BUCKET/keys are "recommended", not required (see validateEnv.ts) - the
+// server is expected to boot without them, with image uploads simply disabled.
+// The S3 client/storage MUST therefore be built lazily: constructing multerS3
+// eagerly at module load with a missing bucket throws synchronously and used to
+// crash the entire process on import, taking down every route (auth included)
+// whenever S3 wasn't configured.
+const S3_CONFIGURED = !!(
+  process.env.AWS_S3_BUCKET &&
+  process.env.AWS_ACCESS_KEY_ID &&
+  process.env.AWS_SECRET_ACCESS_KEY
+);
+
+const s3 = S3_CONFIGURED
+  ? new S3Client({
+      region: process.env.AWS_REGION || 'us-east-1',
+      credentials: {
+        accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
+    })
+  : null;
+
+// Rejects upload requests up front (with a clear message) when S3 isn't
+// configured, instead of ever touching the S3 client/storage engine.
+function requireS3Configured(_req: AuthRequest, _res: Response, next: NextFunction) {
+  if (!S3_CONFIGURED) {
+    return next(new AppError('Image uploads are not configured on this server yet.', 503));
+  }
+  next();
+}
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 // OWASP A08: restrict to known-safe image MIME types
@@ -55,7 +78,12 @@ function imageFileFilter(_req: any, file: Express.Multer.File, cb: multer.FileFi
 }
 
 // ─── S3 storage factory ────────────────────────────────────────────────────────
+// Falls back to harmless in-memory storage when S3 isn't configured. That
+// storage engine is never actually exercised - requireS3Configured() rejects
+// the request before multer runs - it only exists so `multer()` has a valid
+// engine to construct without throwing at import time.
 function makeS3Storage(prefix: string) {
+  if (!s3) return multer.memoryStorage();
   return multerS3({
     s3,
     bucket: process.env.AWS_S3_BUCKET!,
@@ -86,6 +114,7 @@ router.post(
   '/listing-images/:listingId',
   validateUuidParam('listingId'),
   authenticate,
+  requireS3Configured,
   uploadRateLimiter,
   listingUpload.array('images', MAX_FILES),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -120,6 +149,7 @@ router.post(
 router.post(
   '/avatar',
   authenticate,
+  requireS3Configured,
   uploadRateLimiter,
   avatarUpload.single('avatar'),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -138,6 +168,7 @@ router.delete(
   '/listing-images/:imageId',
   validateUuidParam('imageId'),
   authenticate,
+  requireS3Configured,
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const image = await prisma.listingImage.findUnique({
@@ -147,7 +178,7 @@ router.delete(
       if (!image) throw new AppError('Image not found.', 404);
       if (image.listing.userId !== req.user!.id) throw new AppError('Not authorized.', 403);
 
-      await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET!, Key: image.key }));
+      await s3!.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET!, Key: image.key }));
       await prisma.listingImage.delete({ where: { id: image.id } });
 
       res.json({ success: true, message: 'Image deleted.' });

@@ -25,6 +25,23 @@ const DEFAULT_FILTERS: ListingFilters = {
   page: 1,
 };
 
+// Single source of truth for "does the user currently have any filter applied"
+// - reused by the filter bar's active-filter indicator and by pages deciding
+// between a "no listings at all" vs. "no listings match your filters" empty state.
+export function hasActiveFilters(filters: ListingFilters): boolean {
+  return !!(
+    filters.keyword ||
+    filters.city ||
+    (filters.audience && filters.audience !== 'all') ||
+    filters.furnished ||
+    filters.parking ||
+    filters.utilities ||
+    (filters.minBeds && filters.minBeds > 0) ||
+    (filters.minBaths && filters.minBaths > 0) ||
+    (filters.maxPrice && filters.maxPrice < (DEFAULT_FILTERS.maxPrice ?? 5000))
+  );
+}
+
 export const useFilterStore = create<FilterStore>((set) => ({
   filters: { ...DEFAULT_FILTERS },
   mapCenter: [43.6532, -79.3832],

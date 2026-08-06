@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { SlidersHorizontal, X, Search, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useFilterStore } from '@/store/filterStore';
+import { useFilterStore, hasActiveFilters } from '@/store/filterStore';
 import { cn, formatCAD } from '@/lib/utils';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 
@@ -20,22 +20,17 @@ const SORT_OPTIONS = [
   { v: 'newest',    label: 'Newest' },
   { v: 'priceLow',  label: 'Price: Low' },
   { v: 'priceHigh', label: 'Price: High' },
-  { v: 'beds',      label: 'Most beds' },
 ];
+
+// Shared by the "Min beds" and "Min baths" selects: 1-4 show a bare number,
+// 5 is the top bucket and reads "5+" (selecting it means "5 or more").
+const MIN_COUNT_OPTIONS = [1, 2, 3, 4, 5].map(n => ({ value: n, label: n === 5 ? '5+' : String(n) }));
 
 export default function ListingFilters() {
   const { filters, setFilter, setFilters, resetFilters } = useFilterStore();
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const hasActiveFilters =
-    !!filters.city ||
-    (filters.audience && filters.audience !== 'all') ||
-    filters.furnished ||
-    filters.parking ||
-    filters.utilities ||
-    (filters.minBeds && filters.minBeds > 0) ||
-    (filters.minBaths && filters.minBaths > 0) ||
-    (filters.maxPrice && filters.maxPrice < 5000);
+  const filtersActive = hasActiveFilters(filters);
 
   return (
     <div className="w-full">
@@ -62,6 +57,7 @@ export default function ListingFilters() {
               setFilters({ city, ...(coords ? { lat: coords[0], lng: coords[1] } : {}) })
             }
             placeholder="City..."
+            label="City"
             className="py-2.5 text-sm h-10"
           />
         </div>
@@ -103,14 +99,14 @@ export default function ListingFilters() {
           onClick={() => setMoreOpen(v => !v)}
           className={cn(
             'flex items-center gap-1.5 px-3.5 py-2 rounded-full border text-xs font-semibold transition-all h-9',
-            moreOpen || hasActiveFilters
+            moreOpen || filtersActive
               ? 'border-brand-500 bg-brand-50 text-brand-700'
               : 'border-ink/10 bg-white text-muted hover:border-brand-300 hover:text-ink'
           )}
         >
           <SlidersHorizontal size={13} />
           More
-          {hasActiveFilters && (
+          {filtersActive && (
             <span className="w-4 h-4 rounded-full bg-brand-600 text-white text-[9px] flex items-center justify-center font-bold">
               !
             </span>
@@ -118,7 +114,7 @@ export default function ListingFilters() {
         </button>
 
         {/* Reset (only shown when filters are active) */}
-        {hasActiveFilters && (
+        {filtersActive && (
           <button
             onClick={resetFilters}
             className="flex items-center gap-1 px-3 py-2 rounded-full border border-red-200 text-xs font-semibold text-red-500 bg-red-50 hover:bg-red-100 transition-all h-9"
@@ -152,7 +148,7 @@ export default function ListingFilters() {
                     className="input-field appearance-none py-2 text-sm"
                   >
                     <option value={0}>Any</option>
-                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
+                    {MIN_COUNT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
 
@@ -167,7 +163,7 @@ export default function ListingFilters() {
                     className="input-field appearance-none py-2 text-sm"
                   >
                     <option value={0}>Any</option>
-                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}+</option>)}
+                    {MIN_COUNT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
 

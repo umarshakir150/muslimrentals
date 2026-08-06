@@ -72,7 +72,7 @@ export interface ListingFilters {
   furnished?: boolean;
   parking?: boolean;
   utilities?: boolean;
-  sort?: 'newest' | 'priceLow' | 'priceHigh' | 'beds';
+  sort?: 'newest' | 'priceLow' | 'priceHigh';
   page?: number;
 }
 

@@ -5,14 +5,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
+import { X, Upload, Loader2, ImageIcon } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { listingsApi } from '@/lib/api';
+import { api, listingsApi } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
-import { cn } from '@/lib/utils';
+import { cn, friendlyApiError } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
+import { useEscapeKey } from '@/lib/useEscapeKey';
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
 
@@ -43,6 +44,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   const isAuth = useIsAuthenticated();
   const [authOpen, setAuthOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const [validating, setValidating] = useState(false);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
@@ -85,35 +87,66 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (!isAuth) { setAuthOpen(true); return; }
     setLoading(true);
     try {
-      const listing = await listingsApi.create({
+      const created = await listingsApi.create({
         ...data,
         amenities: selectedAmenities,
-        imageUrls: [], // Images would be uploaded separately via /uploads endpoint
+        imageUrls: [],
       });
+
+      if (images.length > 0) {
+        try {
+          const formData = new FormData();
+          images.forEach(file => formData.append('images', file));
+          await api.upload(`/uploads/listing-images/${created.data.id}`, formData);
+        } catch (uploadErr: any) {
+          // The listing itself was created successfully - a failed photo
+          // upload (e.g. storage not configured yet) shouldn't look like the
+          // whole submission failed, but the user still needs to know.
+          toast({
+            variant: 'destructive',
+            title: 'Listing posted, but photos failed to upload',
+            description: friendlyApiError(uploadErr, 'You can add photos later from your listing.'),
+          });
+        }
+      }
+
       setSuccess(true);
       toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
       setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
+      toast({ variant: 'destructive', title: 'Error', description: friendlyApiError(err, 'Could not post listing. Please try again.') });
     } finally { setLoading(false); }
   }
 
   async function nextStep() {
-    const fieldsToValidate: (keyof FormData)[] = step === 1
-      ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
-      : ['city', 'contactInfo'];
-    const valid = await trigger(fieldsToValidate);
-    if (valid) setStep(s => s + 1);
+    // Guard against double-invocation while validation is in flight: without
+    // this, a second click landing during the brief async window between
+    // trigger() resolving and the step-3 re-render could hit the "Post
+    // listing" submit button that takes this same button's place, submitting
+    // one step early with no photos attached.
+    if (validating) return;
+    setValidating(true);
+    try {
+      const fieldsToValidate: (keyof FormData)[] = step === 1
+        ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
+        : ['city', 'contactInfo'];
+      const valid = await trigger(fieldsToValidate);
+      if (valid) setStep(s => s + 1);
+    } finally {
+      setValidating(false);
+    }
   }
 
   const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); onClose(); } };
+
+  useEscapeKey(handleClose, open);
 
   if (!isAuth && open) return (
     <>
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
+            className="fixed inset-0 z-overlay flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
             onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
             <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
               className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-elevated text-center">
@@ -134,7 +167,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     <AnimatePresence>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm"
+          className="fixed inset-0 z-overlay flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm"
           onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
           <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 60 }}
             transition={{ type: 'spring', damping: 25, stiffness: 280 }}
@@ -232,10 +265,11 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                         <CityAutocomplete
                           value={city || ''}
                           onChange={(city, coords) => {
-                            setValue('city', city);
+                            setValue('city', city, { shouldValidate: true });
                             if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
                           }}
                           placeholder="Search city..."
+                          label="City"
                         />
                         {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}
                       </div>
@@ -318,11 +352,20 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                     </button>
                   )}
                   {step < 3 ? (
-                    <button type="button" onClick={nextStep} className="btn-brand flex-1 py-3">
+                    // Distinct `key`s from the submit button below force React to
+                    // fully unmount/remount this element on the step transition
+                    // instead of patching the existing DOM node's `type` attribute
+                    // from "button" to "submit" in place. Patching in place left
+                    // the browser treating the just-clicked, still-focused node as
+                    // a submit button and firing a spurious native submit right
+                    // after - reusing the same node also carries over its "just
+                    // activated by a real click" state, which a submit-type button
+                    // in that state can trigger a default action for.
+                    <button key="continue" type="button" onClick={nextStep} disabled={validating} className="btn-brand flex-1 py-3 disabled:opacity-60">
                       Continue →
                     </button>
                   ) : (
-                    <button type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+                    <button key="submit" type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
                       {loading ? <><Loader2 size={16} className="animate-spin" /> Posting...</> : 'Post listing'}
                     </button>
                   )}

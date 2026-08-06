@@ -69,6 +69,17 @@ const config: Config = {
         'brand-gradient': 'linear-gradient(135deg, #0a5c42, #0f7a57)',
         'gold-gradient': 'linear-gradient(135deg, #a87c26, #e4b44a)',
       },
+      // Single source of truth for stacking order across the app. Third-party
+      // widgets (Leaflet in particular) ship their own internal z-indices that
+      // can reach 1000+; anything embedding one MUST also get `isolate` so its
+      // internal stacking is contained and can't escape above these layers.
+      zIndex: {
+        map: '10',       // embedded map (contained via `isolate`)
+        header: '40',    // sticky site header / nav
+        dropdown: '50',  // autocomplete lists, user menu, small popovers
+        overlay: '100',  // modal backdrops + dialogs
+        toast: '200',    // toast notifications - always on top
+      },
     },
   },
   plugins: [require('tailwindcss-animate')],

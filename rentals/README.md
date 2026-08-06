@@ -160,7 +160,8 @@ Open [http://localhost:3000](http://localhost:3000)
 |---|---|---|
 | `city` | string | Filter by city name |
 | `audience` | enum | BROTHERS, SISTERS, COUPLES, FAMILIES, ALL |
-| `minBeds` | number | Minimum bedrooms |
+| `minBeds` | number | Minimum bedrooms (at least N) |
+| `minBaths` | number | Minimum bathrooms (at least N) |
 | `maxPrice` | number | Maximum monthly price |
 | `lat` | number | Centre latitude for radius search |
 | `lng` | number | Centre longitude |
@@ -168,7 +169,7 @@ Open [http://localhost:3000](http://localhost:3000)
 | `furnished` | boolean | Furnished only |
 | `parking` | boolean | Parking included |
 | `utilities` | boolean | Utilities included |
-| `sort` | string | newest, priceLow, priceHigh, beds |
+| `sort` | string | newest, priceLow, priceHigh |
 | `page` | number | Page number |
 | `limit` | number | Results per page (max 50) |
 

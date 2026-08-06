@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Loader2, MessageSquare } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Send, ArrowLeft, Loader2, MessageSquare, LogIn } from 'lucide-react';
 import { Conversation, Message } from '@/types';
 import { messagesApi } from '@/lib/api';
-import { useUser } from '@/store/authStore';
+import { useUser, useIsAuthenticated } from '@/store/authStore';
 import { formatTimeAgo, cn, initials } from '@/lib/utils';
 import { connectSocket, disconnectSocket } from '@/lib/socket';
 import { useToast } from '@/components/ui/use-toast';
+import EmptyState from '@/components/ui/EmptyState';
+import AuthModal from '@/components/auth/AuthModal';
 
 interface InboxProps {
   initialConvId?: string;
@@ -22,18 +24,26 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [typing, setTyping] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<any>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const activeConvRef = useRef<Conversation | null>(null);
   const user = useUser();
+  const isAuth = useIsAuthenticated();
   const { toast } = useToast();
+
+  useEffect(() => { activeConvRef.current = activeConv; }, [activeConv]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Load conversations
+  // Load conversations - only once we know the user is signed in, otherwise
+  // this always 401s and the resulting empty list falsely reads as "no
+  // messages yet" instead of "you're not signed in".
   useEffect(() => {
+    if (!isAuth) { setLoading(false); return; }
     setLoading(true);
     messagesApi.getConversations()
       .then(res => {
@@ -46,40 +56,44 @@ export default function Inbox({ initialConvId }: InboxProps) {
       .catch(() => toast({ variant: 'destructive', title: 'Could not load conversations' }))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAuth]);
 
-  // Setup socket
+  // Setup socket - cleaned up on unmount so listeners don't pile up (and
+  // stay bound to stale closures) across repeat visits to this page.
   useEffect(() => {
-    socketRef.current = connectSocket();
+    if (!isAuth) return;
 
-    socketRef.current.on('message:new', (msg: Message) => {
+    const socket = connectSocket();
+    socketRef.current = socket;
+
+    const onMessageNew = (msg: Message) => {
       setMessages(prev => {
         if (prev.some(m => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
       setConversations(prev => prev.map(c =>
-        c.id === activeConv?.id ? { ...c, messages: [msg] } : c
+        c.id === activeConvRef.current?.id ? { ...c, messages: [msg] } : c
       ));
       setTimeout(scrollToBottom, 100);
-    });
+    };
+    const onTypingStart = ({ userName }: { userName: string }) => setTyping(userName);
+    const onTypingStop = () => setTyping(null);
+    const onConversationNew = (conv: Conversation) => setConversations(prev => [conv, ...prev]);
 
-    socketRef.current.on('typing:start', ({ userName }: { userName: string }) => {
-      setTyping(userName);
-    });
-
-    socketRef.current.on('typing:stop', () => {
-      setTyping(null);
-    });
-
-    socketRef.current.on('conversation:new', (conv: Conversation) => {
-      setConversations(prev => [conv, ...prev]);
-    });
+    socket.on('message:new', onMessageNew);
+    socket.on('typing:start', onTypingStart);
+    socket.on('typing:stop', onTypingStop);
+    socket.on('conversation:new', onConversationNew);
 
     return () => {
-      if (activeConv) socketRef.current?.emit('conversation:leave', activeConv.id);
+      if (activeConvRef.current) socket.emit('conversation:leave', activeConvRef.current.id);
+      socket.off('message:new', onMessageNew);
+      socket.off('typing:start', onTypingStart);
+      socket.off('typing:stop', onTypingStop);
+      socket.off('conversation:new', onConversationNew);
+      disconnectSocket();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAuth, scrollToBottom]);
 
   async function openConversation(conv: Conversation) {
     if (activeConv) socketRef.current?.emit('conversation:leave', activeConv.id);
@@ -131,6 +145,20 @@ export default function Inbox({ initialConvId }: InboxProps) {
 
   const otherParticipant = (conv: Conversation) =>
     conv.participants.find(p => p.userId !== user?.id)?.user;
+
+  if (!isAuth) {
+    return (
+      <div className="h-[calc(100dvh-72px)] bg-white rounded-3xl border border-ink/8 shadow-card overflow-hidden flex items-center justify-center">
+        <EmptyState
+          visual={<LogIn size={40} className="mx-auto mb-4 text-muted opacity-40" />}
+          title="Sign in to view your messages"
+          description="Once you're signed in, conversations with landlords and tenants will show up here."
+          action={<button onClick={() => setAuthOpen(true)} className="btn-brand px-8 py-3">Sign in</button>}
+        />
+        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100dvh-72px)] bg-white rounded-3xl border border-ink/8 shadow-card overflow-hidden">
@@ -223,7 +251,12 @@ export default function Inbox({ initialConvId }: InboxProps) {
                 const isMe = msg.sender?.id === user?.id;
                 const showDate = i === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[i-1].createdAt).toDateString();
                 return (
-                  <div key={msg.id}>
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
                     {showDate && (
                       <div className="text-center text-xs text-muted my-3">
                         {new Date(msg.createdAt).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
@@ -240,7 +273,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
 

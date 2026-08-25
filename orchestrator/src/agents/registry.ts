@@ -77,7 +77,20 @@ const DANGEROUS_BASH_DENY = [
 
 // Engineering additionally needs to stage/commit inside its own isolated
 // worktree/branch (never push, never touch another branch).
-const ENGINEERING_BASH_ALLOW = [
+//
+// IMPORTANT: under --permission-mode dontAsk (see claudeAdapter.ts), a tool
+// being present in --tools is NOT enough to make it usable — dontAsk denies
+// any call that doesn't also match an --allowedTools pattern, with no
+// prompt and no fallback. This was discovered the hard way on the first
+// real --full run: Write/Edit were in `tools` but never appeared in
+// `allowedToolPatterns` (only specific Bash subcommands did), so every
+// implementer session was silently denied all file writes and reported
+// "no changes needed" after inspecting the repo read-only. `Write` and
+// `Edit` below are bare tool-name entries (not Bash subpatterns) —
+// required so dontAsk actually allows them.
+const ENGINEERING_ALWAYS_ALLOW = [
+  'Write',
+  'Edit',
   ...REVIEW_BASH_ALLOW,
   'Bash(npm run build*)',
   'Bash(npm install)',
@@ -186,7 +199,7 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
     role: 'engineering',
     roleFile: 'agents/engineering.md',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
-    allowedToolPatterns: ENGINEERING_BASH_ALLOW,
+    allowedToolPatterns: ENGINEERING_ALWAYS_ALLOW,
     disallowedToolPatterns: ENGINEERING_BASH_DENY,
     canWriteCode: true,
     needsWorktree: true,
@@ -198,7 +211,7 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
     role: 'frontend',
     roleFile: 'agents/frontend.md',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
-    allowedToolPatterns: ENGINEERING_BASH_ALLOW,
+    allowedToolPatterns: ENGINEERING_ALWAYS_ALLOW,
     disallowedToolPatterns: ENGINEERING_BASH_DENY,
     canWriteCode: true,
     needsWorktree: true,
@@ -210,7 +223,7 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
     role: 'backend',
     roleFile: 'agents/backend.md',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
-    allowedToolPatterns: ENGINEERING_BASH_ALLOW,
+    allowedToolPatterns: ENGINEERING_ALWAYS_ALLOW,
     disallowedToolPatterns: ENGINEERING_BASH_DENY,
     canWriteCode: true,
     needsWorktree: true,

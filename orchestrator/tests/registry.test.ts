@@ -61,6 +61,18 @@ describe('agent registry — permission profiles', () => {
     }
   });
 
+  it('implementer roles allow-list Write and Edit by bare tool name (regression: dontAsk denies anything not explicitly allow-listed, even if present in --tools)', () => {
+    // Discovered on the first real --full run: --tools granting Write/Edit
+    // was NOT sufficient under --permission-mode dontAsk — every write was
+    // denied because allowedToolPatterns only ever listed Bash subcommands,
+    // never the bare 'Write'/'Edit' tool names. This test pins the fix.
+    for (const role of IMPLEMENTER_ROLES) {
+      const profile = getProfile(role);
+      expect(profile.allowedToolPatterns, role).toContain('Write');
+      expect(profile.allowedToolPatterns, role).toContain('Edit');
+    }
+  });
+
   it('no role is granted every tool unconditionally — each profile is deliberately scoped', () => {
     for (const [role, profile] of Object.entries(REGISTRY)) {
       expect(profile.tools.length, role).toBeGreaterThan(0);

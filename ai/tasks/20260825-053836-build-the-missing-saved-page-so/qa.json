@@ -1,0 +1,69 @@
+{
+  "role": "qa",
+  "taskId": "20260825-053836-build-the-missing-saved-page-so",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "[frontend] /saved page correctly calls usersApi.getSaved(), renders the ListingCard grid matching /browse's pattern, and implements loading skeleton, error state with retry, and empty state with a Browse CTA.",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx lines 103-143"
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Auth gating mirrors the existing /post page pattern exactly (AuthModal auto-opens for logged-out users, redirect home on modal close if still unauthenticated) rather than inventing a new pattern.",
+      "evidence": "Compared rentals/frontend/src/app/saved/page.tsx (lines 45-83) against rentals/frontend/src/app/post/page.tsx (lines 12-51) — same useIsAuthenticated + AuthModal + router.push('/') structure."
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Unsaving a listing from /saved via the ListingCard heart toggle correctly removes it from the visible list through the new optional onSaveChange callback.",
+      "evidence": "ListingCard.tsx line 38 calls onSaveChange?.(listing, res.saved); saved/page.tsx handleSaveChange (line 50-52) filters the listing out of state when saved=false."
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] onSaveChange is additive/optional on ListingCard and does not affect /browse, the only other consumer, which doesn't pass it.",
+      "evidence": "grep confirms rentals/frontend/src/app/browse/page.tsx's ListingCard usage has no onSaveChange prop."
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Backend GET /users/me/saved is correctly scoped to req.user!.id (no cross-user data leak), now excludes REMOVED (soft-deleted) listings consistent with GET /listings and GET /listings/:id, and its response shape (amenities as string[], thumbnailUrl, isSaved, user relation) now exactly matches the frontend Listing type and the shape returned by GET /listings.",
+      "evidence": "rentals/backend/src/routes/users.ts lines 95-121 compared against rentals/backend/src/routes/listings.ts lines 134-168 (identical field-select and mapping pattern)."
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] POST /listings/:id/save (save/unsave) correctly scopes all reads/writes by req.user!.id combined with the userId_listingId compound unique key, verifies listing existence before create, and returns 404 via validateUuidParam for malformed IDs — no ownership or duplicate-save gaps found.",
+      "evidence": "rentals/backend/src/routes/listings.ts lines 286-306; SavedListing model in schema.prisma has @@unique([userId, listingId]) and onDelete: Cascade."
+    },
+    {
+      "severity": "low",
+      "finding": "[frontend] Neither implementer was able to actually run the type-checker, build, or a live browser session in this sandboxed worktree (Bash denied), so this review is code-level/static only, matching the limitation the implementers themselves flagged.",
+      "recommendedAction": "Before merge, run `npm run type-check` on both frontend/backend and do one live manual pass (save a listing on /browse, view it on /saved, unsave it there) in an environment with Bash/dev-server access, since no automated test suite exists per ai/current-state.md."
+    },
+    {
+      "severity": "info",
+      "finding": "[backend] GET /users/me/saved now filters out listings whose status is not ACTIVE, matching the same exclusion GET /listings already applies, so a later-removed/deactivated saved listing no longer appears as a dead card on the /saved page.",
+      "evidence": "rentals/backend/src/routes/users.ts:100 where: { userId: req.user!.id, listing: { status: ListingStatus.ACTIVE } } — same pattern as listings.ts:99."
+    },
+    {
+      "severity": "info",
+      "finding": "[backend] Response shape fixed to match what ListingCard/frontend Listing type expects: amenities flattened to string[] (was {name} objects) and isSaved explicitly set to true.",
+      "evidence": "users.ts:109 data: saved.map(s => ({ ...s.listing, amenities: s.listing.amenities.map(a => a.name), isSaved: true })) — mirrors listings.ts:167's amenities.map(a => a.name) pattern used on GET /listings."
+    },
+    {
+      "severity": "info",
+      "finding": "[backend] Ownership scoping on both POST /listings/:id/save and GET /users/me/saved was already correct prior to this change and remains untouched — every query/mutation is keyed off req.user!.id via the (userId, listingId) compound unique constraint; no listingId-only or client-supplied-userId lookup path exists.",
+      "evidence": "listings.ts:289-304 uses userId_listingId: { userId: req.user!.id, listingId: req.params.id } for both the existence check and delete; SavedListing has @@unique([userId, listingId]) in schema.prisma:143."
+    },
+    {
+      "severity": "info",
+      "finding": "[backend] No schema changes were made (schema.prisma diff is empty), consistent with the claim that the fix is query/response-level only and non-destructive.",
+      "evidence": "git diff --stat -- rentals/backend/prisma/schema.prisma produced no output."
+    },
+    {
+      "severity": "low",
+      "finding": "[backend] Untracked build artifacts (rentals/backend/dist/, prisma/seed.js, seed.d.ts, and their .map files) are sitting in the worktree from a local build/prisma-generate attempt during this session and are not covered by any .gitignore in the repo (none exists for rentals/backend).",
+      "evidence": "git status shows these as untracked; Glob found no .gitignore under rentals/**; mtimes on dist/ and seed.js are 2026-08-25 05:40:13, i.e. generated this session.",
+      "recommendedAction": "Delete the generated dist/ and prisma seed .js/.d.ts/.map artifacts before this branch is merged (or add a .gitignore), so a future `git add -A` doesn't accidentally commit compiled output alongside source changes. Not a blocker for this task's scope."
+    }
+  ],
+  "notes": "Per-worktree verdicts: frontend=PASS, backend=PASS"
+}

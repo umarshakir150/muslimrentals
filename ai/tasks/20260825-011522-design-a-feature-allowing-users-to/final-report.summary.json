@@ -1,0 +1,21 @@
+{
+  "taskId": "20260825-011522-design-a-feature-allowing-users-to",
+  "objective": "Design a feature allowing users to report roommate profiles.",
+  "finalState": "DRY_RUN_COMPLETE",
+  "agentsInvolved": [
+    "designer",
+    "trust_safety",
+    "legal"
+  ],
+  "approvalGate": {
+    "required": false,
+    "reasons": []
+  },
+  "correctionCycles": 0,
+  "summary": "Dry run complete. Agents consulted: designer, trust_safety, legal. No application code was modified.",
+  "filesChanged": [],
+  "nextSteps": [
+    "Review the specialist/engineering analysis artifacts under this task directory.",
+    "If the plan looks right, re-run with --full to authorize implementation (still subject to the founder approval gate below)."
+  ]
+}

@@ -1,83 +1,105 @@
-# Orchestration Plan (future — not implemented yet)
+# Orchestration Plan
 
 This describes how the repo-native structure in `CLAUDE.md`, `agents/`,
-`company/`, and `ai/` can evolve into separate concurrent Claude worker
-processes, **once the repo-native workflow has been validated on real
-tasks.** Nothing in this file should be built yet — the repository does not
-currently contain an orchestration framework, and the founder's explicit
-instruction was not to build one prematurely.
+`company/`, and `ai/` evolves into separate concurrent Claude worker
+processes. **The target shape described here is now implemented** in
+`orchestrator/` — see `orchestrator/README.md` for the full architecture,
+setup, and usage. This file now tracks what's implemented vs. what's
+still deliberately deferred, so it doesn't drift into describing an
+imaginary system (see `company/architecture.md`'s own rule about that).
 
-## Why not build this now
+## Status: implemented
 
-- The workflow itself (which roles, which reviews, what gates) hasn't been
-  exercised yet. Automating an unvalidated process just automates its
-  mistakes faster.
-- This is a free, early-stage product with no test suite and no CI
-  (`ai/current-state.md`) — concurrent automated agents editing code
-  without a safety net to catch regressions is higher risk than the
-  process problem it would solve.
-- The task-file structure (`ai/tasks/`) already gives most of the benefit
-  (durable records, clear ownership, explicit review gates) without the
-  operational complexity of managing multiple live processes.
+Built and validated (unit tests + a real dry-run integration run — see
+`ai/tasks/` for that run's artifacts, referenced from the task that added
+this orchestrator):
 
-## Target shape, when it's time
-
-- **Supervisor as primary coordinator.** One process (or the founder,
-  directly) opens and owns task files, decides which specialist workers to
-  spawn, and is the only one that reconciles conflicting outputs or talks
-  to the founder about status.
+- **Supervisor as primary coordinator**, producing a machine-readable
+  `SupervisorPlan` (`orchestrator/src/types/schemas.ts`) that decides which
+  agents a task needs and why. Scheduling itself (concurrency groups,
+  dependencies) is computed deterministically in code from that plan, not
+  left to model judgment — see `orchestrator/README.md` "Concurrency."
 - **Separate Claude processes for specialist agents.** Each `agents/*.md`
-  role becomes a process/session invoked with that role's file as its
-  system context, rather than one session context-switching between roles.
-  This is what actually enables parallelism (Frontend and Backend working
-  the same task at the same time) instead of the current sequential
-  single-session approach.
-- **Structured task IDs.** Extend `ai/tasks/<short-id>.md` into a real
-  identifier scheme (e.g. date-prefixed or sequential) so tasks, branches,
-  and worker invocations can all reference the same ID unambiguously.
-- **Shared task artifacts instead of endless agent chat.** Workers read and
-  write the task file (and code) as their coordination mechanism — not a
-  live back-and-forth conversation between agents. This is already true of
-  the current repo-native design (`ai/workflow.md`) and should carry
-  forward unchanged; it's what makes the system auditable via git history
-  and task files alone.
-- **Limited tool permissions by role.** A Security or QA worker should not
-  have the same write access as an Engineering worker — reviewers should
-  not be able to silently patch what they're reviewing. In Claude Code
-  terms, this maps to per-session tool/permission scoping.
-- **Branch/worktree isolation for concurrent coding.** Each implementation
-  worker (Frontend, Backend) works in its own branch or git worktree so
-  parallel work doesn't collide; Engineering Lead merges/coordinates.
-- **Reviewer agents should not modify the same branch they review.** QA,
-  Security, Trust & Safety, and Legal review a branch/diff from outside it
-  and report findings back into the task file — they don't push fixes
-  directly into the branch under review. This preserves the independence
-  that makes their sign-off meaningful.
-- **Aggregation by Supervisor.** The Supervisor process is the one that
-  reads every worker's output back into the task file, resolves conflicts,
-  and decides the task's next state.
-- **Retry loop when reviewers return `CHANGES_REQUIRED`.** The Supervisor
-  routes the task back to the owning implementation worker, which fixes and
-  re-submits; the same reviewer (not a different one) re-checks, so context
-  isn't lost between rounds.
-- **Audit trail through task files and git history.** No separate logging
-  system needed at this stage — the task file's status/history plus normal
-  git commits are the record of what happened, in what order, and who
-  (which role) did it.
+  role runs as its own `claude -p` (headless) subprocess, given only its
+  own role file plus a curated slice of `company/`/`ai/` context — not the
+  whole repo, not every other agent's output.
+- **Structured task IDs and shared task artifacts instead of agent chat.**
+  `ai/tasks/<task-id>/` holds `request.md`, `plan.json`, one artifact per
+  agent that actually ran, `qa.json`/`security.json`, `final-report.md`,
+  and an append-only `log.jsonl` — the coordination mechanism, not a live
+  conversation between agents.
+- **Limited tool permissions by role**, enforced two ways: a hard
+  tool-name allowlist per role (a tool not granted doesn't exist for that
+  worker), and fine-grained Bash command scoping for the roles that get
+  Bash at all (QA, Security, implementers). See `orchestrator/README.md`
+  "Agent permissions."
+- **Branch/worktree isolation for concurrent coding.** Implementer roles
+  each get their own `git worktree`; reviewers inspect that worktree with
+  read-only (or Bash-limited) tools and never get Write/Edit.
+- **Reviewer agents do not modify what they review** — architecturally,
+  not just by instruction (no Write/Edit tool granted at all to QA/Security).
+- **Aggregation by Supervisor**, and **a retry loop when reviewers return
+  `CHANGES_REQUIRED`** — routes back to the same implementer role on the
+  same branch, with the reviewer's findings as correction context; the
+  same two reviewers re-check together on every cycle, bounded by a max
+  retry count that escalates to the founder instead of looping forever.
+- **Audit trail through task files and git history** — every phase
+  transition, agent launch/completion, review verdict, retry, and approval
+  gate is logged to both the console and `ai/tasks/<id>/log.jsonl`, with
+  secret-shaped values redacted before they're written anywhere
+  (`orchestrator/src/logger.ts`).
+- **Founder approval gates that actually stop execution**, sourced from
+  CLAUDE.md's own "Founder authority" list (parsed at runtime, not
+  duplicated) combined with the Supervisor's own judgment — either one
+  flagging a task halts it before implementation (or before completion)
+  with `FOUNDER_APPROVAL_REQUIRED` and the matched reasons.
+- **Explicit safety bounds**: max agents per task, max correction retry
+  cycles, max concurrent workers per group, and a per-invocation spend cap,
+  all enforced in code (not just requested of the model) — see
+  `orchestrator/README.md` "Safety bounds."
 
-## Recommended path to get there
+## Status: deliberately not implemented yet
 
-1. Run several real tasks through the current repo-native workflow
-   end-to-end (Supervisor → specialists → reviews → founder approval),
-   using `ai/tasks/TEMPLATE.md` for each.
-2. After that, evaluate friction: where did sequential single-session work
-   actually block on something that true concurrency would have fixed?
-   Where did a reviewer's independence get compromised by being in the same
-   session as the implementer?
-3. Only then move to Claude Code's programmatic/headless execution to spawn
-   actual concurrent worker processes per the shape above — and only if the
-   repository still doesn't already contain a more suitable orchestration
-   framework by that point (re-check before building one).
-4. Introduce branch/worktree isolation and per-role tool permission scoping
-   at that same point, not before — they only pay for themselves once
-   there's real concurrency to isolate.
+- **Multi-worktree review aggregation.** If a plan ever splits
+  implementation across more than one implementer role in the same run
+  (e.g. `frontend` + `backend` together), QA/Security currently review
+  only the first implementer's worktree. Extending review to aggregate
+  findings across multiple diffs is real future work — not built yet
+  because it hasn't been needed in practice, and the added complexity
+  (reconciling two independent diffs' worth of findings into one
+  correction cycle) isn't worth taking on speculatively.
+- **Auto-merge of implementer branches.** The orchestrator intentionally
+  never merges a finished implementer branch back into the task's base
+  branch on its own — that's left as a manual step for the Engineering
+  Lead/founder, reported in the final task report. Whether to automate
+  this (and under what conditions) is an open question, not a decision.
+- **CI integration.** This repo still has no CI (`ai/current-state.md`).
+  The orchestrator's own test suite (`orchestrator/npm test`) isn't wired
+  into any pipeline yet — running it is currently a manual step.
+- **Cost tracking across a whole task.** `claude`'s per-call cost is
+  captured by the adapter (`ClaudeInvokeResult.costUsd`) but not yet
+  aggregated or logged per task — a near-term, low-effort addition.
+- **A UI or dashboard over `ai/tasks/`.** Everything is file-based today;
+  browsing task history means reading the directory, which is fine at
+  current scale but won't stay pleasant indefinitely.
+- **Automatic escalation delivery.** `FOUNDER_APPROVAL_REQUIRED` is
+  reported in the CLI output and the task's final report — nothing pushes
+  a notification to the founder yet (e.g. email/Slack). The founder has to
+  be watching the run or read the task directory afterward.
+- **Using `--full` against a real feature.** Every run to date has been
+  either a unit test (mocked Claude entirely) or the one real dry run used
+  to validate this system. No implementation has actually happened through
+  this pipeline yet — that's the natural next step, on a small, low-risk
+  task, with a human watching.
+
+## Recommended next step
+
+Run one small, real, low-risk feature through `--full` mode with a human
+watching closely (per the founder-approval-required posture: even a task
+that doesn't trip the keyword gate should get a manual look the first few
+times). Use that run to sanity-check the things this plan couldn't fully
+verify without spending real implementation cycles: whether the
+`dontAsk` permission-mode assumption holds under real Bash usage by
+Engineering/QA/Security (see `orchestrator/README.md` "Troubleshooting"),
+and whether the correction loop's feedback is specific enough for
+Engineering to actually fix what a reviewer flagged.

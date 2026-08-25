@@ -100,6 +100,7 @@ agents/                    ← persistent role definitions
   trust-safety.md
   legal.md
   support.md
+  integrator.md            ← orchestration-internal only; see agents/integrator.md
 
 company/                   ← what the company/product actually is
   product.md

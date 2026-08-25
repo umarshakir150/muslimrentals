@@ -19,6 +19,7 @@ import type { ClaudeInvoker } from '../claude/claudeAdapter.js';
 import { getProfile } from '../agents/registry.js';
 import { buildContext, renderSystemPrompt, renderUserPrompt } from '../context/contextBuilder.js';
 import { evaluateFounderGate } from '../approval/founderGate.js';
+import { defaultScopes } from './crossBranchAnalysis.js';
 import { logEvent } from '../logger.js';
 
 export const DEFAULT_MAX_AGENTS_PER_TASK = 8;
@@ -114,6 +115,7 @@ export async function buildPlan(req: PlanRequest, invoker: ClaudeInvoker): Promi
       requiredAgents: ['designer', 'trust_safety', 'legal', 'engineering', 'qa', 'security'],
       dependencies: {},
       parallelGroups: [['designer', 'trust_safety', 'legal'], ['engineering'], ['qa', 'security']],
+      implementationScopes: [],
       approvalRequirements: { founderApprovalRequired: false, reasons: [] },
       expectedArtifacts: [],
       riskNotes: ['Supervisor plan failed schema validation — used a conservative default plan.'],
@@ -131,8 +133,10 @@ export async function buildPlan(req: PlanRequest, invoker: ClaudeInvoker): Promi
     });
     plan.requiredAgents = plan.requiredAgents.slice(0, maxAgents);
   }
-  // Supervisor never dispatches itself as a worker.
-  plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'supervisor');
+  // Supervisor never dispatches itself as a worker, and Integrator is
+  // orchestration-internal only — invoked directly by the Runner when 2+
+  // implementer roles run, never selected via the plan (see registry.ts).
+  plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'supervisor' && r !== 'integrator');
 
   // Scheduling is always computed deterministically, never taken from the model.
   const modelGroups = plan.parallelGroups;
@@ -144,6 +148,13 @@ export async function buildPlan(req: PlanRequest, invoker: ClaudeInvoker): Promi
     modelProposed: modelGroups,
     actual: plan.parallelGroups,
   });
+
+  // Implementation scope (which paths each implementer is expected to
+  // touch) is likewise always computed deterministically — see
+  // crossBranchAnalysis.ts's rationale. The model isn't asked for this at
+  // all; there's nothing here for it to propose or override.
+  const implementerRoles = plan.requiredAgents.filter((r) => GROUP_2_IMPLEMENTERS.includes(r));
+  plan.implementationScopes = defaultScopes(implementerRoles);
 
   // Founder gate: union of the model's own judgment and the deterministic
   // CLAUDE.md-driven keyword gate. Never rely on model judgment alone for

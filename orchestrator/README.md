@@ -20,7 +20,10 @@ CLI (src/cli.ts)
             contextBuilder  (src/context/contextBuilder.ts) — minimal, curated context
             registry        (src/agents/registry.ts)         — permission profile
             ClaudeInvoker   (src/claude/claudeAdapter.ts)     — the only thing that spawns `claude`
-            worktree        (src/git/worktree.ts)             — isolation for implementers only
+            worktree        (src/git/worktree.ts)             — isolation for implementers + integration
+       -> [2+ implementers only]
+            crossBranchAnalysis (src/supervisor/crossBranchAnalysis.ts) — deterministic overlap/scope check, no Claude call
+            Integrator agent (agents/integrator.md)                     — reconciles, invoked only when needed
        -> taskStore  (src/task/taskStore.ts)  — every artifact + log line, durably, under ai/tasks/<id>/
 ```
 
@@ -175,20 +178,33 @@ and `--no-session-persistence` (throwaway sessions don't clutter `claude
 
 Only implementer roles (`engineering`/`frontend`/`backend`) get a git
 worktree (`src/git/worktree.ts`), created via `git worktree add -b
-agents/<task-id>/<role> orchestrator/.worktrees/<task-id>-<role> HEAD`.
-Reviewers (QA, Security) are pointed at that same worktree path with
-Read/Grep/Glob(/Bash) only — they inspect it, they never get Write/Edit,
-so **a reviewer is architecturally unable to silently rewrite what it's
-reviewing** (not just asked not to).
+agents/<task-id>/<role> orchestrator/.worktrees/<task-id>-<role> <base-commit>`
+— every implementer (and, when one is needed, the integration worktree)
+branches from the exact same base commit, resolved once per task
+(`resolveHead()`) so "what changed" is always measured against one stable
+baseline. When a plan needs 2+ implementers, a further, single
+**integration worktree** is created at `agents/<task-id>/integration` (see
+"Cross-branch analysis & integration" above) — reviewers in that path are
+pointed at *it*, never at an individual implementer's worktree.
+
+Reviewers (QA, Security, and any future role that inspects a worktree) are
+pointed at whichever worktree path is under review with Read/Grep/Glob(/Bash)
+only — they inspect it, they never get Write/Edit, so **a reviewer is
+architecturally unable to silently rewrite what it's reviewing** (not just
+asked not to). The Integrator *does* get Write/Edit (it's reconciling code,
+not reviewing it), but is not a reviewer — see above.
 
 The orchestrator **does not auto-merge or auto-delete worktrees/branches**
-after a task finishes. This is deliberate: merging is a judgment call
-(conflict resolution, deciding if the diff is actually good) that belongs
-to the Engineering Lead/founder, not to a script. Every finished task's
-final report lists the branch name(s) and worktree path(s) under "Next
-steps" for manual review/merge. `src/git/worktree.ts` exports
-`removeWorktree()` for manual/test cleanup, but `runTask()` never calls it
-itself outside of tests.
+after a task finishes, implementer or integration. This is deliberate:
+merging into the repo's default branch is a judgment call that belongs to
+the Engineering Lead/founder, not to a script. Every finished task's final
+report lists the integration branch (when there is one) and every
+implementer branch/worktree path under "Next steps" for manual
+review/merge — the integration branch is called out as the reviewed,
+mergeable result, with the implementer branches noted as its
+already-folded-in inputs, not separate things to merge themselves.
+`src/git/worktree.ts` exports `removeWorktree()` for manual/test cleanup,
+but `runTask()` never calls it itself outside of tests.
 
 Worktrees live under `orchestrator/.worktrees/` (gitignored). Both this
 path and `ai/tasks/` are overridable via `ORCHESTRATOR_WORKTREES_DIR` /
@@ -198,45 +214,145 @@ at an OS temp directory, so `npm test` never touches this repo's real
 
 ## Review loop
 
+There are **two distinct review paths**, chosen automatically by how many
+implementer roles a plan requires — never left as a judgment call, since
+that choice is exactly what a real run got wrong once (see "Cross-branch
+analysis & integration" below).
+
+### One implementer (`engineering`, or a plan that only needs `frontend` *or* `backend`)
+
 ```
 PLANNING -> SPECIALIST_REVIEW -> READY_FOR_IMPLEMENTATION -> IMPLEMENTING
-  -> QA_REVIEW -> SECURITY_REVIEW -> [CORRECTION_REQUIRED -> IMPLEMENTING -> RE_REVIEW]*
+  -> QA_REVIEW -> [CORRECTION_REQUIRED -> IMPLEMENTING -> RE_REVIEW]*
   -> READY_FOR_FOUNDER -> COMPLETE | FOUNDER_APPROVAL_REQUIRED
 ```
 
-- QA and Security always run together (`Promise.all`) against the same
-  diff, whether it's the first review or a re-review — a fix aimed at one
-  reviewer's finding can affect the other, so both re-check every cycle.
-- Either reviewer returning `CHANGES_REQUIRED` sends the task back to the
-  **specific implementer role whose worktree failed**, in the **same**
-  worktree/branch (continuing the work, not starting over), with that
-  reviewer's findings appended as correction context
-  (`renderCorrectionFeedback` in `src/supervisor/orchestrator.ts`). An
-  implementer role whose worktree already passed is left alone — it is not
-  redundantly re-invoked just because a *different* implementer's worktree
-  needed a fix.
-- **Every implementer's worktree is reviewed, independently, every round —
-  not just the first one.** If a plan splits implementation across more
-  than one role (e.g. `frontend` + `backend`), QA and Security each run
-  once per implementer worktree (`reviewWorktrees()` in
-  `src/supervisor/orchestrator.ts`), and the results are merged into one
-  `qa.json`/`security.json` per task: `CHANGES_REQUIRED` if *any* worktree
-  needs changes, findings tagged by which implementer's worktree they came
-  from (`mergeReviewResults()`). On a correction round, only the
-  worktree(s) that actually failed are re-reviewed — an already-approved
-  worktree isn't re-invoked, since worktree isolation guarantees nothing
-  there could have changed. See `tests/orchestrator.test.ts`'s
-  "multi-worktree review" suite for the scenario this covers.
+There is exactly one worktree, so QA and Security (always run together,
+`Promise.all`, against the same diff) review it directly — no cross-branch
+question can arise with a single implementer.
+
+### Two or more implementers (e.g. `frontend` **and** `backend` in the same plan)
+
+```
+... -> IMPLEMENTING -> CROSS_BRANCH_ANALYSIS -> INTEGRATION
+  -> INTEGRATED_QA_REVIEW -> [CORRECTION_REQUIRED -> RE_INTEGRATION -> INTEGRATED_QA_REVIEW]*
+  -> READY_FOR_FOUNDER -> COMPLETE | FOUNDER_APPROVAL_REQUIRED
+```
+
+**Per-implementer worktrees are never independently reviewed or approved in
+this path.** An earlier version of this orchestrator reviewed each
+implementer's worktree in isolation (see "Troubleshooting" below for what
+that missed) — that mechanism has been fully replaced. Only the single,
+combined **integration worktree** is ever reviewed, and only that verdict
+counts toward `COMPLETE`. See "Cross-branch analysis & integration" below
+for exactly how that worktree gets built.
+
+### Both paths
+
+- Either reviewer returning `CHANGES_REQUIRED` sends the task back into
+  `IMPLEMENTING` (single-implementer path) or `RE_INTEGRATION` (integrated
+  path — this re-invokes the **Integrator**, never the original
+  implementers; see below), with the reviewer's findings appended as
+  correction context (`renderCorrectionFeedback` in
+  `src/supervisor/orchestrator.ts`).
 - **Engineering never approves its own work.** There is no code path in
-  the state machine that can reach `COMPLETE` without every implementer
-  worktree that ran recording a passing verdict (`PASS`/`APPROVED`) from
-  both `qa.json` and `security.json`, from roles that are architecturally
-  read-only for code — see "Agent permissions" above.
+  the state machine that can reach `COMPLETE` without a passing verdict
+  (`PASS`/`APPROVED`) recorded in both `qa.json` and `security.json`, from
+  roles that are architecturally read-only for code — see "Agent
+  permissions" above. In the integrated path this also means: no code path
+  can reach `COMPLETE` from summing up per-worker approvals — there is no
+  such sum to reach `COMPLETE` from, only one integrated verdict.
 - `--max-retries` (default 2, `DEFAULT_MAX_RETRY_CYCLES`) bounds the
-  correction loop. Exhausting it does not loop forever and does not
-  silently give up — it escalates to `FOUNDER_APPROVAL_REQUIRED`, naming
-  which implementer role(s) were still failing, recorded in the final
-  report.
+  correction loop in both paths — whether the loop is
+  `IMPLEMENTING`/`RE_REVIEW` cycles or `RE_INTEGRATION` cycles. Exhausting
+  it does not loop forever and does not silently give up — it escalates to
+  `FOUNDER_APPROVAL_REQUIRED` with the specific reason recorded in the
+  final report.
+
+## Cross-branch analysis & integration
+
+**Why this exists:** the first real `--full` run against an actual feature
+(adding a saved-listings page) split implementation across `frontend` and
+`backend`. Both roles, isolated in their own worktrees, independently
+modified `rentals/backend/src/routes/users.ts` with two different,
+incompatible fixes. Each branch passed QA/Security review *on its own* —
+nothing ever compared the two branches against each other, so the
+divergence reached the final report undetected. This section is the fix,
+and it only runs when 2+ implementer roles are part of a plan.
+
+**1. Implementation scopes** (`SupervisorPlan.implementationScopes`,
+computed deterministically in `planner.ts`, never left to the model — same
+reasoning as scheduling). Each implementer role gets an `expectedPaths`
+glob list and an `allowedSharedPaths` list. Defaults
+(`src/supervisor/crossBranchAnalysis.ts` `defaultScopeFor`): `frontend` →
+`rentals/frontend/**`, `backend` → `rentals/backend/**`, `engineering` →
+`rentals/**` (the unified role is deliberately allowed to touch both
+sides — it's used precisely when work does *not* cleanly split).
+
+**2. Cross-branch analysis** (`CROSS_BRANCH_ANALYSIS` state,
+`analyzeCrossBranch()`, pure function, no Claude call). After every
+implementer finishes, the orchestrator diffs each worktree against the
+task's shared base commit (`diffNameStatus`, ground truth from git, not any
+implementer's self-report) and classifies every path touched by more than
+one implementer:
+  - `EXPECTED_SHARED` — every implementer that touched it had declared the
+    path in its own `allowedSharedPaths`. Not suspicious, not blocking.
+  - `SUSPICIOUS` — touched by 2+ implementers, each within their own
+    scope, but never declared as intentionally shared. Worth confirming
+    the changes are actually compatible.
+  - `CONFLICTING` — touched by 2+ implementers and at least one of them
+    was outside its own scope for that path. This is exactly the real
+    incident above: frontend touching a backend-owned file.
+
+  Separately, *every* path any implementer touched outside its own
+  `expectedPaths`/`allowedSharedPaths` — overlapping or not — is recorded
+  as `OUT_OF_SCOPE_REVIEW_REQUIRED`. This never auto-fails the task
+  (legitimate cross-cutting work exists); it routes the run to the
+  Integrator/founder for a judgment call instead of silently accepting or
+  silently blocking it.
+
+  Detection is deliberately **path-based, not diff-based** — two
+  implementers editing non-overlapping line ranges of the same file can
+  merge with zero git conflicts and still get flagged, because the risk
+  here (two different, silently incompatible implementations of the same
+  behavior) is a semantic one that git's textual merge has no way to see.
+
+  Written to `ai/tasks/<id>/changed-files.json` (raw per-worker diffs),
+  `implementation-scopes.json` (the scopes used), and
+  `overlap-report.json` (`{overlaps: [...], outOfScope: [...],
+  hasBlockingIssues}`).
+
+**3. Integration** (`INTEGRATION` / `RE_INTEGRATION` states). One dedicated
+integration worktree/branch (`agents/<task-id>/integration`) is created
+from the task's base commit. Every implementer branch is merged into it
+sequentially (`git merge --no-ff`), stopping at the first real conflict.
+  - If every merge is clean **and** `overlapReport.hasBlockingIssues` is
+    false, integration is purely mechanical — no Integrator agent call at
+    all, no reconciliation to explain.
+  - Otherwise, the **Integrator** (`agents/integrator.md`, new role, no
+    worktree of its own — it works in the integration worktree) is
+    invoked with every implementer's own report, the full `overlapReport`,
+    and (on a retry) prior correction feedback. Its job: reconcile
+    conflicting/overlapping/out-of-scope changes, pick or combine the
+    correct implementation, resolve any git conflict markers, and leave the
+    worktree fully committed. It reports an `IntegrationResult`
+    (`decisions`, `filesChanged`, `unresolvedConflicts`) to
+    `integration-report.md`.
+  - **Trust but verify**: after every Integrator call, the orchestrator
+    re-checks the worktree itself (`unresolvedConflicts()` — real git
+    conflict markers) rather than believing the model's self-report. A
+    lingering conflict routes back into another `RE_INTEGRATION` cycle
+    with that fact as correction feedback, bounded by `--max-retries` like
+    any other correction loop.
+  - **The Integrator never gives final approval.** It reconciles; it does
+    not sign off. `INTEGRATED_QA_REVIEW`/`INTEGRATED_SECURITY_REVIEW`
+    always follow, reviewing the actual integrated worktree independently
+    — see "Review loop" above.
+
+**Per-worker review is preliminary, not final.** Nothing about this
+prevents a future addition of lightweight per-worker sanity checks before
+integration, but as implemented today, the *only* review that determines
+`COMPLETE` in the 2+-implementer path is the integrated one.
 
 ## Approval gates
 
@@ -322,10 +438,34 @@ cheap, deterministic, local git, and worth testing for real) but point
 `ORCHESTRATOR_TASKS_DIR`/`ORCHESTRATOR_WORKTREES_DIR` at a temp directory
 (`vitest.config.ts`) and clean up every worktree/branch they create in
 `afterEach`, so `npm test` never leaves artifacts in this repo's real
-`ai/tasks/` or creates real branches. See `tests/orchestrator.test.ts` for
-the full scenario list (concurrency, dependency waiting, QA/Security
-rejection loops, retry-limit stop, founder-gate stop, read-only-role
-enforcement, artifact persistence).
+`ai/tasks/` or creates real branches. `vitest.config.ts` also excludes
+`.worktrees/**` from test discovery — a real implementer/integration
+worktree left on disk from an actual `--full` run is a full checkout of
+this repo, including its own nested (possibly stale) copy of
+`orchestrator/tests/*.test.ts`; without the exclude, Vitest happily
+discovers and runs those too, racing the outer run for the same git refs.
+See `tests/orchestrator.test.ts` for the full scenario list (concurrency,
+dependency waiting, QA/Security rejection loops, retry-limit stop,
+founder-gate stop, read-only-role enforcement, artifact persistence, and
+the full cross-branch-analysis/integration flow — mechanical-only merges,
+conflicting/out-of-scope overlaps invoking the Integrator, a real git
+merge conflict the Integrator claims to fix but doesn't, integrated review
+correction loops for both QA and Security, and the integrated-review retry
+limit). `tests/crossBranchAnalysis.test.ts` covers the deterministic
+overlap/scope classification logic directly (no Claude, no git, no
+worktrees — pure function tests).
+
+`scripts/regression-saved-listings.ts` (`npx tsx
+scripts/regression-saved-listings.ts` from `orchestrator/`) is a standalone
+regression check, not part of `npm test`: it runs the real
+`analyzeCrossBranch()`/`diffNameStatus()` logic against the **actual**
+saved-listings feature branches from the incident described above
+(`agents/20260825-053836-.../frontend` and `.../backend`, still present in
+this repo as a fixture) as static input — read-only, no worktree created,
+nothing merged or modified — and asserts the `users.ts` divergence is
+detected as `CONFLICTING`/`OUT_OF_SCOPE_REVIEW_REQUIRED`. This is what
+proves the fix actually catches the real incident it was built for, not
+just a synthetic approximation of it.
 
 ## How to add another agent
 
@@ -375,14 +515,23 @@ enforcement, artifact persistence).
   If a QA/Security/implementer role's Bash access ever needs to be
   air-tight rather than "strongly scoped," don't rely on `--allowedTools`
   alone — drop `Bash` from that role's `--tools` list entirely instead.
-- **Multi-worktree review** — fixed. An earlier version of this
-  orchestrator only reviewed the first implementer's worktree when a plan
-  split implementation across `frontend` **and** `backend`; this was
-  caught before it was ever used against a real feature and fixed via
-  `reviewWorktrees()`/`mergeReviewResults()` in
-  `src/supervisor/orchestrator.ts` — see "Review loop" above. If you ever
-  see review activity against only one of several implementer worktrees,
-  that's a regression, not expected behavior — file it as a bug.
+- **Multi-worktree review** — fixed twice, and the second fix superseded
+  the first. An earlier version of this orchestrator only reviewed the
+  first implementer's worktree when a plan split implementation across
+  `frontend` **and** `backend`; that was caught before it was ever used
+  against a real feature and fixed by reviewing every implementer's
+  worktree independently (`reviewWorktrees()`/`mergeReviewResults()`, since
+  removed). That fix then shipped and ran for real — and revealed a deeper
+  problem: reviewing every worktree independently still isn't enough, because
+  two implementers can each pass review in isolation while having written
+  *incompatible* code (see "Cross-branch analysis & integration" above for
+  the real incident). The current mechanism replaces per-worktree review
+  entirely for 2+ implementers: `CROSS_BRANCH_ANALYSIS` -> `INTEGRATION` ->
+  a single `INTEGRATED_QA_REVIEW`/`INTEGRATED_SECURITY_REVIEW` against one
+  combined worktree. If you ever see `qa`/`security` invoked against an
+  individual implementer's worktree path when 2+ implementers ran, or see
+  `COMPLETE` reached without `overlap-report.json`/`integration-report.md`
+  existing, that's a regression — file it as a bug.
 - **A worker's structured output is technically valid but low-quality** —
   during the dry-run integration test that validated this tool (see the
   build's final report), one specialist call returned a schema-valid
@@ -400,3 +549,15 @@ enforcement, artifact persistence).
   (or a crashed run) left a worktree/branch behind. Remove it manually:
   `git worktree remove orchestrator/.worktrees/<task-id>-<role> --force`
   then `git branch -D agents/<task-id>/<role>`, or use a fresh task ID.
+- **`filesChanged` ground truth must be diffed against the base commit, not
+  `git status`** — bit us once while adding `commitAll()` (the orchestrator
+  now commits an implementer's/the Integrator's work itself rather than
+  trusting the model to remember to). `changedFiles()`
+  (`git status --porcelain`) only reports *uncommitted* changes — once
+  `commitAll()`/the Integrator's own commit runs, the worktree is clean and
+  `changedFiles()` reports nothing, even though real commits with real
+  changes exist. `filesChanged` for `ImplementationResult`/`IntegrationResult`
+  is computed via `diffNameStatus(worktree, baseCommit)` instead, which
+  reflects committed history correctly regardless of working-tree state. If
+  a final report's `filesChanged` is ever empty for a task that clearly did
+  something, check which of these two a call site is using.

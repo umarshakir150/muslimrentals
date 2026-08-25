@@ -1,17 +1,34 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runTask } from '../src/supervisor/orchestrator.js';
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
 import { taskDir } from '../src/task/taskStore.js';
 import { getWorktreesRoot } from '../src/paths.js';
-import { scriptedPlan, scriptedAnalysis, scriptedImplementation, scriptedReview, cleanupWorktree } from './testUtils.js';
+import {
+  scriptedPlan,
+  scriptedAnalysis,
+  scriptedImplementation,
+  scriptedImplementationWithFiles,
+  scriptedReview,
+  scriptedIntegrationResolves,
+  cleanupWorktree,
+} from './testUtils.js';
 import type { WorktreeHandle } from '../src/git/worktree.js';
+import type { RunResult } from '../src/supervisor/orchestrator.js';
+import type { ClaudeInvokeOptions } from '../src/claude/claudeAdapter.js';
 
 const createdWorktrees: WorktreeHandle[] = [];
 afterEach(async () => {
   while (createdWorktrees.length) await cleanupWorktree(createdWorktrees.pop());
 });
+
+/** Register every worktree a run created (implementer branches AND, if it
+ * ran, the integration branch) for afterEach cleanup. */
+function trackWorktrees(result: RunResult): void {
+  createdWorktrees.push(...Object.values(result.worktrees));
+  if (result.integrationWorktree) createdWorktrees.push(result.integrationWorktree);
+}
 
 function readLog(taskId: string): Record<string, unknown>[] {
   const raw = readFileSync(path.join(taskDir(taskId), 'log.jsonl'), 'utf8');
@@ -236,124 +253,263 @@ describe('orchestrator — founder approval gate', () => {
   });
 });
 
-describe('orchestrator — multi-worktree review (frontend + backend split)', () => {
-  it('reviews BOTH implementer worktrees, not just the first, and only sends the failing one back for correction', async () => {
-    const taskId = 'test-multi-worktree-both-fail-once';
-    // ScriptedClaudeInvoker scripts responses by *role* (qa/security), not
-    // by which worktree is under review, so key off `options.cwd` (which
-    // the adapter always passes) to simulate "only backend's worktree has
-    // an issue on the first pass."
-    // Track calls per-cwd (not per-role) so this doesn't depend on
-    // mapConcurrent's exact scheduling order across roles.
-    const securityCallCountByCwd = new Map<string, number>();
+// ─── Integration flow (2+ implementers) ───────────────────────────────────
+// Regression context: the first real --full run had Frontend and Backend
+// each independently modify rentals/backend/src/routes/users.ts in their
+// own isolated worktrees; each branch passed QA/Security review in
+// isolation, and nothing ever compared the two branches against each other.
+// These tests exercise the fix: CROSS_BRANCH_ANALYSIS -> INTEGRATION ->
+// INTEGRATED_QA_REVIEW -> INTEGRATED_SECURITY_REVIEW, with final approval
+// coming only from review of the single integrated worktree.
+//
+// ScriptedClaudeInvoker never touches disk on its own, so any test here
+// that needs the real git state cross-branch analysis/integration depends
+// on (commitAll/diffNameStatus/mergeBranch) uses scriptedImplementationWithFiles
+// / scriptedIntegrationResolves (tests/testUtils.ts) to actually write real
+// files into the worktree the orchestrator hands each call.
+describe('orchestrator — integration (2+ implementers, no overlap)', () => {
+  it('merges cleanly with no Integrator agent call, and integrated QA/Security review the INTEGRATED worktree exactly once each — not the individual implementer worktrees', async () => {
+    const taskId = 'test-integration-no-overlap';
     const invoker = new ScriptedClaudeInvoker({
       supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
-      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
-      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
+      frontend: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/scratch-a.tsx': 'export default function A() { return null; }\n' }),
+      backend: scriptedImplementationWithFiles({ 'rentals/backend/src/routes/scratch-a.ts': 'export const scratchA = true;\n' }),
       qa: scriptedReview('PASS'),
-      security: (opts: unknown) => {
-        const cwd = String((opts as { cwd: string }).cwd);
-        const isBackendWorktree = cwd.includes('-backend');
-        const count = securityCallCountByCwd.get(cwd) ?? 0;
-        securityCallCountByCwd.set(cwd, count + 1);
-        if (isBackendWorktree && count === 0) {
-          return scriptedReview('CHANGES_REQUIRED', [{ severity: 'critical', finding: 'IDOR: saved-listing route trusts a client-supplied userId.' }]);
+      security: scriptedReview('APPROVED'),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    trackWorktrees(result);
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.integrationWorktree).toBeDefined();
+
+    // No overlap/out-of-scope issues and a clean mechanical merge -> the
+    // Integrator agent is never invoked at all (scenario: "no overlap").
+    expect(invoker.callsFor('integrator')).toHaveLength(0);
+
+    // Final approval comes from exactly ONE integrated review, never a sum
+    // of per-worker approvals — one QA/Security call each, both against the
+    // integration worktree, never frontend's or backend's own worktree.
+    expect(invoker.callsFor('qa')).toHaveLength(1);
+    expect(invoker.callsFor('security')).toHaveLength(1);
+    expect(invoker.callsFor('qa')[0]!.options.cwd).toBe(result.integrationWorktree!.path);
+    expect(invoker.callsFor('security')[0]!.options.cwd).toBe(result.integrationWorktree!.path);
+    expect(invoker.callsFor('qa')[0]!.options.cwd).not.toBe(result.worktrees.frontend!.path);
+    expect(invoker.callsFor('qa')[0]!.options.cwd).not.toBe(result.worktrees.backend!.path);
+
+    const dir = taskDir(taskId);
+    const overlapReport = JSON.parse(readFileSync(path.join(dir, 'overlap-report.json'), 'utf8'));
+    expect(overlapReport.overlaps).toEqual([]);
+    expect(overlapReport.outOfScope).toEqual([]);
+    expect(overlapReport.hasBlockingIssues).toBe(false);
+    expect(existsSync(path.join(dir, 'changed-files.json'))).toBe(true);
+    expect(existsSync(path.join(dir, 'implementation-scopes.json'))).toBe(true);
+    expect(existsSync(path.join(dir, 'integration-report.md'))).toBe(true);
+  });
+});
+
+describe('orchestrator — integration (2+ implementers, conflicting overlap)', () => {
+  it('flags frontend touching a backend file as both an overlap and out-of-scope, and invokes the Integrator even though the two edits merge cleanly at the text level', async () => {
+    // This is structurally the real saved-listings incident: frontend
+    // touches rentals/backend/src/routes/users.ts, which is outside its
+    // default scope. Frontend edits the top of the file, backend edits the
+    // bottom — git can auto-merge that with no textual conflict — but the
+    // scope/overlap classification must still flag it and route it to the
+    // Integrator, proving detection doesn't depend on git mergeability.
+    const taskId = 'test-integration-conflicting-overlap';
+    const sharedPath = 'rentals/backend/src/routes/users.ts';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: (options: ClaudeInvokeOptions) => {
+        const abs = path.join(options.cwd, sharedPath);
+        writeFileSync(abs, `// frontend note\n${readFileSync(abs, 'utf8')}`, 'utf8');
+        return scriptedImplementation([sharedPath]);
+      },
+      backend: (options: ClaudeInvokeOptions) => {
+        const abs = path.join(options.cwd, sharedPath);
+        writeFileSync(abs, `${readFileSync(abs, 'utf8')}\n// backend note\n`, 'utf8');
+        return scriptedImplementation([sharedPath]);
+      },
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves(),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    trackWorktrees(result);
+
+    const dir = taskDir(taskId);
+    const overlapReport = JSON.parse(readFileSync(path.join(dir, 'overlap-report.json'), 'utf8'));
+    const overlap = overlapReport.overlaps.find((o: { path: string }) => o.path === sharedPath);
+    expect(overlap).toBeDefined();
+    expect(overlap.classification).toBe('CONFLICTING');
+    expect(overlapReport.outOfScope).toHaveLength(1);
+    expect(overlapReport.outOfScope[0]).toMatchObject({ agent: 'frontend', path: sharedPath, classification: 'OUT_OF_SCOPE_REVIEW_REQUIRED' });
+    expect(overlapReport.hasBlockingIssues).toBe(true);
+
+    // The Integrator agent WAS invoked despite a clean mechanical merge —
+    // and its prompt did NOT need to ask it to merge anything itself, since
+    // performMechanicalMerges already finished that part cleanly.
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    expect(invoker.callsFor('integrator')[0]!.options.userPrompt).not.toMatch(/still need to be merged/);
+    expect(invoker.callsFor('integrator')[0]!.options.cwd).toBe(result.integrationWorktree!.path);
+
+    expect(result.finalState).toBe('COMPLETE');
+  });
+});
+
+describe('orchestrator — integration (real git merge conflict)', () => {
+  it('does not trust the Integrator\'s self-reported success — a real leftover conflict forces a second attempt, verified against git itself', async () => {
+    const taskId = 'test-integration-real-conflict';
+    const conflictPath = 'rentals/backend/src/routes/scratch-conflict.ts';
+    let integratorCallCount = 0;
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      // Both implementers ADD the same new path with different content —
+      // a guaranteed add/add git conflict during the mechanical merge step.
+      frontend: scriptedImplementationWithFiles({ [conflictPath]: 'export const scratchConflict = "frontend";\n' }),
+      backend: scriptedImplementationWithFiles({ [conflictPath]: 'export const scratchConflict = "backend";\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+      integrator: (options: ClaudeInvokeOptions) => {
+        integratorCallCount += 1;
+        if (integratorCallCount === 1) {
+          // Claims success but never touches the worktree — the real
+          // conflict markers git left behind are still there.
+          return { decisions: [], summary: 'Resolved everything.', filesChanged: [], unresolvedConflicts: [] };
         }
-        return scriptedReview('APPROVED');
+        // Second attempt: actually resolves it for real.
+        return scriptedIntegrationResolves({ [conflictPath]: 'export const scratchConflict = "reconciled";\n' })(options);
       },
     });
 
     const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
-    createdWorktrees.push(...Object.values(result.worktrees));
+    trackWorktrees(result);
 
     expect(result.finalState).toBe('COMPLETE');
     expect(result.finalReport.correctionCycles).toBe(1);
+    expect(invoker.callsFor('integrator')).toHaveLength(2);
+
+    // First attempt: the mechanical merge itself hit the conflict, so the
+    // Integrator is told which branch still needs manual merging.
+    const firstIntegratorCall = invoker.callsFor('integrator')[0]!;
+    expect(firstIntegratorCall.options.userPrompt).toMatch(/still need to be merged/);
+
+    // Second attempt happens because the orchestrator's own post-hoc git
+    // check (not the model's "Resolved everything." self-report) caught
+    // the leftover conflict and looped back with correction feedback.
+    const secondIntegratorCall = invoker.callsFor('integrator')[1]!;
+    expect(secondIntegratorCall.options.userPrompt).toMatch(/A previous integrated review found issues/i);
+    expect(secondIntegratorCall.options.userPrompt).not.toMatch(/still need to be merged/);
+
+    // Only QA/Security's final (passing) verdict counts.
     expect(result.finalReport.qaVerdict).toBe('PASS');
     expect(result.finalReport.securityVerdict).toBe('APPROVED');
-
-    // Frontend was never re-invoked (its worktree was never failing) —
-    // only backend was sent back for correction.
-    expect(invoker.callsFor('frontend')).toHaveLength(1);
-    expect(invoker.callsFor('backend')).toHaveLength(2);
-
-    // Security reviewed BOTH worktrees on the first pass (frontend + backend),
-    // then only backend's worktree again on re-review = 3 calls total.
-    expect(invoker.callsFor('security')).toHaveLength(3);
-    // QA and Security always run together each round per the required
-    // state flow, so QA also re-runs against backend's worktree on
-    // RE_REVIEW even though QA itself never failed — 3 calls too.
-    expect(invoker.callsFor('qa')).toHaveLength(3);
-
-    // Both worktrees exist and are distinct.
-    expect(result.worktrees.frontend).toBeDefined();
-    expect(result.worktrees.backend).toBeDefined();
-    expect(result.worktrees.frontend!.path).not.toBe(result.worktrees.backend!.path);
-
-    const dir = taskDir(taskId);
-    const qaJson = JSON.parse(readFileSync(path.join(dir, 'qa.json'), 'utf8'));
-    const securityJson = JSON.parse(readFileSync(path.join(dir, 'security.json'), 'utf8'));
-    expect(qaJson.verdict).toBe('PASS');
-    expect(securityJson.verdict).toBe('APPROVED');
-    // security.json reflects the LATEST state (now approved) — it should
-    // not still show the old, now-resolved CHANGES_REQUIRED finding.
-    expect(securityJson.findings).toEqual([]);
   });
+});
 
-  it('gives each reviewer call ONLY the worktree-under-review implementer\'s own report — never another implementer\'s (regression: false "work doesn\'t exist" finding)', async () => {
-    // On the first real --full run, a reviewer scoped to the backend
-    // worktree was given the frontend implementer's self-report as
-    // context too, didn't find those frontend files in ITS OWN (backend)
-    // worktree, and incorrectly concluded frontend's work "doesn't exist."
-    // Pin the fix: prerequisite context for a reviewer call must contain
-    // only the implementer role actually being reviewed.
-    const taskId = 'test-reviewer-context-scoping';
+describe('orchestrator — integrated review correction loop', () => {
+  it('routes a failed integrated QA verdict back through the Integrator — not the original implementers — then completes once QA passes', async () => {
+    const taskId = 'test-integrated-qa-rejects-once';
     const invoker = new ScriptedClaudeInvoker({
       supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
-      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
-      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
-      qa: scriptedReview('PASS'),
+      frontend: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/scratch-b.tsx': 'export default function B() { return null; }\n' }),
+      backend: scriptedImplementationWithFiles({ 'rentals/backend/src/routes/scratch-b.ts': 'export const scratchB = true;\n' }),
+      qa: (_opts: unknown, n: number) => (n === 0 ? scriptedReview('CHANGES_REQUIRED', [{ severity: 'high', finding: 'Missing empty state.' }]) : scriptedReview('PASS')),
       security: scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves(),
     });
 
     const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
-    createdWorktrees.push(...Object.values(result.worktrees));
+    trackWorktrees(result);
 
-    const qaOnBackend = invoker.callsFor('qa').find((c) => c.options.cwd === result.worktrees.backend!.path)!;
-    const qaOnFrontend = invoker.callsFor('qa').find((c) => c.options.cwd === result.worktrees.frontend!.path)!;
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.finalReport.correctionCycles).toBe(1);
+    // The first integration pass merges cleanly with no scope issues, so it
+    // needs no Integrator call — the ONLY Integrator call happens as
+    // RE_INTEGRATION, after QA's rejection.
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    // Frontend/backend are never re-invoked — correction after integrated
+    // review goes through the Integrator, not back to the original implementers.
+    expect(invoker.callsFor('frontend')).toHaveLength(1);
+    expect(invoker.callsFor('backend')).toHaveLength(1);
+    expect(invoker.callsFor('qa')).toHaveLength(2);
+    expect(invoker.callsFor('security')).toHaveLength(2);
 
-    // "Output from: <role>" is the section header renderUserPrompt() gives
-    // each prerequisite artifact — the reliable signal for which
-    // implementer's report is actually present in a given reviewer's context.
-    expect(qaOnBackend.options.userPrompt).toContain('Output from: backend');
-    expect(qaOnBackend.options.userPrompt).not.toContain('Output from: frontend');
-    expect(qaOnFrontend.options.userPrompt).toContain('Output from: frontend');
-    expect(qaOnFrontend.options.userPrompt).not.toContain('Output from: backend');
-
-    // The clarifying instruction is present so the model doesn't assume it
-    // can see other implementers' worktrees even if context leaked some other way.
-    expect(qaOnBackend.options.userPrompt).toMatch(/reviewing ONLY the "backend" implementer's worktree/);
+    expect(invoker.callsFor('integrator')[0]!.options.userPrompt).toMatch(/Missing empty state/);
   });
 
-  it('never lets one implementer worktree go completely unreviewed when two implementers run', async () => {
+  it('routes a failed integrated Security verdict back through the Integrator, then completes once Security approves', async () => {
+    const taskId = 'test-integrated-security-rejects-once';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/scratch-d.tsx': 'export default function D() { return null; }\n' }),
+      backend: scriptedImplementationWithFiles({ 'rentals/backend/src/routes/scratch-d.ts': 'export const scratchD = true;\n' }),
+      qa: scriptedReview('PASS'),
+      security: (_opts: unknown, n: number) =>
+        n === 0 ? scriptedReview('CHANGES_REQUIRED', [{ severity: 'critical', finding: 'IDOR on the integrated saved-listings route.' }]) : scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves(),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    trackWorktrees(result);
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.finalReport.correctionCycles).toBe(1);
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    expect(invoker.callsFor('frontend')).toHaveLength(1);
+    expect(invoker.callsFor('backend')).toHaveLength(1);
+    expect(invoker.callsFor('integrator')[0]!.options.userPrompt).toMatch(/IDOR on the integrated saved-listings route/);
+  });
+});
+
+describe('orchestrator — integrated review retry limit', () => {
+  it('stops looping after maxRetryCycles when integrated QA keeps failing, and escalates to the founder instead of looping forever', async () => {
+    const taskId = 'test-integrated-retry-limit';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/scratch-c.tsx': 'export default function C() { return null; }\n' }),
+      backend: scriptedImplementationWithFiles({ 'rentals/backend/src/routes/scratch-c.ts': 'export const scratchC = true;\n' }),
+      qa: () => scriptedReview('CHANGES_REQUIRED', [{ severity: 'medium', finding: 'Still broken.' }]),
+      security: scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves(),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId, maxRetryCycles: 1 });
+    trackWorktrees(result);
+
+    expect(result.finalState).toBe('FOUNDER_APPROVAL_REQUIRED');
+    expect(result.finalReport.approvalGate.reasons.join(' ')).toMatch(/retry limit/i);
+    // First pass needs no Integrator call (clean, no overlap); exactly one
+    // RE_INTEGRATION retry is allowed before escalating — never unbounded.
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    expect(invoker.callsFor('qa')).toHaveLength(2);
+    expect(invoker.callsFor('security')).toHaveLength(2);
+  });
+});
+
+describe('orchestrator — worktrees stay isolated and distinct across the integration flow', () => {
+  it('gives frontend, backend, and the integration step three distinct real worktree paths, all still present afterward', async () => {
     const taskId = 'test-multi-worktree-both-reviewed';
     const invoker = new ScriptedClaudeInvoker({
       supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
-      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
-      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
+      frontend: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/scratch-e.tsx': 'export default function E() { return null; }\n' }),
+      backend: scriptedImplementationWithFiles({ 'rentals/backend/src/routes/scratch-e.ts': 'export const scratchE = true;\n' }),
       qa: scriptedReview('PASS'),
       security: scriptedReview('APPROVED'),
     });
 
     const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
-    createdWorktrees.push(...Object.values(result.worktrees));
+    trackWorktrees(result);
 
     expect(result.finalState).toBe('COMPLETE');
-
-    // Every QA/Security call's cwd must be one of the two real worktree paths —
-    // and BOTH worktree paths must appear at least once across the calls.
-    const cwds = new Set([...invoker.callsFor('qa'), ...invoker.callsFor('security')].map((c) => c.options.cwd));
-    expect(cwds.has(result.worktrees.frontend!.path)).toBe(true);
-    expect(cwds.has(result.worktrees.backend!.path)).toBe(true);
+    expect(result.worktrees.frontend).toBeDefined();
+    expect(result.worktrees.backend).toBeDefined();
+    expect(result.integrationWorktree).toBeDefined();
+    const paths = [result.worktrees.frontend!.path, result.worktrees.backend!.path, result.integrationWorktree!.path];
+    expect(new Set(paths).size).toBe(3);
+    for (const p of paths) expect(existsSync(p)).toBe(true);
   });
 });
 

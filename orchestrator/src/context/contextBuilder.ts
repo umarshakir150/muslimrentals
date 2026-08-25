@@ -32,6 +32,7 @@ const RELEVANCE_MAP: Record<AgentRole, string[]> = {
   backend: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
   qa: ['company/architecture.md', 'ai/current-state.md'],
   security: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
+  integrator: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
   designer: ['company/product.md', 'company/users.md', 'company/principles.md'],
   trust_safety: ['company/product.md', 'company/users.md', 'company/principles.md'],
   legal: ['company/product.md', 'company/users.md', 'company/architecture.md'],

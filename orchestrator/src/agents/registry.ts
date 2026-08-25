@@ -231,6 +231,26 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
     artifactFilename: 'backend-implementation.md',
     maxBudgetUsd: 3.0,
   },
+  // Orchestration-internal only — never selectable via SupervisorPlan.requiredAgents
+  // (filtered out in planner.ts, same treatment as 'supervisor'). Invoked
+  // directly by the Runner when 2+ implementer roles produced changes that
+  // need reconciling. needsWorktree is false here because its worktree is
+  // NOT created via the standard per-role createWorktree() path used for
+  // engineering/frontend/backend — see src/supervisor/orchestrator.ts's
+  // integration logic, which creates one dedicated integration worktree
+  // shared across however many implementer branches need merging.
+  integrator: {
+    role: 'integrator',
+    roleFile: 'agents/integrator.md',
+    tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
+    allowedToolPatterns: ENGINEERING_ALWAYS_ALLOW,
+    disallowedToolPatterns: ENGINEERING_BASH_DENY,
+    canWriteCode: true,
+    needsWorktree: false,
+    outputSchema: 'IntegrationResult',
+    artifactFilename: 'integration-report.md',
+    maxBudgetUsd: 3.0,
+  },
 };
 
 export function getProfile(role: AgentRole): PermissionProfile {

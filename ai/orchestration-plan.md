@@ -57,17 +57,21 @@ this orchestrator):
   cycles, max concurrent workers per group, and a per-invocation spend cap,
   all enforced in code (not just requested of the model) — see
   `orchestrator/README.md` "Safety bounds."
+- **Multi-worktree review aggregation.** When a plan splits implementation
+  across more than one implementer role (e.g. `frontend` + `backend`
+  together), QA and Security review every implementer's worktree
+  independently — not just the first one — and the results are merged
+  into one `qa.json`/`security.json` per task (`CHANGES_REQUIRED` if any
+  worktree needs changes; findings tagged by which implementer's worktree
+  they came from). A correction round only re-invokes and re-reviews the
+  worktree(s) that actually failed. This started as a known gap during
+  this orchestrator's initial build, was deliberately not run against a
+  real feature until fixed, and was fixed and covered by tests before the
+  first real `--full` run that needed it (see the task that added a saved-
+  listings page for the run that exercised this for real).
 
 ## Status: deliberately not implemented yet
 
-- **Multi-worktree review aggregation.** If a plan ever splits
-  implementation across more than one implementer role in the same run
-  (e.g. `frontend` + `backend` together), QA/Security currently review
-  only the first implementer's worktree. Extending review to aggregate
-  findings across multiple diffs is real future work — not built yet
-  because it hasn't been needed in practice, and the added complexity
-  (reconciling two independent diffs' worth of findings into one
-  correction cycle) isn't worth taking on speculatively.
 - **Auto-merge of implementer branches.** The orchestrator intentionally
   never merges a finished implementer branch back into the task's base
   branch on its own — that's left as a manual step for the Engineering

@@ -236,6 +236,92 @@ describe('orchestrator — founder approval gate', () => {
   });
 });
 
+describe('orchestrator — multi-worktree review (frontend + backend split)', () => {
+  it('reviews BOTH implementer worktrees, not just the first, and only sends the failing one back for correction', async () => {
+    const taskId = 'test-multi-worktree-both-fail-once';
+    // ScriptedClaudeInvoker scripts responses by *role* (qa/security), not
+    // by which worktree is under review, so key off `options.cwd` (which
+    // the adapter always passes) to simulate "only backend's worktree has
+    // an issue on the first pass."
+    // Track calls per-cwd (not per-role) so this doesn't depend on
+    // mapConcurrent's exact scheduling order across roles.
+    const securityCallCountByCwd = new Map<string, number>();
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
+      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
+      qa: scriptedReview('PASS'),
+      security: (opts: unknown) => {
+        const cwd = String((opts as { cwd: string }).cwd);
+        const isBackendWorktree = cwd.includes('-backend');
+        const count = securityCallCountByCwd.get(cwd) ?? 0;
+        securityCallCountByCwd.set(cwd, count + 1);
+        if (isBackendWorktree && count === 0) {
+          return scriptedReview('CHANGES_REQUIRED', [{ severity: 'critical', finding: 'IDOR: saved-listing route trusts a client-supplied userId.' }]);
+        }
+        return scriptedReview('APPROVED');
+      },
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    createdWorktrees.push(...Object.values(result.worktrees));
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.finalReport.correctionCycles).toBe(1);
+    expect(result.finalReport.qaVerdict).toBe('PASS');
+    expect(result.finalReport.securityVerdict).toBe('APPROVED');
+
+    // Frontend was never re-invoked (its worktree was never failing) —
+    // only backend was sent back for correction.
+    expect(invoker.callsFor('frontend')).toHaveLength(1);
+    expect(invoker.callsFor('backend')).toHaveLength(2);
+
+    // Security reviewed BOTH worktrees on the first pass (frontend + backend),
+    // then only backend's worktree again on re-review = 3 calls total.
+    expect(invoker.callsFor('security')).toHaveLength(3);
+    // QA and Security always run together each round per the required
+    // state flow, so QA also re-runs against backend's worktree on
+    // RE_REVIEW even though QA itself never failed — 3 calls too.
+    expect(invoker.callsFor('qa')).toHaveLength(3);
+
+    // Both worktrees exist and are distinct.
+    expect(result.worktrees.frontend).toBeDefined();
+    expect(result.worktrees.backend).toBeDefined();
+    expect(result.worktrees.frontend!.path).not.toBe(result.worktrees.backend!.path);
+
+    const dir = taskDir(taskId);
+    const qaJson = JSON.parse(readFileSync(path.join(dir, 'qa.json'), 'utf8'));
+    const securityJson = JSON.parse(readFileSync(path.join(dir, 'security.json'), 'utf8'));
+    expect(qaJson.verdict).toBe('PASS');
+    expect(securityJson.verdict).toBe('APPROVED');
+    // security.json reflects the LATEST state (now approved) — it should
+    // not still show the old, now-resolved CHANGES_REQUIRED finding.
+    expect(securityJson.findings).toEqual([]);
+  });
+
+  it('never lets one implementer worktree go completely unreviewed when two implementers run', async () => {
+    const taskId = 'test-multi-worktree-both-reviewed';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
+      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    createdWorktrees.push(...Object.values(result.worktrees));
+
+    expect(result.finalState).toBe('COMPLETE');
+
+    // Every QA/Security call's cwd must be one of the two real worktree paths —
+    // and BOTH worktree paths must appear at least once across the calls.
+    const cwds = new Set([...invoker.callsFor('qa'), ...invoker.callsFor('security')].map((c) => c.options.cwd));
+    expect(cwds.has(result.worktrees.frontend!.path)).toBe(true);
+    expect(cwds.has(result.worktrees.backend!.path)).toBe(true);
+  });
+});
+
 describe('orchestrator — read-only roles cannot reach implementation', () => {
   it('QA and Security are never given a worktree even when they are the only roles requested', async () => {
     const taskId = 'test-readonly-no-worktree';

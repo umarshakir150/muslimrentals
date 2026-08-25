@@ -74,14 +74,45 @@ function renderCorrectionFeedback(qa?: ReviewResult, security?: ReviewResult): s
   return parts.join('\n\n');
 }
 
+/**
+ * Merges one reviewer's per-implementer-worktree ReviewResults into a
+ * single aggregate: CHANGES_REQUIRED if ANY worktree needs changes, findings
+ * concatenated (tagged with which implementer's worktree they're about when
+ * there's more than one worktree — unprefixed in the common single-worktree
+ * case, so qa.json/security.json look identical to before this feature
+ * existed when there's nothing to disambiguate).
+ */
+function mergeReviewResults(role: 'qa' | 'security', perRole: Map<AgentRole, ReviewResult>): ReviewResult {
+  const entries = Array.from(perRole.entries());
+  const multi = entries.length > 1;
+  const passWord: ReviewResult['verdict'] = role === 'qa' ? 'PASS' : 'APPROVED';
+  const anyChangesRequired = entries.some(([, r]) => r.verdict === 'CHANGES_REQUIRED');
+  const findings = entries.flatMap(([implementerRole, r]) =>
+    r.findings.map((f) => (multi ? { ...f, finding: `[${implementerRole}] ${f.finding}` } : f))
+  );
+  const notes = multi
+    ? `Per-worktree verdicts: ${entries.map(([r, res]) => `${r}=${res.verdict}`).join(', ')}`
+    : entries[0]?.[1].notes;
+  return {
+    role,
+    taskId: entries[0]?.[1].taskId ?? '',
+    verdict: anyChangesRequired ? 'CHANGES_REQUIRED' : passWord,
+    findings,
+    notes,
+  };
+}
+
 class Runner {
   private worktrees = new Map<AgentRole, WorktreeHandle>();
   private specialistArtifacts: PrerequisiteArtifact[] = [];
   private implementationArtifacts: PrerequisiteArtifact[] = [];
   private agentsInvolved = new Set<AgentRole>();
   private correctionCycles = 0;
-  private qaResult: ReviewResult | undefined;
-  private securityResult: ReviewResult | undefined;
+  // Keyed by implementer role, so review results from different worktrees
+  // never get confused with each other. See mergeReviewResults() for how
+  // these become the single qa.json/security.json artifact.
+  private qaResultsByImplementer = new Map<AgentRole, ReviewResult>();
+  private securityResultsByImplementer = new Map<AgentRole, ReviewResult>();
 
   constructor(
     private readonly taskId: string,
@@ -216,7 +247,8 @@ class Runner {
     return result;
   }
 
-  private async runReviewer(role: 'qa' | 'security', worktreePath: string): Promise<ReviewResult> {
+  /** One reviewer call against one implementer's worktree. Does not write any artifact itself — see reviewWorktrees(). */
+  private async invokeReviewer(role: 'qa' | 'security', implementerRole: AgentRole, worktreePath: string): Promise<ReviewResult> {
     const profile = getProfile(role);
     const bundle = buildContext({
       role,
@@ -226,7 +258,7 @@ class Runner {
     const systemPromptAddition = renderSystemPrompt(bundle);
     const userPrompt = renderUserPrompt(bundle, reviewInstruction(role));
 
-    logEvent({ taskId: this.taskId, event: 'agent_launch', role });
+    logEvent({ taskId: this.taskId, event: 'agent_launch', role, reviewingImplementer: implementerRole });
     this.agentsInvolved.add(role);
 
     const invokeResult = await this.invoker.invoke({
@@ -256,12 +288,57 @@ class Runner {
           ],
         };
     if (!parsed.success) {
-      logEvent({ taskId: this.taskId, event: 'agent_output_validation_failed', role, issues: parsed.error.issues.map((i) => i.message) });
+      logEvent({ taskId: this.taskId, event: 'agent_output_validation_failed', role, reviewingImplementer: implementerRole, issues: parsed.error.issues.map((i) => i.message) });
     }
 
-    writeJsonArtifact(this.taskId, profile.artifactFilename, result);
-    logEvent({ taskId: this.taskId, event: 'review_verdict', role, verdict: result.verdict });
+    logEvent({ taskId: this.taskId, event: 'review_verdict', role, reviewingImplementer: implementerRole, verdict: result.verdict });
     return result;
+  }
+
+  /**
+   * Reviews EVERY worktree named in `implementerRolesToReview` with EVERY
+   * requested reviewer role, concurrently (bounded), then writes ONE
+   * aggregated qa.json/security.json reflecting the full current picture
+   * across ALL implementer worktrees (not just the ones reviewed in this
+   * call — previously-passed worktrees keep their stored result). This is
+   * what closes the "reviewers only look at the first worktree" gap: every
+   * implementer's diff gets independently reviewed, always.
+   */
+  private async reviewWorktrees(implementerRolesToReview: AgentRole[], reviewerRoles: ('qa' | 'security')[]): Promise<void> {
+    type Call = { reviewerRole: 'qa' | 'security'; implementerRole: AgentRole };
+    const calls: Call[] = [];
+    for (const reviewerRole of reviewerRoles) {
+      for (const implementerRole of implementerRolesToReview) {
+        calls.push({ reviewerRole, implementerRole });
+      }
+    }
+
+    const results = await mapConcurrent(calls, this.maxConcurrency, async (call) => {
+      const worktree = this.worktrees.get(call.implementerRole);
+      if (!worktree) throw new Error(`Internal error: no worktree recorded for implementer role "${call.implementerRole}".`);
+      const result = await this.invokeReviewer(call.reviewerRole, call.implementerRole, worktree.path);
+      return { ...call, result };
+    });
+
+    for (const { reviewerRole, implementerRole, result } of results) {
+      if (reviewerRole === 'qa') this.qaResultsByImplementer.set(implementerRole, result);
+      else this.securityResultsByImplementer.set(implementerRole, result);
+    }
+
+    if (reviewerRoles.includes('qa')) {
+      writeJsonArtifact(this.taskId, getProfile('qa').artifactFilename, mergeReviewResults('qa', this.qaResultsByImplementer));
+    }
+    if (reviewerRoles.includes('security')) {
+      writeJsonArtifact(this.taskId, getProfile('security').artifactFilename, mergeReviewResults('security', this.securityResultsByImplementer));
+    }
+  }
+
+  /** Implementer roles whose latest stored review from `reviewerRole` is CHANGES_REQUIRED. */
+  private failingImplementerRoles(reviewerRole: 'qa' | 'security'): AgentRole[] {
+    const map = reviewerRole === 'qa' ? this.qaResultsByImplementer : this.securityResultsByImplementer;
+    return Array.from(map.entries())
+      .filter(([, r]) => r.verdict === 'CHANGES_REQUIRED')
+      .map(([role]) => role);
   }
 
   async run(plan: SupervisorPlan): Promise<{ finalState: TaskState; report: FinalTaskReport }> {
@@ -301,46 +378,43 @@ class Runner {
     this.setState('IMPLEMENTING');
     await mapConcurrent(implementerRoles, this.maxConcurrency, (role) => this.runImplementer(role));
 
-    // Reviewers run against the primary (first) implementer's worktree.
-    // Known limitation when >1 implementer role ran — see README.
-    const primaryRole = implementerRoles[0] as AgentRole;
-    const primaryWorktree = this.worktrees.get(primaryRole);
-    if (!primaryWorktree) throw new Error('Internal error: implementer ran without a worktree.');
-
+    // Every implementer's worktree gets reviewed — not just the first.
+    // After a correction, only the worktree(s) that were just fixed are
+    // re-reviewed; worktrees that already passed are left alone (they're
+    // untouched — worktree isolation guarantees nothing there changed).
+    let rolesToReview = [...implementerRoles];
     let approved = false;
     while (!approved) {
       this.setState(this.correctionCycles === 0 ? 'QA_REVIEW' : 'RE_REVIEW');
-      const [qa, security] = await Promise.all(
-        (['qa', 'security'] as const)
-          .filter((r) => reviewerRoles.includes(r))
-          .map((r) => this.runReviewer(r, primaryWorktree.path))
-      );
-      // If a reviewer role wasn't requested by the plan, treat it as N/A-passing.
-      this.qaResult = reviewerRoles.includes('qa') ? qa ?? this.qaResult : this.qaResult;
-      this.securityResult = reviewerRoles.includes('security') ? security ?? this.securityResult : this.securityResult;
+      await this.reviewWorktrees(rolesToReview, reviewerRoles);
 
-      const qaFailed = this.qaResult && this.qaResult.verdict === 'CHANGES_REQUIRED';
-      const securityFailed = this.securityResult && this.securityResult.verdict === 'CHANGES_REQUIRED';
+      const failing = new Set<AgentRole>([
+        ...(reviewerRoles.includes('qa') ? this.failingImplementerRoles('qa') : []),
+        ...(reviewerRoles.includes('security') ? this.failingImplementerRoles('security') : []),
+      ]);
 
-      if (!qaFailed && !securityFailed) {
+      if (failing.size === 0) {
         approved = true;
         break;
       }
 
       this.setState('CORRECTION_REQUIRED');
       if (this.correctionCycles >= this.maxRetryCycles) {
-        logEvent({ taskId: this.taskId, event: 'retry_limit_exhausted', correctionCycles: this.correctionCycles, maxRetryCycles: this.maxRetryCycles });
+        logEvent({ taskId: this.taskId, event: 'retry_limit_exhausted', correctionCycles: this.correctionCycles, maxRetryCycles: this.maxRetryCycles, failingRoles: Array.from(failing) });
         const report = this.buildFinalReport(plan, 'FOUNDER_APPROVAL_REQUIRED', {
-          extraReason: `Correction retry limit (${this.maxRetryCycles}) exhausted — QA/Security still returning CHANGES_REQUIRED. Escalated to founder rather than looping indefinitely.`,
+          extraReason: `Correction retry limit (${this.maxRetryCycles}) exhausted — QA/Security still returning CHANGES_REQUIRED for: ${Array.from(failing).join(', ')}. Escalated to founder rather than looping indefinitely.`,
         });
         return { finalState: 'FOUNDER_APPROVAL_REQUIRED', report };
       }
 
       this.correctionCycles += 1;
-      logEvent({ taskId: this.taskId, event: 'correction_cycle_started', cycle: this.correctionCycles, qaVerdict: this.qaResult?.verdict, securityVerdict: this.securityResult?.verdict });
-      const feedback = renderCorrectionFeedback(this.qaResult, this.securityResult);
+      logEvent({ taskId: this.taskId, event: 'correction_cycle_started', cycle: this.correctionCycles, failingRoles: Array.from(failing) });
       this.setState('IMPLEMENTING');
-      await this.runImplementer(primaryRole, feedback);
+      rolesToReview = Array.from(failing);
+      await mapConcurrent(rolesToReview, this.maxConcurrency, (role) => {
+        const feedback = renderCorrectionFeedback(this.qaResultsByImplementer.get(role), this.securityResultsByImplementer.get(role));
+        return this.runImplementer(role, feedback);
+      });
     }
 
     this.setState('READY_FOR_FOUNDER');
@@ -353,6 +427,13 @@ class Runner {
     this.setState('COMPLETE');
     const report = this.buildFinalReport(plan, 'COMPLETE');
     return { finalState: 'COMPLETE', report };
+  }
+
+  /** Aggregate verdict across every implementer worktree this reviewer has looked at, if any. */
+  private aggregateVerdict(reviewerRole: 'qa' | 'security'): ReviewResult['verdict'] | undefined {
+    const map = reviewerRole === 'qa' ? this.qaResultsByImplementer : this.securityResultsByImplementer;
+    if (map.size === 0) return undefined;
+    return mergeReviewResults(reviewerRole, map).verdict;
   }
 
   private buildFinalReport(plan: SupervisorPlan, finalState: TaskState, opts?: { extraReason?: string }): FinalTaskReport {
@@ -379,8 +460,8 @@ class Runner {
       finalState,
       agentsInvolved: Array.from(this.agentsInvolved),
       approvalGate: { required: plan.approvalRequirements.founderApprovalRequired || finalState === 'FOUNDER_APPROVAL_REQUIRED', reasons },
-      qaVerdict: this.qaResult?.verdict,
-      securityVerdict: this.securityResult?.verdict,
+      qaVerdict: this.aggregateVerdict('qa'),
+      securityVerdict: this.aggregateVerdict('security'),
       correctionCycles: this.correctionCycles,
       summary: this.summarize(finalState),
       filesChanged,

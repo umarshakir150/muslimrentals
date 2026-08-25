@@ -208,22 +208,35 @@ PLANNING -> SPECIALIST_REVIEW -> READY_FOR_IMPLEMENTATION -> IMPLEMENTING
   diff, whether it's the first review or a re-review — a fix aimed at one
   reviewer's finding can affect the other, so both re-check every cycle.
 - Either reviewer returning `CHANGES_REQUIRED` sends the task back to the
-  **same** implementer role, in the **same** worktree/branch (continuing
-  the work, not starting over), with the reviewer's findings appended as
-  correction context (`renderCorrectionFeedback` in
-  `src/supervisor/orchestrator.ts`).
+  **specific implementer role whose worktree failed**, in the **same**
+  worktree/branch (continuing the work, not starting over), with that
+  reviewer's findings appended as correction context
+  (`renderCorrectionFeedback` in `src/supervisor/orchestrator.ts`). An
+  implementer role whose worktree already passed is left alone — it is not
+  redundantly re-invoked just because a *different* implementer's worktree
+  needed a fix.
+- **Every implementer's worktree is reviewed, independently, every round —
+  not just the first one.** If a plan splits implementation across more
+  than one role (e.g. `frontend` + `backend`), QA and Security each run
+  once per implementer worktree (`reviewWorktrees()` in
+  `src/supervisor/orchestrator.ts`), and the results are merged into one
+  `qa.json`/`security.json` per task: `CHANGES_REQUIRED` if *any* worktree
+  needs changes, findings tagged by which implementer's worktree they came
+  from (`mergeReviewResults()`). On a correction round, only the
+  worktree(s) that actually failed are re-reviewed — an already-approved
+  worktree isn't re-invoked, since worktree isolation guarantees nothing
+  there could have changed. See `tests/orchestrator.test.ts`'s
+  "multi-worktree review" suite for the scenario this covers.
 - **Engineering never approves its own work.** There is no code path in
-  the state machine that can reach `COMPLETE` without both `qa.json` and
-  `security.json` recording a passing verdict (`PASS`/`APPROVED`) from a
-  role that is architecturally read-only for code — see "Agent
-  permissions" above.
+  the state machine that can reach `COMPLETE` without every implementer
+  worktree that ran recording a passing verdict (`PASS`/`APPROVED`) from
+  both `qa.json` and `security.json`, from roles that are architecturally
+  read-only for code — see "Agent permissions" above.
 - `--max-retries` (default 2, `DEFAULT_MAX_RETRY_CYCLES`) bounds the
   correction loop. Exhausting it does not loop forever and does not
-  silently give up — it escalates to `FOUNDER_APPROVAL_REQUIRED` with the
-  reason "retry limit exhausted" recorded in the final report.
-- Known limitation: if a plan splits implementation across more than one
-  worktree (e.g. both `frontend` and `backend`), QA/Security currently
-  review only the first implementer's worktree — see "Troubleshooting."
+  silently give up — it escalates to `FOUNDER_APPROVAL_REQUIRED`, naming
+  which implementer role(s) were still failing, recorded in the final
+  report.
 
 ## Approval gates
 
@@ -362,14 +375,14 @@ enforcement, artifact persistence).
   If a QA/Security/implementer role's Bash access ever needs to be
   air-tight rather than "strongly scoped," don't rely on `--allowedTools`
   alone — drop `Bash` from that role's `--tools` list entirely instead.
-- **Multi-worktree review is incomplete** — if a plan ever splits
-  implementation across `frontend` **and** `backend` in the same run, QA
-  and Security currently only review the first implementer's worktree
-  (`primaryRole` in `src/supervisor/orchestrator.ts`'s `run()`). This is a
-  known, documented gap, not a silent one — extending review to multiple
-  worktrees is real future work, not implemented here to avoid the added
-  complexity of aggregating findings across separate diffs before it's
-  been needed even once in practice.
+- **Multi-worktree review** — fixed. An earlier version of this
+  orchestrator only reviewed the first implementer's worktree when a plan
+  split implementation across `frontend` **and** `backend`; this was
+  caught before it was ever used against a real feature and fixed via
+  `reviewWorktrees()`/`mergeReviewResults()` in
+  `src/supervisor/orchestrator.ts` — see "Review loop" above. If you ever
+  see review activity against only one of several implementer worktrees,
+  that's a regression, not expected behavior — file it as a bug.
 - **A worker's structured output is technically valid but low-quality** —
   during the dry-run integration test that validated this tool (see the
   build's final report), one specialist call returned a schema-valid

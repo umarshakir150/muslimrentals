@@ -194,16 +194,30 @@ export class CliClaudeInvoker implements ClaudeInvoker {
   async invoke(options: ClaudeInvokeOptions): Promise<ClaudeInvokeResult> {
     const args = buildClaudeArgs(options);
     const start = Date.now();
-    let stdout: string;
-    try {
-      // Context bundles + tool output can be sizable; default buffers are too small.
-      const result = await runClaudeProcess(this.binary, args, options.cwd, 64 * 1024 * 1024);
-      stdout = result.stdout;
-    } catch (err) {
-      throw new Error(`claude CLI invocation failed for role "${options.role}": ${err instanceof Error ? err.message : String(err)}`);
+    // One bounded retry for a raw process-level failure (nonzero exit,
+    // transient network/rate-limit hiccup) — NOT for a schema-validation
+    // failure, which is a model-output problem the caller already handles
+    // via a fallback object, not something retrying fixes. Observed for
+    // real on the first --full run: a QA call failed with a bare nonzero
+    // exit and no stderr mid-run, which crashed the entire orchestrator
+    // process instead of being absorbed. One retry with a short backoff is
+    // cheap insurance against exactly that; if it fails twice, it's
+    // probably not transient and should still surface as a real error.
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 5000));
+      try {
+        // Context bundles + tool output can be sizable; default buffers are too small.
+        const result = await runClaudeProcess(this.binary, args, options.cwd, 64 * 1024 * 1024);
+        const durationMs = Date.now() - start;
+        const { json, costUsd } = extractStructuredPayload(result.stdout);
+        return { raw: result.stdout, json, costUsd, durationMs };
+      } catch (err) {
+        lastErr = err;
+      }
     }
-    const durationMs = Date.now() - start;
-    const { json, costUsd } = extractStructuredPayload(stdout);
-    return { raw: stdout, json, costUsd, durationMs };
+    throw new Error(
+      `claude CLI invocation failed for role "${options.role}" after retry: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`
+    );
   }
 }

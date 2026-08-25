@@ -299,6 +299,41 @@ describe('orchestrator — multi-worktree review (frontend + backend split)', ()
     expect(securityJson.findings).toEqual([]);
   });
 
+  it('gives each reviewer call ONLY the worktree-under-review implementer\'s own report — never another implementer\'s (regression: false "work doesn\'t exist" finding)', async () => {
+    // On the first real --full run, a reviewer scoped to the backend
+    // worktree was given the frontend implementer's self-report as
+    // context too, didn't find those frontend files in ITS OWN (backend)
+    // worktree, and incorrectly concluded frontend's work "doesn't exist."
+    // Pin the fix: prerequisite context for a reviewer call must contain
+    // only the implementer role actually being reviewed.
+    const taskId = 'test-reviewer-context-scoping';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      frontend: scriptedImplementation(['rentals/frontend/src/app/saved/page.tsx']),
+      backend: scriptedImplementation(['rentals/backend/src/routes/users.ts']),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+
+    const result = await runTask({ objective: 'Add a saved listings page', mode: 'full', invoker, taskId });
+    createdWorktrees.push(...Object.values(result.worktrees));
+
+    const qaOnBackend = invoker.callsFor('qa').find((c) => c.options.cwd === result.worktrees.backend!.path)!;
+    const qaOnFrontend = invoker.callsFor('qa').find((c) => c.options.cwd === result.worktrees.frontend!.path)!;
+
+    // "Output from: <role>" is the section header renderUserPrompt() gives
+    // each prerequisite artifact — the reliable signal for which
+    // implementer's report is actually present in a given reviewer's context.
+    expect(qaOnBackend.options.userPrompt).toContain('Output from: backend');
+    expect(qaOnBackend.options.userPrompt).not.toContain('Output from: frontend');
+    expect(qaOnFrontend.options.userPrompt).toContain('Output from: frontend');
+    expect(qaOnFrontend.options.userPrompt).not.toContain('Output from: backend');
+
+    // The clarifying instruction is present so the model doesn't assume it
+    // can see other implementers' worktrees even if context leaked some other way.
+    expect(qaOnBackend.options.userPrompt).toMatch(/reviewing ONLY the "backend" implementer's worktree/);
+  });
+
   it('never lets one implementer worktree go completely unreviewed when two implementers run', async () => {
     const taskId = 'test-multi-worktree-both-reviewed';
     const invoker = new ScriptedClaudeInvoker({

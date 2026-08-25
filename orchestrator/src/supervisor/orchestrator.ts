@@ -250,13 +250,30 @@ class Runner {
   /** One reviewer call against one implementer's worktree. Does not write any artifact itself — see reviewWorktrees(). */
   private async invokeReviewer(role: 'qa' | 'security', implementerRole: AgentRole, worktreePath: string): Promise<ReviewResult> {
     const profile = getProfile(role);
+    // Only THIS implementer's own report — never another implementer's.
+    // When a plan splits work across multiple worktrees (e.g. frontend +
+    // backend), each is a separate, isolated checkout; a reviewer pointed
+    // at one worktree has no visibility into another. Feeding a reviewer
+    // every implementer's self-report caused a real false finding on the
+    // first --full run: a reviewer scoped to the backend worktree read a
+    // frontend self-report in its context, didn't find those frontend
+    // files in ITS OWN (backend) worktree, and incorrectly concluded the
+    // frontend work "doesn't exist" — when it simply lives elsewhere, by
+    // design. Scoping context to just the worktree under review removes
+    // the confusion at the source rather than hoping a prompt caveat
+    // prevents it.
+    const ownImplementationReport = this.implementationArtifacts.filter((a) => a.role === implementerRole);
     const bundle = buildContext({
       role,
       objective: this.objective,
-      prerequisiteArtifacts: [...this.specialistArtifacts, ...this.implementationArtifacts],
+      prerequisiteArtifacts: [...this.specialistArtifacts, ...ownImplementationReport],
     });
     const systemPromptAddition = renderSystemPrompt(bundle);
-    const userPrompt = renderUserPrompt(bundle, reviewInstruction(role));
+    const userPrompt = renderUserPrompt(
+      bundle,
+      reviewInstruction(role) +
+        ` You are reviewing ONLY the "${implementerRole}" implementer's worktree — if this task also involved other implementer roles (e.g. a separate frontend/backend split), their work lives in an entirely separate git worktree/branch you cannot see from here, and is being reviewed independently. Do not report that another implementer's work "doesn't exist" based on what is or isn't present in this worktree.`
+    );
 
     logEvent({ taskId: this.taskId, event: 'agent_launch', role, reviewingImplementer: implementerRole });
     this.agentsInvolved.add(role);

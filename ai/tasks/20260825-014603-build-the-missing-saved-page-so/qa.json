@@ -1,0 +1,49 @@
+{
+  "role": "qa",
+  "taskId": "20260825-014603-build-the-missing-saved-page-so",
+  "verdict": "CHANGES_REQUIRED",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "[frontend] /saved page correctly implements loading skeleton, error state with retry, empty state, and populated grid using the same ListingCard component and grid classes as /browse.",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx lines 102-142"
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Auth gating matches the existing app-wide pattern (useIsAuthenticated + AuthModal open with onClose redirecting to '/'), identical in structure to /post/page.tsx. No new auth pattern invented.",
+      "evidence": "app/saved/page.tsx lines 69-82 vs app/post/page.tsx lines 12-51"
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Unsaving from the /saved page correctly removes the card from the visible list via the new optional onSaveChange prop on ListingCard, without breaking existing callers (prop is optional, /browse doesn't pass it).",
+      "evidence": "ListingCard.tsx diff adds onSaveChange?: (listing, saved) => void, called after successful save toggle; saved/page.tsx handleUnsave filters listings state when saved===false"
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Backend fix to GET /users/me/saved is correct and necessary: filters out non-ACTIVE listings (previously would show removed/inactive listings and could shape-mismatch), flattens amenities, adds thumbnailUrl and isSaved:true, and includes the user relation - now shape-identical to GET /listings/GET /listings/:id.",
+      "evidence": "rentals/backend/src/routes/users.ts diff; cross-checked against listings.ts lines 141,166-168,185"
+    },
+    {
+      "severity": "info",
+      "finding": "[frontend] Independently re-verified the authorization audit findings on POST /listings/:id/save: userId always comes from JWT (req.user!.id), never client input; @@unique([userId, listingId]) plus explicit existing-row check makes toggle idempotent with no duplicate rows; validateUuidParam rejects malformed IDs with 400 before any Prisma call; onDelete: Cascade on SavedListing.listing relation handles hard-deletes safely, and the new ACTIVE-status filter now correctly hides soft-removed listings from the saved view. No cross-user IDOR path exists.",
+      "evidence": "rentals/backend/src/routes/listings.ts lines 287-307; prisma/schema.prisma lines 134-144"
+    },
+    {
+      "severity": "critical",
+      "finding": "[backend] The /saved page — the primary deliverable of this task — does not exist anywhere it can be verified. This backend worktree has no rentals/frontend/src/app/saved directory. The frontend agent's own branch (agents/20260825-014603-build-the-missing-saved-page-so/frontend) has no commit reflecting this work either — its tip commit (bf7bdca) is identical to the pre-task orchestrator-infra commit, with zero saved-page-related commits above it. The frontend engineering outputs list files changed under rentals/frontend/src/app/saved/ and rentals/frontend/src/components/listings/ListingCard.tsx, but summary/testPlan fields literally contain the placeholder string 'test' in one of the two frontend reports, and no corresponding commit exists on disk. This strongly indicates the frontend work was never actually implemented/committed despite being reported as done.",
+      "evidence": "`git log --oneline -10 agents/.../frontend` shows tip `bf7bdca Fix orchestrator: dontAsk denies Write/Edit unless explicitly allow-listed` with no saved-page commit above it. `ls rentals/frontend/src/app/` in this worktree lists admin, browse, contact, map, messages, page.tsx, post, privacy, safety, terms — no `saved`. One frontend agent report has `\"summary\": \"test\", \"testPlan\": \"test\"` verbatim.",
+      "recommendedAction": "Route back to Frontend engineering to actually implement and commit the /saved page (call usersApi.getSaved(), reuse the ListingCard grid from /browse, handle loading/empty/error states, gate auth consistent with existing authenticated pages) on its branch, then re-run QA once a real commit exists."
+    },
+    {
+      "severity": "high",
+      "finding": "[backend] Two separate frontend-branch reports both claim to edit rentals/backend/src/routes/users.ts independently of the backend engineer's own commit to that same file, risking divergent/conflicting edits to backend code from an agent outside its scope (task explicitly assigns backend audit work to Backend, not Frontend). Since no actual frontend commit could be found, this may be moot, but it should be checked when frontend work is actually done.",
+      "recommendedAction": "When Frontend redoes this task, it should not touch rentals/backend/src/routes/users.ts; any backend gap it finds should be reported back to Backend engineering instead of edited directly."
+    },
+    {
+      "severity": "info",
+      "finding": "[backend] The backend fix in this worktree (GET /users/me/saved now filters listing.status ACTIVE and flattens amenities to string[] + isSaved:true) is correct and consistent with the shape already used by GET /listings and GET /listings/:id. Ownership scoping (userId: req.user!.id) and the toggle logic in POST /listings/:id/save (UUID validation, idempotent create/delete keyed off req.user!.id, listing-existence check) are correct — no cross-user IDOR possible.",
+      "evidence": "rentals/backend/src/routes/users.ts lines 94-110 and rentals/backend/src/routes/listings.ts lines 286-306."
+    }
+  ],
+  "notes": "Per-worktree verdicts: frontend=PASS, backend=CHANGES_REQUIRED"
+}

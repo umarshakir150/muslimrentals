@@ -6,12 +6,22 @@ living document, not a commitment.
 
 ## Now
 
-- Validate this AI operating system on one small, real, low-risk task (see
-  the suggested next prompt at the end of the setup task's final report).
-- Add `.env.example` files for `rentals/frontend` and `rentals/backend` so
-  the README's setup instructions actually work.
+- ~~Validate this AI operating system on one small, real, low-risk task~~ —
+  done: `ai/tasks/env-example-files.md` (added `.env.example` files for
+  both `rentals/frontend` and `rentals/backend`, Supervisor → Backend/
+  Frontend → QA/Security, one `CHANGES_REQUIRED` → fix → re-approve round).
 - Resolve the Netlify-vs-Vercel deployment ambiguity with the founder and
   document the decision in `ai/decisions.md`.
+- Add `.gitignore` entries for `.env`/`.env.local` in `rentals/backend` and
+  `rentals/frontend` — neither is currently excluded, so nothing stops a
+  developer's real `.env` from being committed once they run
+  `cp .env.example .env` (flagged by QA in `ai/tasks/env-example-files.md`).
+- Investigate the Google Sign-In gap: the backend's `/auth/google` endpoint
+  and the frontend's `authApi.googleAuth()` call both exist, but no
+  frontend code actually reads `NEXT_PUBLIC_GOOGLE_CLIENT_ID` or renders a
+  Google Sign-In button (flagged by Frontend Engineer in
+  `ai/tasks/env-example-files.md`) — decide whether to finish wiring it up
+  or remove the unused backend/frontend scaffolding.
 
 ## Next
 

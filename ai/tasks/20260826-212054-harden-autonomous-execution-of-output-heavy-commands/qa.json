@@ -1,0 +1,38 @@
+{
+  "role": "qa",
+  "taskId": "20260826-212054-harden-autonomous-execution-of-output-heavy-commands",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Change is an isolated 14-line addition to CLAUDE.md's 'Ground rules for every agent' section (commit 7d9c569), instructing agents to use quiet flags (--no-fund --no-audit --loglevel=error) on npm/npx install/build/typecheck commands and to redirect stdout+stderr to a log file and inspect only the tail/errors for commands whose output could still be large.",
+      "evidence": "git show 7d9c569 -- CLAUDE.md"
+    },
+    {
+      "severity": "info",
+      "finding": "Confirmed CLAUDE.md is injected verbatim into every role's system prompt as sharedContext, so the new guidance reaches engineering/frontend/backend/qa/security/integrator without per-role duplication.",
+      "evidence": "orchestrator/src/context/contextBuilder.ts line 82: sharedContext: readFileSync(CLAUDE_MD, 'utf8')"
+    },
+    {
+      "severity": "info",
+      "finding": "Confirmed the relevant Bash allow-patterns in registry.ts (e.g. Bash(npm install*), Bash(npm run build*), Bash(npx tsc*), Bash(npx prisma generate*)) are prefix wildcards with no conflicting deny pattern that would block appended flags or output redirection, so agents following the new guidance stay within existing permission grants.",
+      "evidence": "orchestrator/src/agents/registry.ts VERIFY_BASH_ALLOW / ENGINEERING_ALWAYS_ALLOW / DANGEROUS_BASH_DENY / ENGINEERING_BASH_DENY lists, lines ~67-152"
+    },
+    {
+      "severity": "info",
+      "finding": "Independently verified the root-cause diagnosis is correct rather than just asserted: the orchestrator's own outer capture of the claude CLI process (runClaudeProcess in claudeAdapter.ts) already uses a 64MB non-throwing buffer, and git.ts uses a 64MB execFile maxBuffer — neither would produce the literal Node error string 'stdout maxBuffer length exceeded'. That exact error string is characteristic of Node's default exec()/execFile() maxBuffer overflow, which must be occurring inside the Claude Code CLI's own internal Bash-tool child-process capture — a black box outside orchestrator code, confirming no code-level fix is available here and a prompt-level mitigation is the correct approach.",
+      "evidence": "orchestrator/src/claude/claudeAdapter.ts lines 164-211 (64*1024*1024 buffer, custom truncation, no throw); orchestrator/src/git/worktree.ts line 41-44 (GIT_MAX_BUFFER_BYTES = 64MB)"
+    },
+    {
+      "severity": "info",
+      "finding": "No contradictory or overriding guidance about capturing full raw command output exists in any individual agents/*.md role file that would negate this new CLAUDE.md rule.",
+      "evidence": "grep -n -i 'maxBuffer|npm install|npm run build|loglevel' agents/*.md returned no matches"
+    },
+    {
+      "severity": "low",
+      "finding": "The example log-file path in the new guidance is /tmp/<name>.log; this session's own harness instructs use of a session-scoped scratchpad directory instead of /tmp, but that convention isn't established anywhere else in this repo's CLAUDE.md/agents/*.md, so it's not a contradiction — just a possible future refinement, not a blocker.",
+      "recommendedAction": "Optional: if a repo-wide scratch-directory convention is later adopted, revisit this example path for consistency; not required for this task."
+    }
+  ],
+  "notes": "Verified the diff is scoped exactly to this task (isolated single commit on top of the correct parent), confirmed propagation mechanism to all roles, confirmed no permission-system blocker, and independently corroborated the root-cause reasoning against the actual orchestrator buffer-handling code rather than trusting the implementer's summary. This is a low-risk, reversible, docs-only change appropriate in scope for a prompt-level mitigation of a CLI-internal limitation that cannot be fixed in application code."
+}

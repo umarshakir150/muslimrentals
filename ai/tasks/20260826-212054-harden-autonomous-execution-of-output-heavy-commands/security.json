@@ -1,0 +1,7 @@
+{
+  "role": "security",
+  "taskId": "20260826-212054-harden-autonomous-execution-of-output-heavy-commands",
+  "verdict": "APPROVED",
+  "findings": [],
+  "notes": "Change is documentation-only (14 added lines in CLAUDE.md under 'Ground rules for every agent'), instructing agents to use low-verbosity flags and log-file redirection for output-heavy npm/npx commands. No application code, auth, permissions (registry.ts unchanged), data handling, or logging behavior was modified — no security surface touched. Confirmed via `git show 7d9c569 --stat` that CLAUDE.md is the only file changed. No security concerns."
+}

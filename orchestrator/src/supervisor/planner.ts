@@ -67,7 +67,7 @@ export interface PlanRequest {
 
 const INSTRUCTION = `Respond with ONLY the JSON object matching the required schema — no prose, no markdown fences.
 
-Choose "requiredAgents" from exactly this fixed set: supervisor, engineering, frontend, backend, qa, security, designer, trust_safety, legal, support. Never include "supervisor" itself. Include "engineering" (or "frontend"/"backend" if the work cleanly splits) only when this task needs real code changes. Include "qa" and "security" whenever "engineering"/"frontend"/"backend" is included — implementation is never done without independent review. Include "designer" for user-facing flow changes, "trust_safety" for anything touching user-generated content/messaging/moderation/profiles, "legal" for anything touching privacy/retention/consent/housing regulation/discrimination/terms. Do not include a role that genuinely isn't needed.
+Choose "requiredAgents" from exactly this fixed set: supervisor, engineering, frontend, backend, qa, security, designer, trust_safety, legal, support. Never include "supervisor" itself. For implementation, choose EXACTLY ONE of these two alternative strategies, never both: either "engineering" alone (for work that doesn't cleanly split into a frontend/backend boundary), OR "frontend" and/or "backend" (when the work does cleanly split). Never include "engineering" together with "frontend"/"backend" in the same plan — they are not complementary roles working on different parts of the same feature; each is a full implementer that would independently attempt the whole task, so including both means two (or three) implementers redundantly building the same thing at the same time and colliding. Include "qa" and "security" whenever any implementer role is included — implementation is never done without independent review. Include "designer" for user-facing flow changes, "trust_safety" for anything touching user-generated content/messaging/moderation/profiles, "legal" for anything touching privacy/retention/consent/housing regulation/discrimination/terms. Do not include a role that genuinely isn't needed.
 
 Set approvalRequirements.founderApprovalRequired to true if this task's OWN OBJECTIVE (not hypothetical future work) involves production deployment, irreversible production changes, deleting production data, permanent account bans, publishing legal policy, spending money, or major auth/security or architecture rewrites — per CLAUDE.md. List the specific reason(s) in approvalRequirements.reasons using CLAUDE.md's own wording where possible.
 
@@ -137,6 +137,27 @@ export async function buildPlan(req: PlanRequest, invoker: ClaudeInvoker): Promi
   // orchestration-internal only — invoked directly by the Runner when 2+
   // implementer roles run, never selected via the plan (see registry.ts).
   plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'supervisor' && r !== 'integrator');
+
+  // "engineering" and a "frontend"/"backend" split are two ALTERNATIVE
+  // implementation strategies for the same work, never a combination — the
+  // instruction to the model says "include engineering (OR frontend/backend
+  // if the work cleanly splits)". A model response naming both anyway isn't
+  // a request for three implementers doing complementary work; it's
+  // engineering (scoped to the whole app, rentals/**) and frontend/backend
+  // (each scoped to their own half) all independently building the SAME
+  // feature at the same time — guaranteed heavy, wasteful cross-branch
+  // conflict, not a legitimate split. Observed on a real run. Resolved
+  // deterministically in code, the same way scheduling/scopes already are,
+  // rather than trusting prompt wording alone to prevent it: prefer the
+  // more granular frontend/backend split when both are present.
+  if (plan.requiredAgents.includes('engineering') && (plan.requiredAgents.includes('frontend') || plan.requiredAgents.includes('backend'))) {
+    logEvent({
+      taskId: req.taskId,
+      event: 'plan_redundant_engineering_role_dropped',
+      reason: 'Plan named both "engineering" and a frontend/backend split for the same task — these are alternative strategies, not a combination. Dropped "engineering" in favor of the more granular split.',
+    });
+    plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'engineering');
+  }
 
   // Scheduling is always computed deterministically, never taken from the model.
   const modelGroups = plan.parallelGroups;

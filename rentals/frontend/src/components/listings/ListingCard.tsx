@@ -15,10 +15,11 @@ interface ListingCardProps {
   onView: (listing: Listing) => void;
   onMap: (listing: Listing) => void;
   onMessage: (listing: Listing) => void;
+  onSaveChange?: (listing: Listing, saved: boolean) => void;
   index?: number;
 }
 
-export default function ListingCard({ listing, onView, onMap, onMessage, index = 0 }: ListingCardProps) {
+export default function ListingCard({ listing, onView, onMap, onMessage, onSaveChange, index = 0 }: ListingCardProps) {
   const [saved, setSaved] = useState(listing.isSaved || false);
   const [savingState, setSavingState] = useState(false);
   const isAuth = useIsAuthenticated();
@@ -34,6 +35,7 @@ export default function ListingCard({ listing, onView, onMap, onMessage, index =
     try {
       const res = await listingsApi.save(listing.id);
       setSaved(res.saved);
+      onSaveChange?.(listing, res.saved);
       toast({ title: res.saved ? 'Saved!' : 'Removed', description: res.saved ? 'Listing saved to your collection.' : 'Removed from saved.' });
     } catch { toast({ variant: 'destructive', title: 'Error', description: 'Could not save listing.' }); }
     finally { setSavingState(false); }

@@ -29,6 +29,21 @@ import { REPO_ROOT, getWorktreesRoot } from '../paths.js';
 
 const execFileAsync = promisify(execFile);
 
+// A real `npm install`-then-commit inside a task worktree (observed for
+// real: PART 23's autonomous-cycle demonstration verifying the Roommate
+// Profiles branch) can make `git diff --cached --name-only` or `git status
+// --porcelain` emit far more than Node's execFile default 1MB stdout
+// buffer, throwing ERR_CHILD_PROCESS_STDIO_MAXBUFFER and crashing the
+// whole task. Same fix, same reasoning, as claudeAdapter.ts's
+// runClaudeProcess() already applies to Claude's own stdout for the
+// identical class of problem — one shared generous buffer for every git
+// call here rather than reasoning about it per call site.
+const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+function git(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER_BYTES });
+}
+
 export interface WorktreeHandle {
   branch: string;
   path: string;
@@ -66,7 +81,7 @@ export function existingWorktreeHandle(taskId: string, role: string): WorktreeHa
  * guaranteed to share an identical base commit even if something else
  * advances the branch mid-task. */
 export async function resolveHead(): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT });
+  const { stdout } = await git(['rev-parse', 'HEAD'], REPO_ROOT);
   return stdout.trim();
 }
 
@@ -85,9 +100,7 @@ export async function createWorktree(taskId: string, role: string, baseRef: stri
     );
   }
 
-  await execFileAsync('git', ['worktree', 'add', '-b', branch, worktreePath, baseRef], {
-    cwd: REPO_ROOT,
-  });
+  await git(['worktree', 'add', '-b', branch, worktreePath, baseRef], REPO_ROOT);
 
   return { branch, path: worktreePath };
 }
@@ -111,7 +124,7 @@ export async function addWorktreeForExistingBranch(taskId: string, role: string,
     throw new Error(`Worktree path already exists: ${worktreePath}. Remove it before re-running this task.`);
   }
 
-  await execFileAsync('git', ['worktree', 'add', worktreePath, branch], { cwd: REPO_ROOT });
+  await git(['worktree', 'add', worktreePath, branch], REPO_ROOT);
 
   return { branch, path: worktreePath };
 }
@@ -121,7 +134,7 @@ export async function addWorktreeForExistingBranch(taskId: string, role: string,
  * were never all created from a single shared HEAD in the first place. */
 export async function mergeBaseOf(refs: string[]): Promise<string> {
   if (refs.length < 2) throw new Error('mergeBaseOf() needs at least two refs.');
-  const { stdout } = await execFileAsync('git', ['merge-base', ...refs], { cwd: REPO_ROOT });
+  const { stdout } = await git(['merge-base', ...refs], REPO_ROOT);
   return stdout.trim();
 }
 
@@ -140,23 +153,21 @@ export async function createIntegrationWorktree(taskId: string, baseCommit: stri
     throw new Error(`Integration worktree path already exists: ${worktreePath}.`);
   }
 
-  await execFileAsync('git', ['worktree', 'add', '-b', branch, worktreePath, baseCommit], {
-    cwd: REPO_ROOT,
-  });
+  await git(['worktree', 'add', '-b', branch, worktreePath, baseCommit], REPO_ROOT);
 
   return { branch, path: worktreePath };
 }
 
 export async function removeWorktree(handle: WorktreeHandle, opts: { deleteBranch?: boolean } = {}): Promise<void> {
-  await execFileAsync('git', ['worktree', 'remove', handle.path, '--force'], { cwd: REPO_ROOT });
+  await git(['worktree', 'remove', handle.path, '--force'], REPO_ROOT);
   if (opts.deleteBranch) {
-    await execFileAsync('git', ['branch', '-D', handle.branch], { cwd: REPO_ROOT });
+    await git(['branch', '-D', handle.branch], REPO_ROOT);
   }
 }
 
 /** Files changed on `branch` relative to the commit it was created from. */
 export async function changedFiles(handle: WorktreeHandle): Promise<string[]> {
-  const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: handle.path });
+  const { stdout } = await git(['status', '--porcelain'], handle.path);
   return stdout
     .split('\n')
     .map((line) => line.trim())
@@ -172,12 +183,12 @@ export async function changedFiles(handle: WorktreeHandle): Promise<string[]> {
  * history by the time cross-branch analysis / integration needs it.
  */
 export async function commitAll(handle: WorktreeHandle, message: string): Promise<{ committed: boolean; sha?: string }> {
-  await execFileAsync('git', ['add', '-A'], { cwd: handle.path });
-  const { stdout: staged } = await execFileAsync('git', ['diff', '--cached', '--name-only'], { cwd: handle.path });
+  await git(['add', '-A'], handle.path);
+  const { stdout: staged } = await git(['diff', '--cached', '--name-only'], handle.path);
   if (!staged.trim()) return { committed: false };
 
-  await execFileAsync('git', ['commit', '-m', message], { cwd: handle.path });
-  const { stdout: sha } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
+  await git(['commit', '-m', message], handle.path);
+  const { stdout: sha } = await git(['rev-parse', 'HEAD'], handle.path);
   return { committed: true, sha: sha.trim() };
 }
 
@@ -196,7 +207,7 @@ export interface NameStatusDiff {
  * committed yet, though in normal operation commitAll() means it always is.
  */
 export async function diffNameStatus(handle: WorktreeHandle, baseRef: string): Promise<NameStatusDiff> {
-  const { stdout } = await execFileAsync('git', ['diff', '--no-color', '--name-status', baseRef], { cwd: handle.path });
+  const { stdout } = await git(['diff', '--no-color', '--name-status', baseRef], handle.path);
   const result: NameStatusDiff = { added: [], modified: [], deleted: [], renamed: [] };
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -229,7 +240,7 @@ export interface MergeAttempt {
  */
 export async function mergeBranch(handle: WorktreeHandle, branchName: string): Promise<MergeAttempt> {
   try {
-    await execFileAsync('git', ['merge', '--no-ff', '--no-commit', branchName], { cwd: handle.path });
+    await git(['merge', '--no-ff', '--no-commit', branchName], handle.path);
     return { clean: true, conflictedFiles: [] };
   } catch {
     const conflictedFiles = await unresolvedConflicts(handle);
@@ -239,8 +250,8 @@ export async function mergeBranch(handle: WorktreeHandle, branchName: string): P
 
 /** Finalizes a clean `mergeBranch()` result (its changes are already staged by git). */
 export async function commitMerge(handle: WorktreeHandle, message: string): Promise<string> {
-  await execFileAsync('git', ['commit', '-m', message], { cwd: handle.path });
-  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
+  await git(['commit', '-m', message], handle.path);
+  const { stdout } = await git(['rev-parse', 'HEAD'], handle.path);
   return stdout.trim();
 }
 
@@ -248,7 +259,7 @@ export async function commitMerge(handle: WorktreeHandle, message: string): Prom
  * ground-truth check after an Integrator agent claims to have resolved
  * everything. Never trust "I fixed it" without verifying. */
 export async function unresolvedConflicts(handle: WorktreeHandle): Promise<string[]> {
-  const { stdout } = await execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: handle.path }).catch(() => ({
+  const { stdout } = await git(['diff', '--name-only', '--diff-filter=U'], handle.path).catch(() => ({
     stdout: '',
   }));
   return stdout.split('\n').map((l) => l.trim()).filter(Boolean);

@@ -207,6 +207,7 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
     // ── Steps 11-13: hand the selected item (if any) to the EXISTING orchestrator ──
     updateCycle(cycle.id, { status: 'EXECUTING' });
     let execution: CycleExecutionOutcome | undefined;
+    let executionError: string | undefined;
 
     if (leadResult.selected) {
       const item = leadResult.selected.item;
@@ -299,6 +300,7 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        executionError = message;
         updateBacklogItem(item.id, { status: 'BLOCKED', changeReason: `Execution threw before finishing: ${message}` });
         recordMemory({
           scope: 'known_issue',
@@ -312,7 +314,21 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
     }
 
     // ── Steps 14-17: persist outcome + cycle summary ──
-    const summaryParts = [leadResult.plan.cycleSummary, execution ? `Execution: ${execution.finalState} (ai/tasks/${execution.taskId}).` : (leadResult.selectionNote ?? 'No item selected this cycle.')];
+    // A selection can end in three genuinely different states — completed
+    // execution, no item was eligible/selected at all, or a selection was
+    // made and execution genuinely started but threw before runTask()
+    // could return a RunResult (e.g. a real git/buffer failure, observed
+    // for real during the PART 23 demonstration this distinction was added
+    // for). Collapsing the third case into "no_selection" would silently
+    // hide that real work was actually attempted — never do that.
+    const summaryParts = [
+      leadResult.plan.cycleSummary,
+      execution
+        ? `Execution: ${execution.finalState} (ai/tasks/${execution.taskId}).`
+        : executionError
+          ? `Execution attempted for "${leadResult.selected?.item.title}" but threw before finishing: ${executionError}`
+          : (leadResult.selectionNote ?? 'No item selected this cycle.'),
+    ];
     const finished = updateCycle(cycle.id, {
       status: 'COMPLETED',
       completedAt: nowIso(),
@@ -321,7 +337,7 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
       selectedItems: leadResult.selected ? [leadResult.selected.item.id] : [],
       tasksCreated: execution ? [execution.taskId] : [],
       approvalRequests: leadResult.approvalRequestIds,
-      result: execution ? execution.finalState : 'no_selection',
+      result: execution ? execution.finalState : executionError ? 'execution_error' : 'no_selection',
       summary: summaryParts.filter(Boolean).join(' '),
     });
     logAutonomyEvent({ type: 'CYCLE_COMPLETED', cycleId: cycle.id, message: finished.summary ?? 'Cycle completed.' });

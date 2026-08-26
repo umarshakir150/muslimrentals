@@ -95,13 +95,15 @@ router.post('/me/change-password', authenticate, writeRateLimiter, async (req: A
 router.get('/me/saved', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const saved = await prisma.savedListing.findMany({
-      where:   { userId: req.user!.id, listing: { status: { not: ListingStatus.REMOVED } } },
+      // Exclude listings that were later removed/deactivated so the saved list
+      // never surfaces de-listed content or dead links (mirrors GET /listings).
+      where:   { userId: req.user!.id, listing: { status: ListingStatus.ACTIVE } },
       include: {
         listing: {
           include: {
-            images:     { take: 1 },
-            amenities:  { select: { name: true } },
-            user:       { select: { id: true, name: true, avatarUrl: true } },
+            images:    { take: 1 },
+            amenities: { select: { name: true } },
+            user:      { select: { id: true, name: true, avatarUrl: true } },
           },
         },
       },
@@ -110,6 +112,8 @@ router.get('/me/saved', authenticate, async (req: AuthRequest, res: Response, ne
     });
     res.json({
       success: true,
+      // Every row here is, by definition, saved by the current user — set isSaved
+      // explicitly so ListingCard's heart toggle renders correctly on first paint.
       data: saved.map(s => ({
         ...s.listing,
         amenities: s.listing.amenities.map(a => a.name),

@@ -38,6 +38,28 @@ function sanitize(segment: string): string {
   return segment.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+/**
+ * Reconstructs a WorktreeHandle for a worktree that should already exist on
+ * disk from an earlier createWorktree()/createIntegrationWorktree() call in
+ * THIS SAME task run — pure path/branch-name math by convention, no git
+ * command, no filesystem check. Use when resuming a partially-finished task
+ * whose worktrees were never removed (e.g. resumeIntegratedReview()) —
+ * different from addWorktreeForExistingBranch()/createIntegrationWorktree(),
+ * which create something new. Throws if the path isn't actually there,
+ * since silently proceeding against a missing worktree would be worse than
+ * failing loudly.
+ */
+export function existingWorktreeHandle(taskId: string, role: string): WorktreeHandle {
+  const safeTaskId = sanitize(taskId);
+  const safeRole = sanitize(role);
+  const worktreePath = path.join(getWorktreesRoot(), `${safeTaskId}-${safeRole}`);
+  const branch = role === 'integration' ? `agents/${safeTaskId}/integration` : `agents/${safeTaskId}/${safeRole}`;
+  if (!existsSync(worktreePath)) {
+    throw new Error(`existingWorktreeHandle: expected worktree at ${worktreePath} (role "${role}", task "${taskId}") but it doesn't exist.`);
+  }
+  return { branch, path: worktreePath };
+}
+
 /** Resolves the current HEAD to an explicit SHA — call this ONCE per task and
  * pass the result to every createWorktree()/createIntegrationWorktree() call
  * for that task, so every worker (and the integration worktree) is

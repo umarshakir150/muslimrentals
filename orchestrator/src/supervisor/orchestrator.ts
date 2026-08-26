@@ -38,6 +38,7 @@ import {
   AgentAnalysis as AgentAnalysisSchema,
   ImplementationResult as ImplementationResultSchema,
   IntegrationResult as IntegrationResultSchema,
+  OverlapReport as OverlapReportSchema,
   ReviewResult as ReviewResultSchema,
   SupervisorPlan as SupervisorPlanSchema,
   JsonSchemas,
@@ -55,6 +56,7 @@ import {
   createIntegrationWorktree,
   createWorktree,
   diffNameStatus,
+  existingWorktreeHandle,
   mergeBaseOf,
   mergeBranch,
   resolveHead,
@@ -589,29 +591,61 @@ class Runner {
       hasBlockingIssues: overlapReport.hasBlockingIssues,
     });
 
+    return this.runIntegrationAndReviewLoop(plan, implementerRoles, overlapReport, reviewerRoles);
+  }
+
+  /**
+   * The shared integration + integrated-review correction loop, used both
+   * by the normal path (runIntegratedReviewLoop, right after cross-branch
+   * analysis) and by resumeIntegratedReview (skipping straight to review
+   * against an integration worktree that's already fully built — see
+   * that function for why: a real run had the Integrator genuinely finish
+   * reconciling everything QA/Security flagged, but its own retry budget
+   * was exhausted by an unrelated tooling gap before a second review ever
+   * happened). `opts.alreadyIntegrated` skips the FIRST runIntegrationStep()
+   * call (which would otherwise treat an already-complete integration
+   * worktree as "existing — fix it in place" and pointlessly re-invoke the
+   * Integrator agent) — every subsequent loop iteration (i.e. any actual
+   * post-review correction) still calls it normally.
+   */
+  private async runIntegrationAndReviewLoop(
+    plan: SupervisorPlan,
+    implementerRoles: AgentRole[],
+    overlapReport: OverlapReport,
+    reviewerRoles: ('qa' | 'security')[],
+    opts: { alreadyIntegrated?: boolean } = {}
+  ): Promise<{ finalState: TaskState; report: FinalTaskReport }> {
     let correctionFeedback: string | undefined;
     let approved = false;
+    let skipIntegrationStep = opts.alreadyIntegrated === true;
 
     while (!approved) {
-      await this.runIntegrationStep(implementerRoles, overlapReport, correctionFeedback);
-      correctionFeedback = undefined;
+      if (!skipIntegrationStep) {
+        await this.runIntegrationStep(implementerRoles, overlapReport, correctionFeedback);
+        correctionFeedback = undefined;
 
-      const integrationResult = this.integrationResult as IntegrationResult;
-      if (integrationResult.unresolvedConflicts.length > 0) {
-        this.setState('CORRECTION_REQUIRED');
-        logEvent({ taskId: this.taskId, event: 'integration_unresolved', unresolvedConflicts: integrationResult.unresolvedConflicts });
-        if (this.correctionCycles >= this.maxRetryCycles) {
-          logEvent({ taskId: this.taskId, event: 'retry_limit_exhausted', correctionCycles: this.correctionCycles, maxRetryCycles: this.maxRetryCycles, reason: 'integration' });
-          const report = this.buildFinalReport(plan, 'FOUNDER_APPROVAL_REQUIRED', {
-            extraReason: `Correction retry limit (${this.maxRetryCycles}) exhausted — integration could not reach a clean, fully reconciled state (unresolved: ${integrationResult.unresolvedConflicts.join('; ')}). Escalated to founder rather than looping indefinitely.`,
-          });
-          return { finalState: 'FOUNDER_APPROVAL_REQUIRED', report };
+        const stepResult = this.integrationResult as IntegrationResult;
+        if (stepResult.unresolvedConflicts.length > 0) {
+          this.setState('CORRECTION_REQUIRED');
+          logEvent({ taskId: this.taskId, event: 'integration_unresolved', unresolvedConflicts: stepResult.unresolvedConflicts });
+          if (this.correctionCycles >= this.maxRetryCycles) {
+            logEvent({ taskId: this.taskId, event: 'retry_limit_exhausted', correctionCycles: this.correctionCycles, maxRetryCycles: this.maxRetryCycles, reason: 'integration' });
+            const report = this.buildFinalReport(plan, 'FOUNDER_APPROVAL_REQUIRED', {
+              extraReason: `Correction retry limit (${this.maxRetryCycles}) exhausted — integration could not reach a clean, fully reconciled state (unresolved: ${stepResult.unresolvedConflicts.join('; ')}). Escalated to founder rather than looping indefinitely.`,
+            });
+            return { finalState: 'FOUNDER_APPROVAL_REQUIRED', report };
+          }
+          this.correctionCycles += 1;
+          correctionFeedback = `Integration left unresolved conflicts: ${stepResult.unresolvedConflicts.join('; ')}. Finish reconciling these before anything else.`;
+          continue;
         }
-        this.correctionCycles += 1;
-        correctionFeedback = `Integration left unresolved conflicts: ${integrationResult.unresolvedConflicts.join('; ')}. Finish reconciling these before anything else.`;
-        continue;
       }
+      skipIntegrationStep = false;
 
+      // Re-read from `this.integrationResult` (not a loop-scoped const) —
+      // this branch runs whether integration just happened above or was
+      // already done before this loop started (resumeIntegratedReview).
+      const integrationResult = this.integrationResult as IntegrationResult;
       this.setState('INTEGRATED_QA_REVIEW');
       const integrationArtifact: PrerequisiteArtifact = { role: 'integrator', content: JSON.stringify(integrationResult) };
       const suffix =
@@ -702,6 +736,48 @@ class Runner {
     }
 
     return this.runIntegratedReviewLoop(plan, implementerRoles, reviewerRoles);
+  }
+
+  /**
+   * Resumes straight into INTEGRATED_QA_REVIEW against an integration
+   * worktree that is already fully built and committed from a prior run —
+   * skips CROSS_BRANCH_ANALYSIS and the first INTEGRATION step entirely
+   * (unlike resumeFromExistingBranches, which still runs both). Exists for
+   * exactly the failure mode a real run hit: the Integrator's own retry
+   * budget got consumed entirely by its inability to verify its work with
+   * `npm install`/`tsc`/`prisma generate` (a Bash permission gap, since
+   * fixed) even though it had, in fact, correctly reconciled everything
+   * QA/Security flagged — so the fix that already exists on disk was never
+   * given a second review. If review fails again for a real reason, the
+   * normal correction loop (RE_INTEGRATION -> review) takes over exactly as
+   * it would in a fresh run, with a full new retry budget.
+   */
+  async resumeReviewOnly(
+    plan: SupervisorPlan,
+    implementerWorktrees: Map<AgentRole, WorktreeHandle>,
+    implementationArtifacts: PrerequisiteArtifact[],
+    integrationWorktree: WorktreeHandle,
+    integrationResult: IntegrationResult,
+    overlapReport: OverlapReport,
+    baseCommit: string,
+    reviewerRoles: ('qa' | 'security')[]
+  ): Promise<{ finalState: TaskState; report: FinalTaskReport }> {
+    for (const [role, wt] of implementerWorktrees) {
+      this.worktrees.set(role, wt);
+      this.agentsInvolved.add(role);
+      this.implementerFilesByRole.set(role, allChangedPaths(await diffNameStatus(wt, baseCommit)));
+    }
+    this.implementationArtifacts = implementationArtifacts;
+    this.integrationWorktree = integrationWorktree;
+    this.integrationResult = integrationResult;
+    this.overlapReport = overlapReport;
+    this.baseCommit = baseCommit;
+    this.agentsInvolved.add('integrator');
+
+    logEvent({ taskId: this.taskId, event: 'resuming_review_only', integrationBranch: integrationWorktree.branch });
+
+    const implementerRoles = Array.from(implementerWorktrees.keys());
+    return this.runIntegrationAndReviewLoop(plan, implementerRoles, overlapReport, reviewerRoles, { alreadyIntegrated: true });
   }
 
   private finishSuccessfully(plan: SupervisorPlan): { finalState: TaskState; report: FinalTaskReport } {
@@ -910,6 +986,111 @@ export async function resumeIntegration(options: ResumeIntegrationOptions): Prom
 
   const runner = new Runner(taskId, plan.objective, 'full', invoker, maxRetryCycles, maxConcurrency);
   const { finalState, report } = await runner.resumeFromExistingBranches(plan, options.branches);
+
+  logEvent({ taskId, event: 'task_finished', finalState, qaVerdict: report.qaVerdict, securityVerdict: report.securityVerdict, correctionCycles: report.correctionCycles });
+
+  return {
+    taskId,
+    finalState,
+    plan,
+    finalReport: report,
+    worktrees: runner.getWorktrees(),
+    integrationWorktree: runner.getIntegrationWorktree(),
+  };
+}
+
+export interface ResumeIntegratedReviewOptions {
+  /** An existing task ID that already reached CROSS_BRANCH_ANALYSIS/
+   * INTEGRATION in a prior run — must have plan.json, changed-files.json,
+   * overlap-report.json, and a built integration worktree still on disk. */
+  taskId: string;
+  invoker: ClaudeInvoker;
+  maxRetryCycles?: number;
+  maxConcurrency?: number;
+}
+
+/**
+ * Resumes a task straight into INTEGRATED_QA_REVIEW against an integration
+ * worktree that a prior run already fully built — see Runner.resumeReviewOnly()
+ * for the failure mode this exists for. Reconstructs everything from disk:
+ * plan.json, changed-files.json (for baseCommit and implementer roles),
+ * overlap-report.json, each implementer's and the Integrator's own historical
+ * report (read back verbatim as reviewer context), and worktree handles for
+ * paths that should already exist (existingWorktreeHandle() throws loudly if
+ * any are missing rather than silently proceeding).
+ *
+ * Trust but verify, same as everywhere else in this file: re-checks the
+ * integration worktree for real git conflict markers via unresolvedConflicts()
+ * before trusting that it's actually in a reviewable state, regardless of
+ * what the prior run's artifacts claimed.
+ */
+export async function resumeIntegratedReview(options: ResumeIntegratedReviewOptions): Promise<RunResult> {
+  const { taskId, invoker } = options;
+  const maxRetryCycles = options.maxRetryCycles ?? DEFAULT_MAX_RETRY_CYCLES;
+  const maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
+
+  const rawPlan = readArtifact(taskId, 'plan.json');
+  if (!rawPlan) throw new Error(`resumeIntegratedReview: no plan.json found for task "${taskId}".`);
+  const parsedPlan = SupervisorPlanSchema.safeParse(JSON.parse(rawPlan));
+  if (!parsedPlan.success) {
+    throw new Error(`resumeIntegratedReview: plan.json for task "${taskId}" failed schema validation: ${parsedPlan.error.issues.map((i) => i.message).join('; ')}`);
+  }
+  const plan = parsedPlan.data;
+
+  const rawChangedFiles = readArtifact(taskId, 'changed-files.json');
+  if (!rawChangedFiles) throw new Error(`resumeIntegratedReview: no changed-files.json found for task "${taskId}" — cross-branch analysis never ran.`);
+  const changedFiles = JSON.parse(rawChangedFiles) as { baseCommit: string; workers: Array<{ agent: AgentRole }> };
+  const baseCommit = changedFiles.baseCommit;
+  const implementerRoles = changedFiles.workers.map((w) => w.agent);
+
+  const rawOverlapReport = readArtifact(taskId, 'overlap-report.json');
+  if (!rawOverlapReport) throw new Error(`resumeIntegratedReview: no overlap-report.json found for task "${taskId}".`);
+  const parsedOverlap = OverlapReportSchema.safeParse(JSON.parse(rawOverlapReport));
+  if (!parsedOverlap.success) {
+    throw new Error(`resumeIntegratedReview: overlap-report.json for task "${taskId}" failed schema validation: ${parsedOverlap.error.issues.map((i) => i.message).join('; ')}`);
+  }
+  const overlapReport = parsedOverlap.data;
+
+  const implementerWorktrees = new Map<AgentRole, WorktreeHandle>();
+  const implementationArtifacts: PrerequisiteArtifact[] = [];
+  for (const role of implementerRoles) {
+    implementerWorktrees.set(role, existingWorktreeHandle(taskId, role));
+    const report = readArtifact(taskId, getProfile(role).artifactFilename);
+    implementationArtifacts.push({ role, content: report ?? `[No existing ${getProfile(role).artifactFilename} found for task "${taskId}".]` });
+  }
+
+  const integrationWorktree = existingWorktreeHandle(taskId, 'integration');
+  const stillConflicted = await unresolvedConflicts(integrationWorktree);
+  if (stillConflicted.length > 0) {
+    throw new Error(
+      `resumeIntegratedReview: integration worktree at ${integrationWorktree.path} still has real git conflict markers in ${stillConflicted.join(', ')} — this is not actually in a reviewable state. Resolve via resumeIntegration or manually before resuming review.`
+    );
+  }
+  const integrationReportMd = readArtifact(taskId, getProfile('integrator').artifactFilename) ?? '';
+  const filesChanged = allChangedPaths(await diffNameStatus(integrationWorktree, baseCommit));
+  const integrationResult: IntegrationResult = {
+    role: 'integrator',
+    taskId,
+    branch: integrationWorktree.branch,
+    decisions: [],
+    filesChanged,
+    summary: `Resumed review of an already-built integration worktree from a prior run. See integration-report.md for the Integrator's full original reconciliation record:\n\n${integrationReportMd}`,
+    unresolvedConflicts: [],
+  };
+
+  const reviewerRoles = plan.requiredAgents.filter((r): r is 'qa' | 'security' => r === 'qa' || r === 'security');
+
+  const runner = new Runner(taskId, plan.objective, 'full', invoker, maxRetryCycles, maxConcurrency);
+  const { finalState, report } = await runner.resumeReviewOnly(
+    plan,
+    implementerWorktrees,
+    implementationArtifacts,
+    integrationWorktree,
+    integrationResult,
+    overlapReport,
+    baseCommit,
+    reviewerRoles
+  );
 
   logEvent({ taskId, event: 'task_finished', finalState, qaVerdict: report.qaVerdict, securityVerdict: report.securityVerdict, correctionCycles: report.correctionCycles });
 

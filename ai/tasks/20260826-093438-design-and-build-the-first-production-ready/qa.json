@@ -1,0 +1,40 @@
+{
+  "role": "qa",
+  "taskId": "20260826-093438-design-and-build-the-first-production-ready",
+  "verdict": "CHANGES_REQUIRED",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "Editing a roommate profile is completely broken. Frontend calls PATCH /roommate-profiles/:id (RoommateProfileFormModal.tsx:91, roommateProfilesApi.update in lib/api.ts), but the backend only implements PATCH /roommate-profiles/me (roommateProfiles.ts:177) — there is no PATCH /roommate-profiles/:id route at all. Every edit attempt will 404.",
+      "evidence": "lib/api.ts: `update: (id, data) => api.patch('/roommate-profiles/${id}', data)` vs roommateProfiles.ts: only `router.patch('/me', ...)` exists, no `router.patch('/:id', ...)`.",
+      "recommendedAction": "Reconcile the contract: either change the frontend to call PATCH /roommate-profiles/me (dropping the id argument, since a user can only ever edit their own profile), or add a client-scoped PATCH /roommate-profiles/:id route on the backend that still enforces ownership. Given the backend's design intentionally avoids accepting a client-supplied :id for mutations (to make IDOR structurally impossible), the fix should be on the frontend to call the /me routes, not the reverse."
+    },
+    {
+      "severity": "critical",
+      "finding": "Deactivating a profile is completely broken. RoommateProfileDetail.tsx calls roommateProfilesApi.deactivate(id) → DELETE /roommate-profiles/:id, but the backend has no DELETE route at all — deactivation is POST /roommate-profiles/me/deactivate with no :id. The Deactivate button will always fail.",
+      "evidence": "lib/api.ts: `deactivate: (id) => api.delete('/roommate-profiles/${id}')`; roommateProfiles.ts has only `router.post('/me/deactivate', ...)`, no DELETE handler anywhere in the router, so this hits the global 404 handler."
+    },
+    {
+      "severity": "critical",
+      "finding": "Reactivating a profile is completely broken: wrong HTTP method and wrong path. Frontend calls PATCH /roommate-profiles/:id/reactivate; backend implements POST /roommate-profiles/me/reactivate.",
+      "evidence": "lib/api.ts: `reactivate: (id) => api.patch('/roommate-profiles/${id}/reactivate', {})`; roommateProfiles.ts: `router.post('/me/reactivate', ...)` only."
+    },
+    {
+      "severity": "critical",
+      "finding": "Messaging a roommate-profile owner is completely broken. The frontend's 'Message' flow calls messagesApi.startRoommateConversation → POST /messages/conversations with body {roommateProfileId, body}. The backend's existing POST /messages/conversations route uses a `.strict()` Zod schema requiring `listingId: z.string().uuid()` and has not been updated to accept roommateProfileId at all — the request will be rejected for both a missing required field (listingId) and an unrecognized field (roommateProfileId) under `.strict()`. The backend instead implemented an entirely separate, unused endpoint POST /roommate-profiles/:id/message that the frontend never calls.",
+      "evidence": "messages.ts:21-24 `startConvSchema = z.object({ listingId: z.string().uuid(), body: ... }).strict()` — unchanged by this task's diff (confirmed via `git diff main...HEAD -- messages.ts`, which shows only include-clause changes, not schema changes). roommates/page.tsx:92 calls `messagesApi.startRoommateConversation` which posts to `/messages/conversations`. roommateProfiles.ts:261 defines `POST /:id/message` which nothing in the frontend calls.",
+      "recommendedAction": "Pick one contract and use it everywhere: either (a) extend messages.ts's startConvSchema to accept an optional roommateProfileId in place of listingId (with an XOR check), and delete the now-redundant /roommate-profiles/:id/message route, or (b) keep the backend's dedicated /roommate-profiles/:id/message route and change the frontend to call it instead of messagesApi.startConversation. This is a core golden-path action for the entire feature (contacting a prospective roommate) and is 100% non-functional as integrated."
+    },
+    {
+      "severity": "high",
+      "finding": "Because create-profile is the only mutating action whose contract happens to match (POST /roommate-profiles), a user can create a profile but can never edit it, deactivate it, reactivate it, or message another profile owner through the UI — i.e. 4 of the 5 required MVP capabilities (edit, deactivate, browse-and-contact) are non-functional end to end despite each side's individual code looking correct in isolation.",
+      "recommendedAction": "This is a full-stack contract reconciliation task, not a small fix — the Integrator's report claims 'no reconciliation was needed' because it only checked for overlapping files, not for actual request/response contract agreement between the two branches. Re-run integration with an explicit API-contract diff step before re-submitting for QA."
+    },
+    {
+      "severity": "low",
+      "finding": "RoommateProfileDetail.tsx reads profile.moveIn and profile.audiencePreference (lines 102, 105), but the backend's PUBLIC_SELECT and Prisma schema use the field names moveInTimeframe and audiencePref. If the backend field names ship as-is, these UI sections will silently never render (undefined), which is low severity relative to the broken buttons above but is the same root-cause class of frontend/backend contract drift and should be fixed in the same reconciliation pass.",
+      "evidence": "RoommateProfileDetail.tsx:102 `profile.moveIn`, :105 `profile.audiencePreference`; roommateProfiles.ts PUBLIC_SELECT uses `moveInTimeframe: true, audiencePref: true`; schema.prisma fields are `moveInTimeframe` and `audiencePref`."
+    }
+  ],
+  "notes": "Reviewed the integrated worktree directly (not the prior agent summaries): schema.prisma additions, roommateProfiles.ts, messages.ts/admin.ts/index.ts diffs, and the frontend api.ts/RoommateProfileDetail.tsx/RoommateProfileFormModal.tsx/roommates/page.tsx. Backend-side code (ownership scoping, explicit safe-select, soft-deactivate pattern, Report reuse) is well-built in isolation and matches the prerequisite T&S/Legal/Designer guidance. Frontend-side code is also well-built in isolation and matches the same guidance. The failure is purely at the integration boundary: the two sides were built against assumed, divergent contracts (frontend built its API client before backend existed, per frontend's own self-check notes) and never reconciled — despite the Integrator's report claiming no reconciliation was needed. Did not attempt to run the app (no node_modules/DB in this environment, consistent with both implementers' own reports) — this review is a static code-path trace, but the mismatches found are unambiguous (different HTTP methods, different URL paths, different/required-vs-missing body fields) and would fail on first use regardless of environment. Did not evaluate mobile/accessibility/loading-state details further since the core interaction loop must be fixed and re-reviewed first."
+}

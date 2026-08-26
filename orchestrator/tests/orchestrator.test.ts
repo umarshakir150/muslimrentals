@@ -1,11 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { runTask, resumeIntegration } from '../src/supervisor/orchestrator.js';
+import { runTask, resumeIntegration, resumeIntegratedReview } from '../src/supervisor/orchestrator.js';
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
 import { taskDir, writeJsonArtifact } from '../src/task/taskStore.js';
 import { getWorktreesRoot } from '../src/paths.js';
-import { resolveHead } from '../src/git/worktree.js';
+import { execFileSync } from 'node:child_process';
+import { resolveHead, createWorktree, createIntegrationWorktree, mergeBranch, commitMerge } from '../src/git/worktree.js';
 import {
   scriptedPlan,
   scriptedAnalysis,
@@ -605,5 +606,125 @@ describe('orchestrator — resumeIntegration (attaching to pre-existing implemen
     // synthetic "original" plan.json above, matching real pre-existing plans).
     const reloadedPlan = JSON.parse(readFileSync(path.join(dir, 'plan.json'), 'utf8'));
     expect(reloadedPlan.implementationScopes.length).toBe(2);
+  });
+});
+
+describe('orchestrator — resumeIntegratedReview (resuming review against an already-built integration worktree)', () => {
+  // Regression fixture for a real failure mode: a full run got all the way
+  // through CROSS_BRANCH_ANALYSIS, INTEGRATION, and a first INTEGRATED_QA_REVIEW
+  // that returned CHANGES_REQUIRED — then the Integrator's own retry budget
+  // was exhausted purely by its inability to compile-verify its work (a Bash
+  // permission gap, since fixed), even though it had genuinely already fixed
+  // everything QA/Security flagged. resumeIntegratedReview() picks up exactly
+  // where that left off: review the already-correct integration worktree,
+  // without re-running cross-branch analysis or re-invoking the Integrator
+  // for work it already did.
+  async function seedResumableTask(
+    taskId: string,
+    files: { frontend: Record<string, string>; backend: Record<string, string> }
+  ): Promise<{ base: string }> {
+    const base = await resolveHead();
+
+    const frontendWt = await createWorktree(taskId, 'frontend', base);
+    for (const [rel, content] of Object.entries(files.frontend)) {
+      const abs = path.join(frontendWt.path, rel);
+      execFileSync('mkdir', ['-p', path.dirname(abs)]);
+      writeFileSync(abs, content, 'utf8');
+    }
+    execFileSync('git', ['add', '-A'], { cwd: frontendWt.path });
+    execFileSync('git', ['commit', '-m', 'frontend: seed'], { cwd: frontendWt.path });
+
+    const backendWt = await createWorktree(taskId, 'backend', base);
+    for (const [rel, content] of Object.entries(files.backend)) {
+      const abs = path.join(backendWt.path, rel);
+      execFileSync('mkdir', ['-p', path.dirname(abs)]);
+      writeFileSync(abs, content, 'utf8');
+    }
+    execFileSync('git', ['add', '-A'], { cwd: backendWt.path });
+    execFileSync('git', ['commit', '-m', 'backend: seed'], { cwd: backendWt.path });
+
+    const integrationWt = await createIntegrationWorktree(taskId, base);
+    for (const role of ['frontend', 'backend'] as const) {
+      const wt = role === 'frontend' ? frontendWt : backendWt;
+      const attempt = await mergeBranch(integrationWt, wt.branch);
+      if (!attempt.clean) throw new Error(`seedResumableTask: unexpected merge conflict for ${role}`);
+      await commitMerge(integrationWt, `Merge ${role}`);
+    }
+
+    writeJsonArtifact(taskId, 'plan.json', {
+      taskId,
+      objective: 'Resumed-review regression test',
+      requiredAgents: ['frontend', 'backend', 'qa', 'security'],
+      dependencies: {},
+      parallelGroups: [['frontend', 'backend'], ['qa', 'security']],
+      implementationScopes: [
+        { agent: 'frontend', expectedPaths: ['rentals/frontend/**'], allowedSharedPaths: [] },
+        { agent: 'backend', expectedPaths: ['rentals/backend/**'], allowedSharedPaths: [] },
+      ],
+      approvalRequirements: { founderApprovalRequired: false, reasons: [] },
+      expectedArtifacts: [],
+      riskNotes: [],
+    });
+    writeJsonArtifact(taskId, 'changed-files.json', {
+      taskId,
+      baseCommit: base,
+      workers: [
+        { agent: 'frontend', branch: frontendWt.branch, added: Object.keys(files.frontend), modified: [], deleted: [], renamed: [] },
+        { agent: 'backend', branch: backendWt.branch, added: Object.keys(files.backend), modified: [], deleted: [], renamed: [] },
+      ],
+    });
+    writeJsonArtifact(taskId, 'overlap-report.json', { taskId, overlaps: [], outOfScope: [], hasBlockingIssues: false });
+
+    createdWorktrees.push(frontendWt, backendWt, integrationWt);
+    return { base };
+  }
+
+  it('reviews the existing integration worktree directly — no cross-branch analysis, no Integrator call — and completes on a pass', async () => {
+    const taskId = 'test-resume-integrated-review-pass';
+    await seedResumableTask(taskId, {
+      frontend: { 'rentals/frontend/src/app/scratch-f.tsx': 'export default function F() { return null; }\n' },
+      backend: { 'rentals/backend/src/routes/scratch-f.ts': 'export const scratchF = true;\n' },
+    });
+
+    const invoker = new ScriptedClaudeInvoker({
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+
+    const result = await resumeIntegratedReview({ taskId, invoker });
+
+    expect(invoker.callsFor('integrator')).toHaveLength(0);
+    expect(invoker.callsFor('frontend')).toHaveLength(0);
+    expect(invoker.callsFor('backend')).toHaveLength(0);
+    expect(invoker.callsFor('qa')).toHaveLength(1);
+    expect(invoker.callsFor('qa')[0]!.options.cwd).toBe(result.integrationWorktree!.path);
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.finalReport.qaVerdict).toBe('PASS');
+    expect(result.finalReport.securityVerdict).toBe('APPROVED');
+  });
+
+  it('still runs a normal RE_INTEGRATION correction cycle, with a fresh retry budget, if resumed review finds something real', async () => {
+    const taskId = 'test-resume-integrated-review-rejects-once';
+    const conflictPath = 'rentals/backend/src/routes/scratch-g.ts';
+    await seedResumableTask(taskId, {
+      frontend: { 'rentals/frontend/src/app/scratch-g.tsx': 'export default function G() { return null; }\n' },
+      backend: { [conflictPath]: 'export const scratchG = true;\n' },
+    });
+
+    const invoker = new ScriptedClaudeInvoker({
+      qa: (_opts: unknown, n: number) => (n === 0 ? scriptedReview('CHANGES_REQUIRED', [{ severity: 'high', finding: 'Fix scratchG.' }]) : scriptedReview('PASS')),
+      security: scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves({ [conflictPath]: 'export const scratchG = "fixed";\n' }),
+    });
+
+    const result = await resumeIntegratedReview({ taskId, invoker });
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.finalReport.correctionCycles).toBe(1);
+    // Retry budget was fresh for this resumed run — one correction cycle
+    // used, well within the default limit, proving it wasn't pre-exhausted
+    // by whatever happened in the prior (resumed-from) run.
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    expect(invoker.callsFor('qa')).toHaveLength(2);
   });
 });

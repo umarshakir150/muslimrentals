@@ -9,7 +9,7 @@
  * startup to decide RECOVERY_REQUIRED vs. safe-to-resume vs. safe-to-clear.
  */
 import { getDb } from './db.js';
-import { newId, nowIso } from './ids.js';
+import { definedOnly, newId, nowIso } from './ids.js';
 import { AutonomousCycle, type CycleStatus } from './types.js';
 
 interface CycleRow {
@@ -65,7 +65,7 @@ export interface UpdateCycleInput {
 export function updateCycle(id: string, patch: UpdateCycleInput): AutonomousCycle {
   const existing = getCycle(id);
   if (!existing) throw new Error(`updateCycle: no cycle "${id}"`);
-  const updated: AutonomousCycle = AutonomousCycle.parse({ ...existing, ...patch });
+  const updated: AutonomousCycle = AutonomousCycle.parse({ ...existing, ...definedOnly(patch) });
   persist(updated);
   return updated;
 }

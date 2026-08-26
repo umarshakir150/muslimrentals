@@ -111,6 +111,17 @@ describe('backlogStore', () => {
     const survivorAfter = getBacklogItem(survivor.id);
     expect(survivorAfter?.evidence).toEqual(expect.arrayContaining(['file:a.ts', 'file:b.ts']));
   });
+
+  it('a status-only update never clobbers untouched scoring fields with undefined (regression — crashed a real autonomous cycle: a Lead status-only update nulled out userImpact/severity/confidence/effort/strategicRelevance via {...existing, ...patch} treating an omitted field the same as an explicit undefined)', () => {
+    const item = createBacklogItem(baseItemInput({ userImpact: 4, severity: 3, confidence: 0.7, effort: 2, strategicRelevance: 3 }));
+    const updated = updateBacklogItem(item.id, { status: 'READY', changeReason: 'Unblocking — root cause fixed.' });
+    expect(updated.userImpact).toBe(4);
+    expect(updated.severity).toBe(3);
+    expect(updated.confidence).toBe(0.7);
+    expect(updated.effort).toBe(2);
+    expect(updated.strategicRelevance).toBe(3);
+    expect(Number.isNaN(updated.priority)).toBe(false);
+  });
 });
 
 describe('signalStore', () => {
@@ -305,6 +316,14 @@ describe('cycleStore — persistence, lock, and crash recovery', () => {
     const cycle = createCycle();
     closeDb();
     expect(getCycle(cycle.id)?.status).toBe('STARTING');
+  });
+
+  it('a status-only update never resets untouched counters to their Zod default (same class of bug as the backlogStore regression above — signalsCollected/modelCalls have z.number().default(0), so an explicit undefined in the patch silently resets them instead of failing loudly)', () => {
+    const cycle = createCycle();
+    updateCycle(cycle.id, { signalsCollected: 7, modelCalls: 2 });
+    const updated = updateCycle(cycle.id, { status: 'EXECUTING' });
+    expect(updated.signalsCollected).toBe(7);
+    expect(updated.modelCalls).toBe(2);
   });
 
   it('the cycle lock prevents a second concurrent acquire, and release frees it for the next one', () => {

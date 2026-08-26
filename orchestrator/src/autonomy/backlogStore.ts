@@ -5,7 +5,7 @@
  * ai/autonomy-architecture.md "Persistence model".
  */
 import { getDb } from './db.js';
-import { newId, nowIso } from './ids.js';
+import { definedOnly, newId, nowIso } from './ids.js';
 import { computePriority } from './prioritization.js';
 import { BacklogItem, type BacklogCategory, type BacklogStatus, type RiskLevel } from './types.js';
 
@@ -153,7 +153,7 @@ export function updateBacklogItem(id: string, patch: UpdateBacklogItemInput): Ba
   const existing = getBacklogItem(id);
   if (!existing) throw new Error(`updateBacklogItem: no backlog item "${id}"`);
 
-  const merged = { ...existing, ...patch };
+  const merged = { ...existing, ...definedOnly(patch) };
   const { score, rationale: priorityRationale } = computePriority(merged);
   const changedScoring =
     patch.userImpact !== undefined ||

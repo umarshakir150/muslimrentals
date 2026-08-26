@@ -29,6 +29,11 @@ export default defineConfig({
     env: {
       ORCHESTRATOR_TASKS_DIR: path.join(scratch, 'ai-tasks'),
       ORCHESTRATOR_WORKTREES_DIR: path.join(scratch, 'worktrees'),
+      // Autonomy-layer tests must never touch the real .autonomy/state.db —
+      // see src/autonomy/db.ts. Each test file gets a fresh file (tests
+      // call closeDb() + delete/point elsewhere as needed for isolation
+      // within a file); globalSetup wipes the whole scratch root up front.
+      ORCHESTRATOR_AUTONOMY_DB: path.join(scratch, 'autonomy', 'state.db'),
     },
     globalSetup: ['tests/globalSetup.ts'],
   },

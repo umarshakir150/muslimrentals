@@ -101,6 +101,7 @@ agents/                    ← persistent role definitions
   legal.md
   support.md
   integrator.md            ← orchestration-internal only; see agents/integrator.md
+  lead.md                  ← orchestration-internal only; see agents/lead.md and ai/autonomy-architecture.md
 
 company/                   ← what the company/product actually is
   product.md

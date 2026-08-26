@@ -136,7 +136,7 @@ export async function buildPlan(req: PlanRequest, invoker: ClaudeInvoker): Promi
   // Supervisor never dispatches itself as a worker, and Integrator is
   // orchestration-internal only — invoked directly by the Runner when 2+
   // implementer roles run, never selected via the plan (see registry.ts).
-  plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'supervisor' && r !== 'integrator');
+  plan.requiredAgents = plan.requiredAgents.filter((r) => r !== 'supervisor' && r !== 'integrator' && r !== 'lead');
 
   // "engineering" and a "frontend"/"backend" split are two ALTERNATIVE
   // implementation strategies for the same work, never a combination — the

@@ -20,7 +20,13 @@
 import type { AgentRole } from '../types/schemas.js';
 import { JsonSchemas } from '../types/schemas.js';
 
-export type OutputSchemaName = keyof typeof JsonSchemas;
+// 'LeadPlan' isn't in the execution engine's JsonSchemas (src/types/schemas.ts)
+// — it's an autonomy-layer schema (src/autonomy/types.ts), kept separate on
+// purpose (see ai/autonomy-architecture.md "do not conflate these layers").
+// This field is informational only; nothing reads it to look up a schema at
+// runtime (every real invocation references its JsonSchemas.* constant
+// directly), so a plain string literal escape hatch is enough here.
+export type OutputSchemaName = keyof typeof JsonSchemas | 'LeadPlan';
 
 export interface PermissionProfile {
   role: AgentRole;
@@ -287,6 +293,25 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
     outputSchema: 'IntegrationResult',
     artifactFilename: 'integration-report.md',
     maxBudgetUsd: 3.0,
+  },
+  // Orchestration-internal, like 'integrator' — never selectable via a
+  // SupervisorPlan (filtered in planner.ts). The autonomous product/CTO
+  // layer (src/autonomy/lead.ts): reads signals/backlog/memory it's handed
+  // as context and decides what to work on next. Deliberately read-only —
+  // same architectural hard-boundary as Designer/Legal/Trust & Safety: it
+  // reasons and proposes, it never touches the repo itself. See
+  // ai/autonomy-architecture.md.
+  lead: {
+    role: 'lead',
+    roleFile: 'agents/lead.md',
+    tools: READ_ONLY_TOOLS,
+    allowedToolPatterns: [],
+    disallowedToolPatterns: [],
+    canWriteCode: false,
+    needsWorktree: false,
+    outputSchema: 'LeadPlan',
+    artifactFilename: 'lead-plan.json',
+    maxBudgetUsd: 1.0,
   },
 };
 

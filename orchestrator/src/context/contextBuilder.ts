@@ -37,6 +37,13 @@ const RELEVANCE_MAP: Record<AgentRole, string[]> = {
   trust_safety: ['company/product.md', 'company/users.md', 'company/principles.md'],
   legal: ['company/product.md', 'company/users.md', 'company/architecture.md'],
   support: ['company/product.md', 'company/users.md'],
+  lead: [
+    'company/product.md',
+    'company/architecture.md',
+    'company/principles.md',
+    'ai/current-state.md',
+    'ai/roadmap.md',
+  ],
 };
 
 function safeRead(relPath: string): string {

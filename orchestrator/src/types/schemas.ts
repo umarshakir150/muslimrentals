@@ -25,6 +25,11 @@ export const AgentRole = z.enum([
   'legal',
   'support',
   'integrator',
+  // Orchestration-internal, like 'integrator' — the autonomous product/CTO
+  // layer above the Supervisor (src/autonomy/lead.ts). Never selectable via
+  // a SupervisorPlan; filtered out in planner.ts the same way 'supervisor'
+  // and 'integrator' are. See ai/autonomy-architecture.md.
+  'lead',
 ]);
 export type AgentRole = z.infer<typeof AgentRole>;
 

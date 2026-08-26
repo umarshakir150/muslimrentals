@@ -423,6 +423,218 @@ All three numeric bounds are also CLI flags (`--max-agents`, `--max-retries`,
 without a code change, but never loosened past what's safe by editing a
 plan — the orchestrator, not the model, enforces them.
 
+## Autonomy (the Lead/CTO layer)
+
+Everything above this section is the **execution engine**: given one
+objective, run it safely through the right specialists, implementers,
+reviewers, and Integrator. The autonomy layer (`src/autonomy/`) sits above
+it and answers a different question — *given the product's current state,
+what should we work on next, are we allowed to start it, and how do we
+persist the outcome* — then hands the answer to the exact same execution
+engine described above. It never reimplements planning, worktrees,
+review, or founder gates; it only decides *what* to call `runTask()` with.
+Full gap analysis and design rationale: `ai/autonomy-architecture.md`.
+Role definition: `agents/lead.md`.
+
+**Data flow, one bounded cycle:**
+
+```
+standing objective (persisted, founder-editable)
+        │
+        ▼
+signal sources (repo scan, build/typecheck, past QA/Security/T&S/Legal
+findings — all local/free; an opt-in "deep" Designer/Security pass costs
+one real Claude call each and is off by default)
+        │
+        ▼
+Lead (src/autonomy/lead.ts) — ONE real Claude call per cycle, read-only
+tools, reads: standing objective + top backlog + this cycle's signals +
+relevant memory → proposes new/updated backlog candidates and AT MOST ONE
+selectedItemId (LeadPlan.selectedItemId is a single nullable string, not an
+array — "at most one" is enforced by the output shape itself)
+        │
+        ▼
+deterministic post-processing (never trusts the model's own claims):
+  - dedup new candidates against the real backlog (Jaccard title overlap)
+  - priority always recomputed in code (src/autonomy/prioritization.ts)
+  - risk always recomputed in code (src/autonomy/riskClassification.ts),
+    reusing the SAME evaluateFounderGate() the execution engine's own
+    mid-task gate uses — HIGH can never be selected for execution
+        │
+        ├── HIGH risk / explicit Lead escalation → persisted
+        │   ApprovalRequest, item marked APPROVAL_REQUIRED, cycle
+        │   continues (does not freeze on one blocked item)
+        │
+        └── LOW/MEDIUM, dependencies resolved → the EXISTING orchestrator:
+            runTask({ objective: <item's title+description+rationale+
+            evidence>, mode: 'full', invoker }) — same Supervisor,
+            specialists, worktrees, QA/Security, Integrator, correction
+            loops, and founder gate as any other task
+                │
+                ▼
+        outcome → backlog updated (DONE + linked task id, or BLOCKED/
+        APPROVAL_REQUIRED — never silently DONE on anything short of
+        COMPLETE) → a memory record → a cycle summary → release the cycle
+        lock → exit
+```
+
+### Persistence
+
+`orchestrator/.autonomy/state.db` — a single `node:sqlite` file (Node 22's
+built-in, zero new dependencies; see `ai/autonomy-architecture.md`
+"Persistence model" for why this was chosen over `better-sqlite3` or a
+markdown file). Gitignored, overridable via `ORCHESTRATOR_AUTONOMY_DB`
+(tests point it at a scratch path). Tables: `backlog_items`, `signals`,
+`memory_records`, `autonomous_cycles`, `approval_requests`, `events`,
+`standing_objective`, `cycle_lock`, `scheduler_state`. `ai/tasks/<id>/`
+remains the durable record of actual work product — the backlog only ever
+stores a link (`relatedTasks: [taskId]`), never a duplicate copy. Like
+`.worktrees/`, the DB file survives process restarts but not a fresh
+container/environment — a known, already-accepted limitation, not new to
+this layer.
+
+### Commands
+
+```
+npm run agents:status                 # scheduler/lock/backlog/approvals/recent events, one screen
+npm run agents:backlog                # top backlog items, priority-sorted
+npm run agents:backlog -- show <id>   # one item in full
+npm run agents:cycle                  # run ONE bounded cycle now (mode=full — real execution)
+npm run agents:cycle -- --dry-run     # one cycle, plan/analyze only, no implementation
+npm run agents:cycle -- status        # show the most recent cycle, don't launch one
+npm run agents:cycle -- history       # list past cycles
+npm run agents:autonomous -- start [--cadence-minutes N]
+npm run agents:autonomous -- pause
+npm run agents:autonomous -- resume
+npm run agents:autonomous -- stop
+npm run agents:autonomous -- status
+npm run agents:approvals              # list PENDING approval requests
+npm run agents:approvals -- show <id>
+npm run agents:approvals -- approve <id> [--note "..."]
+npm run agents:approvals -- reject <id> [--note "..."]
+npm run agents:events                 # recent structured event log
+npm run agents:task -- agents         # known agent roles + permission profiles
+npm run agents:task -- tasks          # ai/tasks/ execution history
+npm run agents:task -- objective      # print the standing objective
+npm run agents:task -- objective "…"  # set it (founder-editable, no code change)
+npm run agents:scheduler              # run the persistent scheduler loop (blocks)
+```
+
+(`src/cli.ts` dispatches a small reserved set of leading words —
+`status`/`backlog`/`cycle`/`autonomous`/`approvals`/`events`/`agents`/
+`tasks`/`objective`/`scheduler-loop` — to `src/autonomyCli.ts`; anything
+else falls through unchanged to the original single-task runner, so `npm
+run agents:task -- "<objective>"` keeps working exactly as documented
+above.)
+
+### Risk classification — what may start on its own
+
+| Risk | Examples | May the Lead select it? |
+|---|---|---|
+| LOW | small (severity ≤2) bug fixes, tests, docs, accessibility fixes, low-effort UX/tech-debt | Yes — selected and executed the same cycle |
+| MEDIUM | ordinary additive features, additive schema changes, most API changes | Yes — implemented on an isolated branch (the execution engine already never does anything else), never auto-deployed |
+| HIGH | anything matching a CLAUDE.md founder-authority category (production deploy, irreversible/destructive changes, deleting production data, permanent bans, publishing legal policy, spending money, major auth/security/architecture rewrites), `LEGAL_FLAG` category, secret/API-key rotation, moderation-policy or permanent-policy text | Never — a persisted `ApprovalRequest` is created instead; the cycle moves on to the next eligible item rather than freezing |
+
+Risk is **always** recomputed in code from the item's category/flags/text —
+never trusted from the item's own stored field or the Lead's own judgment
+(`src/autonomy/riskClassification.ts`). The execution engine's own
+mid-task founder gate (`src/approval/founderGate.ts`) still runs
+independently on top of this — a Supervisor call can flag founder approval
+even when the Lead-level check didn't (see
+`tests/cycle.test.ts`'s founder-gate test for exactly this case).
+
+### Budgets
+
+| Bound | Default | Where |
+|---|---|---|
+| Max implementation tasks selected per cycle | 1 | Structural — `LeadPlan.selectedItemId` is a single nullable string |
+| Max Claude calls per cycle (Lead + opt-in deep signal sources only — the execution engine's own per-task/per-worker budgets above are unaffected and apply on top) | 5 | `DEFAULT_MAX_MODEL_CALLS_PER_CYCLE`, `src/autonomy/cycle.ts` |
+| Cycle timeout | 30 min | `DEFAULT_CYCLE_TIMEOUT_MS`, `src/autonomy/cycle.ts` — stops the autonomy layer's own bookkeeping and releases the lock; does **not** forcibly kill an already-spawned `claude` child process (documented limitation, not a silent gap) |
+| Scheduler cadence | 240 min | `DEFAULT_CADENCE_MINUTES`, `src/autonomy/scheduler.ts` — conservative on purpose, changeable via `--cadence-minutes` |
+
+A cycle never retries itself — "ONE invocation = ONE finite cycle" — so
+there is no cycle-level retry counter beyond the execution engine's own
+existing `maxRetryCycles` correction-loop budget, which is unaffected by
+any of this.
+
+### Recovery
+
+`cycle_lock` is a single mutex row (`src/autonomy/cycleStore.ts`), not an
+in-memory flag, specifically so a crash is visible on restart rather than
+silently forgotten. On every `runCycle()` call: (1) if the lock is held but
+points at an already-terminal (or missing) cycle, it's cleared as stale;
+(2) if the most recent cycle never reached a terminal status, it's marked
+`FAILED` with `result: 'recovery_marked_incomplete'` before anything new
+starts — no attempt is made to cleverly resume mid-task (that would need
+inspecting worktree/task state); any partially-completed `ai/tasks/` work
+is left untouched and can be resumed manually via the execution engine's
+own `resumeIntegration`/`resumeIntegratedReview` or picked up fresh by a
+future cycle through the normal backlog. This is actually tested — not
+just asserted — by simulating a crash (a cycle row left at `EXECUTING`,
+`closeDb()` + reopen) and observing the next `runCycle()` call detect and
+mark it (`tests/autonomyStores.test.ts`, `tests/cycle.test.ts`).
+
+### Adding a future signal source
+
+`SignalSource` (`src/autonomy/signalSources.ts`) is `{ name, collect():
+Promise<RecordSignalInput[]> }` — deliberately the smallest interface that
+lets a new source just report evidence without knowing anything about
+backlog/priority/risk. To add GitHub issues/Actions, Vercel deployments,
+Sentry, analytics, browser/E2E test results, or user feedback later: write
+one module implementing this interface (reading from that real, configured
+service — never fabricate access to one that isn't), add it to the list
+`cycle.ts` passes to the collection loop (opt-in like `deepSignalSource` if
+it costs money or is slow), and nothing else needs to change — the Lead,
+backlog, and risk classification are already source-agnostic.
+
+### Dashboard-ready data (no UI built yet)
+
+Every store module (`backlogStore`, `signalStore`, `memoryStore`,
+`cycleStore`, `approvalStore`, `eventLog`) is a plain function API over
+SQLite — there's no reason a future local read-only HTTP layer or desktop
+UI couldn't sit directly on top of them for an organizational/task/
+activity/health view (PART 19's four views map directly onto
+listBacklogItems/listAllBacklogItems, listCycles/getLatestCycle,
+listAutonomyEvents, and getSchedulerState/getCycleLock respectively) — not
+built now per the explicit instruction not to over-build a dashboard before
+there's a real need for one.
+
+### Safety — what autonomous mode may and may not do
+
+- May: select and execute LOW/MEDIUM-risk work through the existing,
+  fully-reviewed pipeline (specialists → implementer(s) → QA → Security →
+  Integrator → correction loops), on isolated branches, same as any manual
+  task.
+- May not, ever: auto-select or auto-start HIGH-risk work; weaken any
+  existing approval gate, risk threshold, concurrency limit, budget limit,
+  reviewer independence, or production restriction; deploy to production;
+  merge to the default/production branch automatically; spend money;
+  fabricate access to an unconfigured external service; recursively spawn
+  agents (the Lead has no `Bash`/`Write`/`Edit` tools at all — it can only
+  propose, never act).
+- A change to the autonomy platform's own safety rules is infrastructure
+  work like any other — it goes through the same review pipeline, and
+  anything that would materially expand agent authority needs explicit
+  founder approval, exactly like everything else in "Founder authority" in
+  the root `CLAUDE.md`.
+
+### Running autonomy persistently
+
+`npm run agents:scheduler` runs `runSchedulerLoop()` — a plain long-lived
+Node process that polls `scheduler_state` on a fixed interval and calls
+`runCycle()` when `autonomous start`'d and eligible. It does **not** launch
+itself; `autonomous start/pause/resume/stop` only flip the persisted state
+a separate running loop process reads. To keep it running independent of
+any one terminal or Claude Code session in this container:
+
+```
+nohup npm run agents:scheduler > .autonomy/scheduler.log 2>&1 & disown
+```
+
+This is a dev-environment convenience, not a production deployment
+mechanism — nothing here auto-configures systemd/pm2/a process supervisor
+in a real deployment target; that remains a founder/infra decision.
+
 ## Testing
 
 `npm test` runs `tests/*.test.ts` under Vitest — **no real Claude calls**.
@@ -454,6 +666,31 @@ correction loops for both QA and Security, and the integrated-review retry
 limit). `tests/crossBranchAnalysis.test.ts` covers the deterministic
 overlap/scope classification logic directly (no Claude, no git, no
 worktrees — pure function tests).
+
+The autonomy layer's tests follow the same discipline — deterministic
+store/scheduling logic tested directly, the one real Claude call per cycle
+(the Lead) scripted via `ScriptedClaudeInvoker` — split across three files:
+`tests/autonomyStores.test.ts` (backlog CRUD/dedup/reprioritization, signal
+dedup-by-fingerprint, memory retrieval/filtering/supersession, standing
+objective persistence, risk classification's HIGH/LOW/MEDIUM boundaries,
+approval request lifecycle, event log ordering/redaction, cycle
+lock/interrupted-cycle/stale-lock detection, and scheduler state
+transitions — all with real `closeDb()`-and-reopen restart simulation, not
+just in-process assertions), `tests/leadPlanning.test.ts` (the Lead's
+structured-output post-processing: `"new:<index>"` selection resolution,
+dependency blocking, HIGH-risk selection always blocked with a persisted
+approval instead of returned as selectable, schema-invalid output falling
+back safely, near-duplicate merging, escalations becoming approvals), and
+`tests/cycle.test.ts` (full `runCycle()` runs against the **real**
+`runTask()` — real Supervisor/specialists/implementer/QA/Security, only
+Claude scripted — proving successful/founder-gated/incomplete outcomes
+update the backlog correctly, the model-call budget short-circuits before
+ever calling Claude, the cycle lock prevents overlap, and a simulated crash
+is detected and marked on the next call). Each of these three files points
+`ORCHESTRATOR_AUTONOMY_DB` at its own scratch file (set at the top of the
+file, overriding `vitest.config.ts`'s shared default) — Vitest runs test
+files in parallel, and SQLite is one shared file, unlike the independent
+per-task directories `ai/tasks/`/`.worktrees/` tests already relied on.
 
 `scripts/regression-saved-listings.ts` (`npx tsx
 scripts/regression-saved-listings.ts` from `orchestrator/`) is a standalone

@@ -2,8 +2,8 @@
 
 - **Task ID:** 20260825-053836-build-the-missing-saved-page-so
 - **Final state:** COMPLETE
-- **Agents involved:** frontend, backend, qa, security
-- **Correction cycles used:** 1
+- **Agents involved:** frontend, backend, integrator, qa, security
+- **Correction cycles used:** 0
 - **QA verdict:** PASS
 - **Security verdict:** APPROVED
 
@@ -27,49 +27,16 @@ Not required for this task.
 
 ## Summary
 
-Task complete. Agents involved: frontend, backend, qa, security. 1 correction cycle(s) used.
+Task complete. Agents involved: frontend, backend, integrator, qa, security. 0 correction cycle(s) used.
 
 ## Files changed
 
-_(Corrected post-run by the operator — generated build byproducts that briefly
-sat untracked in both worktrees, dist/, prisma seed.js/.d.ts/.map,
-node_modules/, freshly-generated package-lock.json files, next-env.d.ts,
-tsconfig.tsbuildinfo, are removed from this list; neither package.json was
-touched, so no dependency was introduced.)_
-
-- `rentals/backend/src/routes/users.ts` — **two DIVERGENT versions, one per worktree, see reconciliation note below**
-- `rentals/frontend/src/components/listings/ListingCard.tsx` (frontend worktree only — adds optional `onSaveChange` prop)
-- `rentals/frontend/src/app/saved/page.tsx` (frontend worktree only, new)
-
-## ⚠ Reconciliation required before merge
-
-Frontend's worktree independently edited `rentals/backend/src/routes/users.ts`
-as well — outside its assigned scope (the task assigned that file's audit to
-Backend). Frontend's version differs from backend's own committed fix to the
-exact same function:
-
-- **Status filter:** backend uses `status: ListingStatus.ACTIVE` (matches
-  `GET /listings` exactly); frontend uses `status: { not: ListingStatus.REMOVED }`
-  (also allows INACTIVE/PENDING through). This is a real product-behavior
-  difference, not a formatting one.
-- **Response shape:** frontend's version additionally includes `thumbnailUrl`
-  and the listing's `user` relation (name/avatar) — backend's does not.
-  Frontend's version is more complete for what the `/saved` page actually
-  renders.
-
-Because these are on separate branches, no file corruption occurred (worktree
-isolation held) — but the two branches **will conflict if both are merged**.
-Recommend taking frontend's version (more complete) after a human confirms
-the ACTIVE-only vs. not-REMOVED filter choice, and discarding backend's
-narrower duplicate edit. Neither QA nor Security caught this, by design —
-each reviewed exactly one worktree in isolation and has no visibility into a
-sibling worktree; catching cross-branch divergence is a real, currently
-unimplemented gap in this orchestrator (see the accompanying report to the
-founder).
+- rentals/frontend/src/app/saved/page.tsx
+- rentals/backend/src/routes/users.ts
+- rentals/frontend/src/components/listings/ListingCard.tsx
 
 ## Next steps
 
-- Review/merge branch "agents/20260825-053836-build-the-missing-saved-page-so/frontend" (frontend) at /home/user/muslimrentals/orchestrator/.worktrees/20260825-053836-build-the-missing-saved-page-so-frontend — not auto-merged by the orchestrator.
-- Review/merge branch "agents/20260825-053836-build-the-missing-saved-page-so/backend" (backend) at /home/user/muslimrentals/orchestrator/.worktrees/20260825-053836-build-the-missing-saved-page-so-backend — not auto-merged by the orchestrator.
-- Reconcile the `users.ts` divergence described above before merging both branches.
-- Run `npm run type-check` (frontend) and a build/typecheck pass (backend), and do one live manual pass (save a listing on /browse, view it on /saved, unsave it there, confirm a since-removed listing disappears from /saved) — neither implementer nor either reviewer could run the dev server or a full build in this sandboxed session, so this was a code-level review only.
+- Review/merge the INTEGRATED branch "agents/20260825-053836-build-the-missing-saved-page-so/integration" at /home/user/muslimrentals/orchestrator/.worktrees/20260825-053836-build-the-missing-saved-page-so-integration — this is the reviewed, mergeable result. The individual implementer branches below are its inputs, already folded in; they don't need separate merging.
+- Implementer branch "agents/20260825-053836-build-the-missing-saved-page-so/frontend" (frontend) at /home/user/muslimrentals/orchestrator/.worktrees/20260825-053836-build-the-missing-saved-page-so-frontend — not auto-merged by the orchestrator.
+- Implementer branch "agents/20260825-053836-build-the-missing-saved-page-so/backend" (backend) at /home/user/muslimrentals/orchestrator/.worktrees/20260825-053836-build-the-missing-saved-page-so-backend — not auto-merged by the orchestrator.

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AgentRole } from '../src/types/schemas.js';
-import { removeWorktree, type WorktreeHandle } from '../src/git/worktree.js';
+import { createWorktree, removeWorktree, type WorktreeHandle } from '../src/git/worktree.js';
 import type { ClaudeInvokeOptions } from '../src/claude/claudeAdapter.js';
 
 export function scriptedPlan(requiredAgents: AgentRole[], opts: { founderApprovalRequired?: boolean; reasons?: string[] } = {}) {
@@ -106,4 +106,22 @@ export function scriptedIntegrationResolves(files: Record<string, string> = {}, 
  */
 export function scriptedIntegrationClaimsSuccessButLeavesConflict(summary = 'Resolved everything.') {
   return () => ({ decisions: [], summary, filesChanged: [], unresolvedConflicts: [] });
+}
+
+/**
+ * Creates a real, already-committed branch with real file content — standing
+ * in for an implementer branch left over from a PRIOR run, as
+ * resumeIntegration() expects to attach to. Returns just the branch name;
+ * the worktree used to create it is removed immediately (deleteBranch:
+ * false) so the branch is free for resumeIntegration()'s own
+ * addWorktreeForExistingBranch() to attach to — git disallows checking out
+ * the same branch in two worktrees at once.
+ */
+export async function createPreexistingBranch(taskId: string, role: string, baseRef: string, files: Record<string, string>): Promise<string> {
+  const wt = await createWorktree(`${taskId}-seed`, role, baseRef);
+  writeFiles(wt.path, files);
+  execFileSync('git', ['add', '-A'], { cwd: wt.path });
+  execFileSync('git', ['commit', '-m', `${role}: preexisting implementation`], { cwd: wt.path });
+  await removeWorktree(wt, { deleteBranch: false });
+  return wt.branch;
 }

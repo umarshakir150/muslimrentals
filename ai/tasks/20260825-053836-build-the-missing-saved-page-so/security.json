@@ -5,49 +5,29 @@
   "findings": [
     {
       "severity": "info",
-      "finding": "[frontend] GET /users/me/saved is correctly scoped to req.user!.id with no path/body-supplied user ID, so there is no IDOR risk of reading another user's saved-listing rows.",
-      "evidence": "rentals/backend/src/routes/users.ts: prisma.savedListing.findMany({ where: { userId: req.user!.id, listing: { status: { not: ListingStatus.REMOVED } } }, ... }) behind authenticate middleware."
+      "finding": "GET /users/me/saved and POST /listings/:id/save are both correctly scoped to req.user!.id (compound unique key userId_listingId used for lookup/delete/create), preventing IDOR against other users' saved-listing rows.",
+      "evidence": "rentals/backend/src/routes/users.ts:100 (where: { userId: req.user!.id, ... }); rentals/backend/src/routes/listings.ts:290,295,304 (all keyed on req.user!.id)."
     },
     {
       "severity": "info",
-      "finding": "[frontend] POST /listings/:id/save (untouched by this change) remains correctly scoped via the userId_listingId compound unique key, UUID-validates the :id param, requires authentication, and is rate-limited — verified this was not weakened.",
-      "evidence": "rentals/backend/src/routes/listings.ts:287-305."
+      "finding": "Saved listings that are later soft-removed/deactivated are correctly excluded from the saved list via status: ACTIVE filter, preventing exposure of de-listed content.",
+      "evidence": "rentals/backend/src/routes/users.ts:100"
     },
     {
       "severity": "info",
-      "finding": "[frontend] The REMOVED-listing filter added to GET /users/me/saved is a legitimate data-exposure fix (a user should not see a soft-deleted/removed listing surfaced as if still live) and is additive-only, consistent with the exclusion pattern already used in GET /listings and GET /listings/:id.",
-      "evidence": "rentals/backend/src/routes/users.ts diff adds listing: { status: { not: ListingStatus.REMOVED } } to the where clause."
+      "finding": "user relation on saved listing is limited to safe public fields (id, name, avatarUrl) matching the existing GET /listings pattern, no PII leakage.",
+      "evidence": "rentals/backend/src/routes/users.ts:106"
     },
     {
       "severity": "info",
-      "finding": "[frontend] The user relation added to the saved-listings include only selects safe public fields (id, name, avatarUrl), matching the existing safe-field select pattern used elsewhere for listing owners — no email/phone/passwordHash exposure.",
-      "evidence": "rentals/backend/src/routes/users.ts: user: { select: { id: true, name: true, avatarUrl: true } }."
+      "finding": "/saved page auth gating matches the existing pattern used by /post (useIsAuthenticated + AuthModal, redirect to / on close), no new auth pattern introduced.",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx:70-83 vs rentals/frontend/src/app/post/page.tsx"
     },
     {
       "severity": "info",
-      "finding": "[frontend] /saved page auth gating reuses the exact pattern from /post (useIsAuthenticated + AuthModal auto-open + redirect home on close), not a new/weaker pattern, and does not attempt to fetch saved data before auth is confirmed.",
-      "evidence": "rentals/frontend/src/app/saved/page.tsx: useEffect only calls fetchSaved() when isAuth is true, otherwise opens AuthModal."
-    },
-    {
-      "severity": "info",
-      "finding": "[frontend] No new dependencies, no raw SQL, no changes to messaging/admin routes, no schema migration — scope matches the task boundary.",
-      "evidence": "git diff --stat shows only rentals/backend/src/routes/users.ts and rentals/frontend/src/components/listings/ListingCard.tsx changed (plus new saved/page.tsx and generated build artifacts)."
-    },
-    {
-      "severity": "info",
-      "finding": "[backend] GET /users/me/saved and POST /listings/:id/save both scope every Prisma query/mutation to req.user!.id via the (userId, listingId) compound unique key — verified no listingId-only or client-supplied userId lookup path exists, so a user cannot read or affect another user's saved-listing rows.",
-      "evidence": "rentals/backend/src/routes/listings.ts:287-307 uses userId_listingId: { userId: req.user!.id, listingId: req.params.id } for both the existence check and delete; rentals/backend/src/routes/users.ts:97 scopes findMany to userId: req.user!.id."
-    },
-    {
-      "severity": "info",
-      "finding": "[backend] The only diff in this worktree (GET /users/me/saved) adds a status:ACTIVE filter and fixes response shape (amenities flattened to string[], isSaved:true added) to match what ListingCard expects. This is additive, non-schema-breaking, and closes a real de-listed-content exposure gap (a saved listing that was later soft-removed or deactivated would otherwise still be returned).",
-      "evidence": "rentals/backend/src/routes/users.ts diff: where now includes listing: { status: ListingStatus.ACTIVE }, matching the same exclusion already applied in GET /listings."
-    },
-    {
-      "severity": "info",
-      "finding": "[backend] No schema.prisma change was made; SavedListing retains its @@unique([userId, listingId]) constraint and onDelete: Cascade on both userId and listingId relations, so duplicate saves are DB-enforced and hard-deleted listings cascade-clean orphaned SavedListing rows automatically.",
-      "evidence": "rentals/backend/prisma/schema.prisma:134-144"
+      "finding": "POST /listings/:id/save is UUID-validated, authenticated, and rate-limited (writeRateLimiter); duplicate-save is prevented at the DB level via @@unique([userId, listingId]).",
+      "evidence": "rentals/backend/src/routes/listings.ts:287"
     }
   ],
-  "notes": "Per-worktree verdicts: frontend=APPROVED, backend=APPROVED"
+  "notes": "Reviewed the actual integrated diff (GET /users/me/saved, POST /listings/:id/save, /saved/page.tsx, ListingCard.tsx) directly rather than relying on prior reports. Ownership scoping, UUID validation, rate limiting, and auth gating are all consistent with existing codebase patterns. No new authorization gaps, data exposure, or injection risk introduced. No schema changes were made (query-level fixes only), consistent with the additive/non-destructive requirement."
 }

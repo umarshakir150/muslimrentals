@@ -1,0 +1,29 @@
+{
+  "taskId": "20260825-053836-build-the-missing-saved-page-so",
+  "baseCommit": "939cf7999b8390f239f4bce2ea7a558ce181cc96",
+  "workers": [
+    {
+      "agent": "frontend",
+      "branch": "agents/20260825-053836-build-the-missing-saved-page-so/frontend",
+      "added": [
+        "rentals/frontend/src/app/saved/page.tsx"
+      ],
+      "modified": [
+        "rentals/backend/src/routes/users.ts",
+        "rentals/frontend/src/components/listings/ListingCard.tsx"
+      ],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "backend",
+      "branch": "agents/20260825-053836-build-the-missing-saved-page-so/backend",
+      "added": [],
+      "modified": [
+        "rentals/backend/src/routes/users.ts"
+      ],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

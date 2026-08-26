@@ -39,27 +39,30 @@ import {
   ImplementationResult as ImplementationResultSchema,
   IntegrationResult as IntegrationResultSchema,
   ReviewResult as ReviewResultSchema,
+  SupervisorPlan as SupervisorPlanSchema,
   JsonSchemas,
 } from '../types/schemas.js';
 import type { ClaudeInvoker } from '../claude/claudeAdapter.js';
 import { getProfile, isImplementerRole } from '../agents/registry.js';
 import { buildContext, renderSystemPrompt, renderUserPrompt, type PrerequisiteArtifact } from '../context/contextBuilder.js';
 import { buildPlan, DEFAULT_MAX_AGENTS_PER_TASK, GROUP_1_SPECIALISTS } from './planner.js';
-import { analyzeCrossBranch, allChangedPaths } from './crossBranchAnalysis.js';
+import { analyzeCrossBranch, allChangedPaths, defaultScopes } from './crossBranchAnalysis.js';
 import { mapConcurrent } from './concurrency.js';
 import {
+  addWorktreeForExistingBranch,
   commitAll,
   commitMerge,
   createIntegrationWorktree,
   createWorktree,
   diffNameStatus,
+  mergeBaseOf,
   mergeBranch,
   resolveHead,
   unresolvedConflicts,
   type WorktreeHandle,
 } from '../git/worktree.js';
 import { generateTaskId } from '../task/taskId.js';
-import { writeArtifact, writeJsonArtifact } from '../task/taskStore.js';
+import { readArtifact, writeArtifact, writeJsonArtifact } from '../task/taskStore.js';
 import {
   renderRequestMd,
   renderAgentAnalysisMd,
@@ -147,6 +150,11 @@ class Runner {
   private worktrees = new Map<AgentRole, WorktreeHandle>();
   private specialistArtifacts: PrerequisiteArtifact[] = [];
   private implementationArtifacts: PrerequisiteArtifact[] = [];
+  // Ground-truth filesChanged per implementer role, decoupled from
+  // implementationArtifacts[].content — that content is prose shown to the
+  // Integrator/reviewers and, for a resumed task (resumeFromExistingBranches),
+  // is the implementer's original historical markdown report, not JSON.
+  private implementerFilesByRole = new Map<AgentRole, string[]>();
   private agentsInvolved = new Set<AgentRole>();
   private correctionCycles = 0;
   private finalQaResult: ReviewResult | undefined;
@@ -303,6 +311,7 @@ class Runner {
     logEvent({ taskId: this.taskId, event: 'agent_complete', role, artifact: profile.artifactFilename, filesChanged: result.filesChanged.length });
 
     this.implementationArtifacts.push({ role, content: JSON.stringify(result) });
+    this.implementerFilesByRole.set(role, result.filesChanged);
     return result;
   }
 
@@ -640,6 +649,61 @@ class Runner {
     return this.finishSuccessfully(plan);
   }
 
+  /**
+   * Resumes an already-planned, already-implemented multi-branch task
+   * straight into the integration flow, instead of running fresh
+   * implementers. For a task whose implementer branches already exist from
+   * a prior run (typically one that predates this integration mechanism
+   * existing at all) — attaches to each given branch as-is, without
+   * creating new commits or new branches, then runs the exact same
+   * CROSS_BRANCH_ANALYSIS -> INTEGRATION -> INTEGRATED_QA_REVIEW ->
+   * INTEGRATED_SECURITY_REVIEW pipeline a fresh multi-implementer run
+   * would. Requires 2+ branches — resuming a single-branch task has
+   * nothing to cross-check, same as the normal path.
+   */
+  async resumeFromExistingBranches(
+    plan: SupervisorPlan,
+    branchesByRole: Partial<Record<AgentRole, string>>
+  ): Promise<{ finalState: TaskState; report: FinalTaskReport }> {
+    const implementerRoles = Object.keys(branchesByRole) as AgentRole[];
+    const reviewerRoles = plan.requiredAgents.filter((r): r is 'qa' | 'security' => r === 'qa' || r === 'security');
+
+    if (implementerRoles.length < 2) {
+      throw new Error('resumeFromExistingBranches requires at least 2 implementer branches — a single branch has nothing to cross-check against.');
+    }
+
+    logEvent({ taskId: this.taskId, event: 'resuming_from_existing_branches', branches: branchesByRole });
+
+    // These branches were not necessarily all created from one shared HEAD
+    // by this orchestrator (that only became true once createWorktree()
+    // started taking a shared baseRef) — the correct base commit is
+    // whatever the branches themselves actually share.
+    this.baseCommit = await mergeBaseOf(Object.values(branchesByRole) as string[]);
+    logEvent({ taskId: this.taskId, event: 'base_commit_resolved', baseCommit: this.baseCommit, method: 'merge-base of existing branches' });
+
+    for (const role of implementerRoles) {
+      const branch = branchesByRole[role] as string;
+      const worktree = await addWorktreeForExistingBranch(this.taskId, role, branch);
+      this.worktrees.set(role, worktree);
+      this.agentsInvolved.add(role);
+      logEvent({ taskId: this.taskId, event: 'worktree_attached_existing_branch', role, branch, path: worktree.path });
+
+      // The implementer's own historical report (from the original run that
+      // produced this branch), read back verbatim as the Integrator's
+      // context for that role — not re-synthesized, not re-invoked.
+      const existingReport = readArtifact(this.taskId, getProfile(role).artifactFilename);
+      this.implementationArtifacts.push({
+        role,
+        content: existingReport ?? `[No existing ${getProfile(role).artifactFilename} found for this task — branch "${branch}" attached with no prior implementation report.]`,
+      });
+
+      const diff = await diffNameStatus(worktree, this.baseCommit);
+      this.implementerFilesByRole.set(role, allChangedPaths(diff));
+    }
+
+    return this.runIntegratedReviewLoop(plan, implementerRoles, reviewerRoles);
+  }
+
   private finishSuccessfully(plan: SupervisorPlan): { finalState: TaskState; report: FinalTaskReport } {
     this.setState('READY_FOR_FOUNDER');
     if (plan.approvalRequirements.founderApprovalRequired) {
@@ -703,7 +767,7 @@ class Runner {
   private buildFinalReport(plan: SupervisorPlan, finalState: TaskState, opts?: { extraReason?: string }): FinalTaskReport {
     const reasons = opts?.extraReason ? [...plan.approvalRequirements.reasons, opts.extraReason] : plan.approvalRequirements.reasons;
 
-    const implementerFiles = this.implementationArtifacts.flatMap((a) => (JSON.parse(a.content) as ImplementationResult).filesChanged);
+    const implementerFiles = Array.from(this.implementerFilesByRole.values()).flat();
     const integrationFiles = this.integrationResult?.filesChanged ?? [];
     const filesChanged = Array.from(new Set([...implementerFiles, ...integrationFiles]));
 
@@ -784,6 +848,68 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
 
   const runner = new Runner(taskId, options.objective, options.mode, options.invoker, maxRetryCycles, maxConcurrency);
   const { finalState, report } = await runner.run(plan);
+
+  logEvent({ taskId, event: 'task_finished', finalState, qaVerdict: report.qaVerdict, securityVerdict: report.securityVerdict, correctionCycles: report.correctionCycles });
+
+  return {
+    taskId,
+    finalState,
+    plan,
+    finalReport: report,
+    worktrees: runner.getWorktrees(),
+    integrationWorktree: runner.getIntegrationWorktree(),
+  };
+}
+
+export interface ResumeIntegrationOptions {
+  /** An existing task ID under ai/tasks/ — must already have a plan.json
+   * (from a prior PLANNING run) and, ideally, a `<role>-implementation.md`
+   * per branch (used as the Integrator's context; not required). */
+  taskId: string;
+  invoker: ClaudeInvoker;
+  /** Existing, already-implemented branches to resume integration on —
+   * attached as-is, never recreated or force-pushed to. */
+  branches: Partial<Record<AgentRole, string>>;
+  maxRetryCycles?: number;
+  maxConcurrency?: number;
+}
+
+/**
+ * Runs the CROSS_BRANCH_ANALYSIS -> INTEGRATION -> INTEGRATED_QA_REVIEW ->
+ * INTEGRATED_SECURITY_REVIEW pipeline against branches that already exist
+ * from a prior implementation run, instead of running PLANNING and
+ * IMPLEMENTING fresh. Exists specifically for a task whose implementer
+ * branches predate this integration mechanism (e.g. the saved-listings
+ * task that originally exposed the need for it) — reprocessing it through
+ * fresh implementer agents would duplicate work and risk producing a THIRD
+ * divergent implementation; this reuses the two that already exist.
+ *
+ * Loads the task's original plan.json as the SupervisorPlan (never invokes
+ * the Supervisor again — the original planning decision stands), refreshing
+ * only `implementationScopes`, which the schema added after some older
+ * plans were written.
+ */
+export async function resumeIntegration(options: ResumeIntegrationOptions): Promise<RunResult> {
+  const { taskId, invoker } = options;
+  const maxRetryCycles = options.maxRetryCycles ?? DEFAULT_MAX_RETRY_CYCLES;
+  const maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
+
+  const rawPlan = readArtifact(taskId, 'plan.json');
+  if (!rawPlan) throw new Error(`resumeIntegration: no plan.json found for task "${taskId}" — this only resumes an already-planned task.`);
+
+  const parsedPlan = SupervisorPlanSchema.safeParse(JSON.parse(rawPlan));
+  if (!parsedPlan.success) {
+    throw new Error(`resumeIntegration: plan.json for task "${taskId}" failed schema validation: ${parsedPlan.error.issues.map((i) => i.message).join('; ')}`);
+  }
+  let plan = parsedPlan.data;
+
+  const implementerRoles = Object.keys(options.branches) as AgentRole[];
+  plan = { ...plan, implementationScopes: defaultScopes(implementerRoles) };
+  writeJsonArtifact(taskId, 'plan.json', plan);
+  logEvent({ taskId, event: 'plan_reloaded_for_resume', requiredAgents: plan.requiredAgents, implementationScopes: plan.implementationScopes });
+
+  const runner = new Runner(taskId, plan.objective, 'full', invoker, maxRetryCycles, maxConcurrency);
+  const { finalState, report } = await runner.resumeFromExistingBranches(plan, options.branches);
 
   logEvent({ taskId, event: 'task_finished', finalState, qaVerdict: report.qaVerdict, securityVerdict: report.securityVerdict, correctionCycles: report.correctionCycles });
 

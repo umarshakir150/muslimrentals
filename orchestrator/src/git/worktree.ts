@@ -70,6 +70,39 @@ export async function createWorktree(taskId: string, role: string, baseRef: stri
   return { branch, path: worktreePath };
 }
 
+/**
+ * Checks out an EXISTING branch into a new worktree — the counterpart to
+ * createWorktree() for resuming work already done on a branch from a prior
+ * run, rather than starting an implementer fresh. No `-b`: this must never
+ * silently create a new branch when the caller's whole point is to attach
+ * to one that already has real history.
+ */
+export async function addWorktreeForExistingBranch(taskId: string, role: string, branch: string): Promise<WorktreeHandle> {
+  const worktreesRoot = getWorktreesRoot();
+  if (!existsSync(worktreesRoot)) mkdirSync(worktreesRoot, { recursive: true });
+
+  const safeTaskId = sanitize(taskId);
+  const safeRole = sanitize(role);
+  const worktreePath = path.join(worktreesRoot, `${safeTaskId}-${safeRole}`);
+
+  if (existsSync(worktreePath)) {
+    throw new Error(`Worktree path already exists: ${worktreePath}. Remove it before re-running this task.`);
+  }
+
+  await execFileAsync('git', ['worktree', 'add', worktreePath, branch], { cwd: REPO_ROOT });
+
+  return { branch, path: worktreePath };
+}
+
+/** Common ancestor of two or more existing branches/refs — the correct base
+ * commit to diff/merge against when resuming integration on branches that
+ * were never all created from a single shared HEAD in the first place. */
+export async function mergeBaseOf(refs: string[]): Promise<string> {
+  if (refs.length < 2) throw new Error('mergeBaseOf() needs at least two refs.');
+  const { stdout } = await execFileAsync('git', ['merge-base', ...refs], { cwd: REPO_ROOT });
+  return stdout.trim();
+}
+
 /** One dedicated worktree for reconciling multiple implementer branches. Same
  * mechanics as createWorktree, distinct branch-naming convention so it's
  * never confused with a per-role implementer worktree. */

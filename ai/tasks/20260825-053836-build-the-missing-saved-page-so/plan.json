@@ -29,6 +29,22 @@
       "security"
     ]
   ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
   "approvalRequirements": {
     "founderApprovalRequired": false,
     "reasons": []

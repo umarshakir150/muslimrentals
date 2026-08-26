@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { runTask } from '../src/supervisor/orchestrator.js';
+import { runTask, resumeIntegration } from '../src/supervisor/orchestrator.js';
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
-import { taskDir } from '../src/task/taskStore.js';
+import { taskDir, writeJsonArtifact } from '../src/task/taskStore.js';
 import { getWorktreesRoot } from '../src/paths.js';
+import { resolveHead } from '../src/git/worktree.js';
 import {
   scriptedPlan,
   scriptedAnalysis,
@@ -12,6 +13,7 @@ import {
   scriptedImplementationWithFiles,
   scriptedReview,
   scriptedIntegrationResolves,
+  createPreexistingBranch,
   cleanupWorktree,
 } from './testUtils.js';
 import type { WorktreeHandle } from '../src/git/worktree.js';
@@ -529,5 +531,79 @@ describe('orchestrator — read-only roles cannot reach implementation', () => {
     // in this simplified flow (reviewers only run after an implementer produces a diff).
     expect(invoker.callsFor('qa')).toHaveLength(0);
     expect(invoker.callsFor('security')).toHaveLength(0);
+  });
+});
+
+describe('orchestrator — resumeIntegration (attaching to pre-existing implementer branches)', () => {
+  it('runs CROSS_BRANCH_ANALYSIS -> INTEGRATION -> INTEGRATED_QA/SECURITY against branches from a prior run, without re-invoking frontend/backend', async () => {
+    const taskId = 'test-resume-integration';
+    const base = await resolveHead();
+
+    // Simulate two implementer branches left over from an earlier run —
+    // predating this task's own plan.json, created independently, with a
+    // real overlapping/out-of-scope conflict baked in (frontend touching a
+    // backend-owned file), same shape as the real saved-listings incident.
+    const conflictPath = 'rentals/backend/src/routes/users.ts';
+    const frontendBranch = await createPreexistingBranch(taskId, 'frontend-preexisting', base, {
+      'rentals/frontend/src/app/saved/page.tsx': 'export default function Saved() { return null; }\n',
+      [conflictPath]: '// frontend-authored version\nexport const usersRoute = "frontend";\n',
+    });
+    const backendBranch = await createPreexistingBranch(taskId, 'backend-preexisting', base, {
+      [conflictPath]: '// backend-authored version\nexport const usersRoute = "backend";\n',
+    });
+
+    // A plan.json as it would have existed from the ORIGINAL planning run —
+    // resumeIntegration must load this rather than invoking the Supervisor again.
+    writeJsonArtifact(taskId, 'plan.json', {
+      taskId,
+      objective: 'Build the missing /saved page (resumed regression test)',
+      requiredAgents: ['frontend', 'backend', 'qa', 'security'],
+      dependencies: {},
+      parallelGroups: [['frontend', 'backend'], ['qa', 'security']],
+      approvalRequirements: { founderApprovalRequired: false, reasons: [] },
+      expectedArtifacts: [],
+      riskNotes: [],
+    });
+
+    const invoker = new ScriptedClaudeInvoker({
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+      integrator: scriptedIntegrationResolves({ [conflictPath]: '// reconciled\nexport const usersRoute = "reconciled";\n' }),
+    });
+
+    const result = await resumeIntegration({ taskId, invoker, branches: { frontend: frontendBranch, backend: backendBranch } });
+    trackWorktrees(result);
+
+    // The Supervisor was never re-invoked (no scripted response for it, and
+    // the run would have thrown if it had tried).
+    expect(invoker.callsFor('supervisor')).toHaveLength(0);
+    // Frontend/backend were never re-invoked as agents either — their work
+    // already exists on the branches supplied.
+    expect(invoker.callsFor('frontend')).toHaveLength(0);
+    expect(invoker.callsFor('backend')).toHaveLength(0);
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.integrationWorktree).toBeDefined();
+
+    const dir = taskDir(taskId);
+    const overlapReport = JSON.parse(readFileSync(path.join(dir, 'overlap-report.json'), 'utf8'));
+    const overlap = overlapReport.overlaps.find((o: { path: string }) => o.path === conflictPath);
+    expect(overlap).toBeDefined();
+    expect(overlap.classification).toBe('CONFLICTING');
+    expect(overlapReport.outOfScope.some((o: { agent: string; path: string }) => o.agent === 'frontend' && o.path === conflictPath)).toBe(true);
+    expect(overlapReport.hasBlockingIssues).toBe(true);
+
+    // The Integrator WAS invoked (real blocking issue), and reconciled the file for real.
+    expect(invoker.callsFor('integrator')).toHaveLength(1);
+    const integratedContent = readFileSync(path.join(result.integrationWorktree!.path, conflictPath), 'utf8');
+    expect(integratedContent).toContain('reconciled');
+
+    expect(result.finalReport.qaVerdict).toBe('PASS');
+    expect(result.finalReport.securityVerdict).toBe('APPROVED');
+
+    // plan.json was refreshed with implementationScopes (absent from the
+    // synthetic "original" plan.json above, matching real pre-existing plans).
+    const reloadedPlan = JSON.parse(readFileSync(path.join(dir, 'plan.json'), 'utf8'));
+    expect(reloadedPlan.implementationScopes.length).toBe(2);
   });
 });

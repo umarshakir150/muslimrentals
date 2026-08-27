@@ -1,0 +1,64 @@
+{
+  "taskId": "20260827-035341-verify-buildtypecheckprisma-migration-on-the-integrated",
+  "objective": "Verify build/typecheck/Prisma migration on the integrated Roommate Profiles branch\n\nInstall dependencies (npm install) in rentals/backend and rentals/frontend on the integrated Roommate Profiles branch/worktree (agents/20260826-093438-design-and-build-the-first-production-ready/integration), then run `npx tsc --noEmit` in both, `npx prisma generate` and the first-ever `npx prisma migrate dev` for the new RoommateProfile model against a real dev Postgres instance, and fix any compile/type/migration errors the new code surfaces. Also do the manual browser pass QA already asked for (create → browse as 2nd user → filter → message → deactivate → reactivate flow) since this is genuinely new, previously-unexercised code that was only reviewed via static reading.\n\nWhy this matters (backlog rationale): QA and Security both approved this feature but explicitly flagged (sig_2446a9fb, sig_e452ff28) that zero automated verification has ever run on it — no install, no tsc, no prisma generate/migrate, no dev server. Confirmed independently that rentals/backend/node_modules does not exist. A brand-new user journey (new DB model, new auth-gated routes, messaging integration) should not be trusted as 'reviewed' until it actually compiles and its migration applies cleanly; this is precisely the kind of reliability/testability gap called out as high priority in the standing objective.\n\nEvidence:\n- sig_2446a9fb\n- sig_e452ff28\n- sig_4d346da1\n- sig_efb0cf62\n- ai/tasks/20260826-093438-design-and-build-the-first-production-ready/qa.json\n- ai/tasks/20260826-093438-design-and-build-the-first-production-ready/security.json",
+  "requiredAgents": [
+    "backend",
+    "frontend",
+    "qa",
+    "security"
+  ],
+  "dependencies": {
+    "frontend": [],
+    "backend": [],
+    "qa": [
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "ai/tasks/20260827-000000-verify-roommate-profiles-build-and-migration.md",
+    "Updated Prisma migration files under rentals/backend/prisma/migrations for RoommateProfile",
+    "qa review verdict recorded for manual browser pass",
+    "security review verdict recorded for any fixes made to auth-gated routes/migration"
+  ],
+  "riskNotes": [
+    "rentals/backend/node_modules is confirmed absent — this is the first-ever install/build/migrate of this code, not a re-run",
+    "npx prisma migrate dev creates the first real migration for RoommateProfile against a dev Postgres instance — must target a dev database only, never production",
+    "Fixing compile/type errors may touch auth-gated routes or messaging integration code that QA/Security already approved via static read only — any non-trivial fix should be re-reviewed rather than assumed still covered by the prior static approval",
+    "Do not skip the manual browser QA flow (create → browse as 2nd user → filter → message → deactivate → reactivate) — this is the first time this journey will be exercised end to end"
+  ]
+}

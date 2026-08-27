@@ -1,0 +1,83 @@
+{
+  "taskId": "20260826-212634-verify-buildtypecheckprisma-migration-on-the-integrated",
+  "overlaps": [
+    {
+      "path": "rentals/backend/src/routes/roommateProfiles.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/prisma/schema.prisma",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/index.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/routes/admin.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/routes/messages.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    }
+  ],
+  "outOfScope": [
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/roommateProfiles.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/roommateProfiles.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/prisma/schema.prisma",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/prisma/schema.prisma\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/index.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/index.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/admin.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/admin.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/messages.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/messages.ts\", which is outside its expected scope (rentals/frontend/**)."
+    }
+  ],
+  "hasBlockingIssues": true
+}

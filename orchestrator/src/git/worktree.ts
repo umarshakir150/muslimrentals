@@ -248,9 +248,21 @@ export async function mergeBranch(handle: WorktreeHandle, branchName: string): P
   }
 }
 
-/** Finalizes a clean `mergeBranch()` result (its changes are already staged by git). */
+/**
+ * Finalizes a clean `mergeBranch()` result. Usually its changes are already
+ * staged by git and this just commits them — but a branch with zero new
+ * commits (a legitimate implementer `noChangesNeeded` outcome) merges as a
+ * genuine no-op ("Already up to date.", nothing staged), and `git commit`
+ * would fail with nothing to commit. Found for real during an autonomous
+ * cycle where both implementers correctly made no changes: skip the commit
+ * in that case (mirrors commitAll()'s same staged-diff check) rather than
+ * crashing the task over having nothing to merge.
+ */
 export async function commitMerge(handle: WorktreeHandle, message: string): Promise<string> {
-  await git(['commit', '-m', message], handle.path);
+  const { stdout: staged } = await git(['diff', '--cached', '--name-only'], handle.path);
+  if (staged.trim()) {
+    await git(['commit', '-m', message], handle.path);
+  }
   const { stdout } = await git(['rev-parse', 'HEAD'], handle.path);
   return stdout.trim();
 }

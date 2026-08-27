@@ -312,6 +312,29 @@ describe('orchestrator — integration (2+ implementers, no overlap)', () => {
   });
 });
 
+describe('orchestrator — integration where every implementer legitimately made no changes', () => {
+  it('does not crash on a no-op mechanical merge (regression: found for real during a live autonomous cycle — commitMerge crashed calling `git commit` with nothing staged when an implementer branch had zero new commits)', async () => {
+    const taskId = 'test-integration-no-changes-needed';
+    const invoker = new ScriptedClaudeInvoker({
+      supervisor: scriptedPlan(['frontend', 'backend', 'qa', 'security']),
+      // Neither implementer writes any files — each branch stays identical
+      // to the base commit, so mergeBranch()'s "clean" merge is a genuine
+      // git no-op with nothing staged to commit.
+      frontend: { filesChanged: [], summary: 'No change needed — existing behavior already correct.', testPlan: 'n/a', selfCheckNotes: [], noChangesNeeded: true },
+      backend: { filesChanged: [], summary: 'No change needed — existing behavior already correct.', testPlan: 'n/a', selfCheckNotes: [], noChangesNeeded: true },
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+
+    const result = await runTask({ objective: 'Investigate a maybe-non-issue', mode: 'full', invoker, taskId });
+    trackWorktrees(result);
+
+    expect(result.finalState).toBe('COMPLETE');
+    expect(result.integrationWorktree).toBeDefined();
+    expect(invoker.callsFor('integrator')).toHaveLength(0); // clean (no-op) merges never need the Integrator
+  });
+});
+
 describe('orchestrator — integration (2+ implementers, conflicting overlap)', () => {
   it('flags frontend touching a backend file as both an overlap and out-of-scope, and invokes the Integrator even though the two edits merge cleanly at the text level', async () => {
     // This is structurally the real saved-listings incident: frontend

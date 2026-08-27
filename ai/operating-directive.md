@@ -67,8 +67,37 @@ relevant) may be committed and pushed without asking the founder for each
 instance, subject to the existing constraints already in force: no
 force-push of shared/default branches, no destroying other work, no
 overwriting unrelated branches, no bypassing branch protection, no silently
-discarding conflicts. Production deployment remains founder-gated
-regardless of review outcome — this authority never extends to production.
+discarding conflicts.
+
+## Production deploy policy (2026-08-27 update)
+
+Muslim Rentals' live site is Netlify-deployed from GitHub branch `main`
+in `umarshakir150/muslimrentals` — confirmed by direct founder
+instruction, since the repo alone gave ambiguous evidence (see
+`ai/decisions.md`'s entry for this date). For a task that reaches
+`COMPLETE` (already passed QA + Security + the founder-approval gate on
+its objective text) and whose branch was pushed:
+
+- If it changed anything under `rentals/` (a real product change) and did
+  **not** touch `prisma/schema.prisma` or `prisma/migrations/`, it is
+  automatically merged into `main` and pushed, non-force. This is a
+  standing, founder-granted exception to the general
+  never-auto-deploy-to-production default — narrow and specific, not a
+  general widening of autonomous authority.
+- A schema/migration-touching change is **never** auto-merged, no matter
+  how clean its review — a human must apply the migration against the
+  real production database first. This still counts as "production
+  deployment remains founder-gated" for that category.
+- A real merge conflict or a rejected (non-fast-forward) push is reported,
+  never force-pushed or auto-resolved.
+- After a successful merge, one bounded live-site check attempts to
+  confirm the change actually works at `https://muslimrentals.netlify.app/`.
+  An unreachable site (this environment currently has a confirmed network
+  policy blocking that domain) is reported as unverified, never as a
+  passing or failing check — see `agents/qa.md`'s verification-honesty
+  rule. A reachable-but-broken result is a real, escalated finding.
+
+Full mechanism: `orchestrator/README.md` "Production deploy policy".
 
 ## Automatic correction
 

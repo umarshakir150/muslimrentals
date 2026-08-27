@@ -159,12 +159,26 @@ async function cmdCycle(args: string[]): Promise<void> {
   const mode = args.includes('--dry-run') ? 'dry_run' : 'full';
   const includeDeepSignals = args.includes('--deep-signals');
   const includeLiveSiteSignal = args.includes('--live-site-signal');
-  // Real autonomous cycles push reviewed work by default
-  // (ai/operating-directive.md "Autonomous commit + push authority") —
-  // --no-auto-push opts back out for a manual/inspection run.
+  // Real autonomous cycles push reviewed work — and, for actual product
+  // changes, merge it into production — by default
+  // (ai/operating-directive.md "Autonomous commit + push authority" and
+  // "Production deploy policy") — --no-auto-push/--no-auto-merge-production
+  // opt back out for a manual/inspection run.
   const autoPush = !args.includes('--no-auto-push');
-  console.log(`\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush}\n`);
-  const outcome = await runCycle({ invoker: newAutonomousInvoker(args), mode, includeDeepSignals, includeLiveSiteSignal, autoPush });
+  const autoMergeToProduction = !args.includes('--no-auto-merge-production');
+  const verifyLiveDeployAfterProductionMerge = !args.includes('--no-verify-live-deploy');
+  console.log(
+    `\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush} autoMergeToProduction=${autoMergeToProduction} verifyLiveDeployAfterProductionMerge=${verifyLiveDeployAfterProductionMerge}\n`
+  );
+  const outcome = await runCycle({
+    invoker: newAutonomousInvoker(args),
+    mode,
+    includeDeepSignals,
+    includeLiveSiteSignal,
+    autoPush,
+    autoMergeToProduction,
+    verifyLiveDeployAfterProductionMerge,
+  });
   if (outcome.skippedReason) {
     console.log(`[autonomy] skipped: ${outcome.skippedReason}`);
     return;
@@ -291,13 +305,19 @@ async function cmdSchedulerLoop(args: string[]): Promise<void> {
   const includeDeepSignals = args.includes('--deep-signals');
   const includeLiveSiteSignal = args.includes('--live-site-signal');
   const autoPush = !args.includes('--no-auto-push');
-  console.log(`[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush}. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`);
+  const autoMergeToProduction = !args.includes('--no-auto-merge-production');
+  const verifyLiveDeployAfterProductionMerge = !args.includes('--no-verify-live-deploy');
+  console.log(
+    `[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush} autoMergeToProduction=${autoMergeToProduction} verifyLiveDeployAfterProductionMerge=${verifyLiveDeployAfterProductionMerge}. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`
+  );
   await runSchedulerLoop({
     invoker: newAutonomousInvoker(args),
     tickIntervalMs,
     includeDeepSignals,
     includeLiveSiteSignal,
     autoPush,
+    autoMergeToProduction,
+    verifyLiveDeployAfterProductionMerge,
     onTick: (outcome) => {
       const ts = new Date().toISOString();
       if (outcome.result === 'launched') {

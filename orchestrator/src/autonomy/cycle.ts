@@ -56,7 +56,8 @@ import {
   updateCycle,
 } from './cycleStore.js';
 import type { AutonomousCycle, Signal } from './types.js';
-import { pushBranch as realPushBranch, type PushResult, type WorktreeHandle } from '../git/worktree.js';
+import { pushBranch as realPushBranch, mergeToProductionBranch as realMergeToProductionBranch, type PushResult, type ProductionMergeResult, type WorktreeHandle } from '../git/worktree.js';
+import { verifyLiveDeploy as realVerifyLiveDeploy, type LiveVerificationResult } from './liveDeployVerification.js';
 
 export const DEFAULT_MAX_MODEL_CALLS_PER_CYCLE = 5;
 export const DEFAULT_CYCLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — generous default for a real full task run
@@ -100,6 +101,27 @@ export interface RunCycleOptions {
   /** Injectable so tests can assert push *decisions* without ever touching
    * the real `origin` remote. Defaults to the real git push. */
   pushBranchFn?: (handle: WorktreeHandle) => Promise<PushResult>;
+  /** After a COMPLETE task's branch is pushed, also merge it into the real
+   * production branch and push that (non-force) — see
+   * ai/operating-directive.md "Production deploy policy". Only applies
+   * when the task actually changed something under `rentals/` (product
+   * code); a Prisma schema/migration change is deliberately never
+   * auto-merged — it needs a human to apply the migration against the
+   * real production database first. Off by default here; on by default
+   * for real autonomous runs via autonomyCli.ts. */
+  autoMergeToProduction?: boolean;
+  /** Defaults to 'main'. */
+  productionBranch?: string;
+  /** Injectable so tests never touch the real production branch. */
+  mergeToProductionFn?: (sourceBranch: string, productionBranch: string) => Promise<ProductionMergeResult>;
+  /** After a successful production merge, run one bounded live-site check
+   * (agents/qa.md "Live product review") confirming the change is
+   * actually live. Off by default — costs a real Claude call plus a real
+   * network fetch that may simply be unreachable in a given environment
+   * (see orchestrator/README.md "Production deploy policy"). */
+  verifyLiveDeployAfterProductionMerge?: boolean;
+  /** Injectable so tests never make a real network call. */
+  verifyLiveDeployFn?: (invoker: ClaudeInvoker, whatChanged: string, productionSha: string) => Promise<LiveVerificationResult>;
   maxAgentsPerTask?: number;
   maxRetryCycles?: number;
   maxConcurrency?: number;
@@ -166,6 +188,116 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, label: string): Pro
   const result = Promise.race([promise, timeout]);
   promise.catch(() => {});
   return result.finally(() => clearTimeout(timer));
+}
+
+/**
+ * ai/operating-directive.md "Production deploy policy": once a task's
+ * branch has been pushed (already reviewed — QA PASS, Security APPROVED,
+ * and it never reached COMPLETE at all if it matched a CLAUDE.md
+ * founder-authority category), also merge it into the real production
+ * branch so the live Netlify deploy actually picks it up — unless it's not
+ * a product change at all (nothing under rentals/ — pure orchestrator/docs
+ * work has nothing to deploy) or it touches the Prisma schema/migrations,
+ * which always needs a human to actually apply the migration against the
+ * real production database first; auto-merging code that expects an
+ * unapplied schema change risks crashing the live backend for everyone,
+ * not just users of the new feature.
+ */
+async function attemptProductionMerge(
+  options: RunCycleOptions,
+  cycleId: string,
+  item: { id: string; title: string },
+  runResult: { taskId: string; finalReport: { filesChanged: string[] } },
+  sourceBranch: string
+): Promise<void> {
+  const filesChanged = runResult.finalReport.filesChanged;
+  if (!filesChanged.some((f) => f.startsWith('rentals/'))) return; // nothing product-facing to deploy
+
+  const productionBranch = options.productionBranch ?? 'main';
+
+  if (filesChanged.some((f) => f.includes('prisma/schema.prisma') || f.includes('prisma/migrations/'))) {
+    logAutonomyEvent({
+      type: 'PRODUCTION_MERGE_SKIPPED',
+      cycleId,
+      backlogItemId: item.id,
+      taskId: runResult.taskId,
+      message: `"${item.title}" changes the Prisma schema/migrations — not auto-merged to production. A human needs to apply the migration against the real production database first, then merge manually.`,
+    });
+    createApprovalRequest({
+      type: 'DESTRUCTIVE_ACTION_APPROVAL_REQUIRED',
+      title: `Schema-changing branch ready but not auto-deployed: ${item.title}`,
+      description: `"${item.title}" (ai/tasks/${runResult.taskId}) passed review and was pushed to "${sourceBranch}", but it changes the database schema, so it was NOT auto-merged into production ("${productionBranch}"). Apply the migration against the real production database, then merge this branch manually.`,
+      backlogItemId: item.id,
+      cycleId,
+      taskId: runResult.taskId,
+    });
+    return;
+  }
+
+  const merge = await (options.mergeToProductionFn ?? realMergeToProductionBranch)(sourceBranch, productionBranch);
+  if (!merge.pushed) {
+    logAutonomyEvent({
+      type: merge.conflictedFiles ? 'PRODUCTION_MERGE_CONFLICT' : 'PRODUCTION_MERGE_FAILED',
+      cycleId,
+      backlogItemId: item.id,
+      taskId: runResult.taskId,
+      message: `Production merge of "${item.title}" into "${productionBranch}" did not complete: ${merge.reason ?? 'unknown reason'}`,
+    });
+    createApprovalRequest({
+      type: 'RECOVERY_REQUIRED',
+      title: `Production merge failed: ${item.title}`,
+      description: `Attempted to merge ai/tasks/${runResult.taskId}'s reviewed branch ("${sourceBranch}") into production ("${productionBranch}") but it failed: ${merge.reason ?? 'unknown reason'}${merge.conflictedFiles?.length ? ` Conflicted files: ${merge.conflictedFiles.join(', ')}.` : ''}`,
+      backlogItemId: item.id,
+      cycleId,
+      taskId: runResult.taskId,
+    });
+    return;
+  }
+
+  logAutonomyEvent({
+    type: 'PRODUCTION_MERGED',
+    cycleId,
+    backlogItemId: item.id,
+    taskId: runResult.taskId,
+    message: `Merged "${item.title}" into production branch "${productionBranch}" at ${merge.productionSha}.`,
+  });
+
+  if (!options.verifyLiveDeployAfterProductionMerge) return;
+
+  const verify = await (options.verifyLiveDeployFn ?? realVerifyLiveDeploy)(options.invoker, item.title, merge.productionSha as string);
+  if (!verify.reachable) {
+    logAutonomyEvent({
+      type: 'LIVE_VERIFICATION_UNREACHABLE',
+      cycleId,
+      backlogItemId: item.id,
+      taskId: runResult.taskId,
+      message: `Could not reach the live site to verify "${item.title}" after production merge — not treated as a regression: ${verify.summary}`,
+    });
+  } else if (verify.verified) {
+    logAutonomyEvent({
+      type: 'LIVE_VERIFICATION_PASSED',
+      cycleId,
+      backlogItemId: item.id,
+      taskId: runResult.taskId,
+      message: `Confirmed "${item.title}" is live and working: ${verify.summary}`,
+    });
+  } else {
+    logAutonomyEvent({
+      type: 'LIVE_VERIFICATION_FAILED',
+      cycleId,
+      backlogItemId: item.id,
+      taskId: runResult.taskId,
+      message: `Live site was reachable but did not confirm "${item.title}" is working: ${verify.summary}`,
+    });
+    createApprovalRequest({
+      type: 'RECOVERY_REQUIRED',
+      title: `Live regression after production deploy: ${item.title}`,
+      description: `After merging ai/tasks/${runResult.taskId} into production (${merge.productionSha}), live verification found a real problem: ${[verify.summary, ...verify.findings].join(' | ')}`,
+      backlogItemId: item.id,
+      cycleId,
+      taskId: runResult.taskId,
+    });
+  }
 }
 
 /** Runs exactly one bounded autonomous cycle and returns. Never throws for
@@ -369,6 +501,10 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
                   taskId: runResult.taskId,
                   message: `Pushed reviewed branch "${push.branch}" to origin.`,
                 });
+
+                if (options.autoMergeToProduction) {
+                  await attemptProductionMerge(options, cycle.id, item, runResult, handle.branch);
+                }
               } else {
                 logAutonomyEvent({
                   type: 'BRANCH_PUSH_FAILED',

@@ -89,3 +89,75 @@ auto-push) implement the capabilities this directive describes.
 Revisit when: Evidence from real cycles shows the priority ordering,
 escalation types, or concurrency assumptions need adjustment — not on a
 schedule, and not by casually redesigning the orchestration system.
+
+---
+
+## 2026-08-27 — Authorize automatic production deployment (narrow, founder-confirmed)
+
+Decision: For a task that reaches `COMPLETE` (already reviewed by QA +
+Security + the founder-approval gate) and changes a real product file
+under `rentals/` without touching `prisma/schema.prisma` or
+`prisma/migrations/`, the reviewed branch is now automatically merged
+into `main` and pushed, non-force. This is a narrow, explicit exception to
+the prior "production deployment remains founder-gated" default — not a
+general widening of autonomous authority.
+
+Reason: The founder directly instructed this ("Fix this operating policy
+now... automatically merge them into that production branch and push
+it"), with explicit safety carve-outs (destructive DB ops, secrets,
+billing, major auth/security, legal/policy decisions stay founder-gated)
+that map cleanly onto capabilities that already existed: the founder-
+approval gate already blocks `COMPLETE` for those categories, and a
+schema/migration check was added specifically for the DB case, since an
+applied-review does not mean an applied-migration.
+
+Two facts surfaced during this decision that materially shaped it and are
+recorded here so a future session doesn't have to rediscover them:
+
+1. **Which branch is production was genuinely ambiguous from the repo
+   alone.** `main`'s HEAD commit had zero GitHub commit statuses/check-runs
+   ever posted to it (verified via the GitHub API), was ~3 months stale
+   relative to the actively-developed branch, and `ai/current-state.md`
+   had already flagged Netlify-vs-Vercel as an unresolved founder
+   decision. The founder confirmed `main` directly rather than this being
+   inferred — re-confirm if this evidence ever looks stale again.
+2. **This environment cannot reach the live site at all.** Both `WebFetch`
+   and a raw `curl` to `muslimrentals.netlify.app` get a 403 at the
+   network egress proxy's CONNECT stage (confirmed via the proxy's own
+   status endpoint) — not a tool limitation, a network policy. Live
+   verification (`liveDeployVerification.ts`) is real and wired but will
+   report `LIVE_VERIFICATION_UNREACHABLE` every time in this exact
+   environment until that policy changes or a differently-networked
+   environment runs this.
+
+Alternatives considered: (a) auto-merge everything reaching COMPLETE,
+including schema changes — rejected, an unapplied migration can crash the
+live backend for all users, and this environment has no way to apply one;
+(b) require a second explicit approval per production merge — rejected,
+that's what QA+Security+founder-gate-on-COMPLETE already are, and the
+founder's instruction was explicit about wanting this automated for the
+safe case; (c) skip live verification entirely since it can't succeed here
+— rejected, the mechanism has real value once network access exists or in
+a different environment, and reporting `UNREACHABLE` honestly costs
+nothing.
+
+Impact: `orchestrator/src/git/worktree.ts` (`mergeToProductionBranch`),
+`orchestrator/src/autonomy/liveDeployVerification.ts` (new),
+`orchestrator/src/autonomy/cycle.ts` (`attemptProductionMerge`, wired
+after `autoPush`), `orchestrator/src/autonomyCli.ts` (on by default for
+real cycles/scheduler-loop), `ai/operating-directive.md` and
+`orchestrator/README.md` updated. 163/163 tests pass; typecheck clean.
+Reconciled immediately after: the saved-listings feature
+(`agents/20260825-053836-build-the-missing-saved-page-so/integration`,
+COMPLETE, QA PASS, Security APPROVED, no schema changes) was merged into
+`main` and pushed by hand as the first real application of this policy —
+see that commit for the production SHA. Roommate Profiles
+(`agents/20260826-093438-.../integration`) was deliberately NOT merged —
+it has an unapplied Prisma migration, exactly the case this policy
+excludes.
+
+Revisit when: Netlify dashboard access becomes available to verify `main`
+independently, or this environment's network policy changes such that
+live verification can actually run — the mechanism doesn't need to
+change, but the honest "unreachable every time" caveat should be revisited
+once it isn't true anymore.

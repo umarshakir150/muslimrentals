@@ -655,6 +655,69 @@ or the underlying task, it's left for manual follow-up. Tests inject a
 fake `pushBranchFn` so no test ever touches the real remote
 (`tests/cycle.test.ts`).
 
+### Production deploy policy
+
+Muslim Rentals' live site (`https://muslimrentals.netlify.app/`) is
+Netlify-deployed from GitHub branch **`main`** in the
+`umarshakir150/muslimrentals` repo. This was confirmed by direct founder
+instruction, not by inspecting Netlify's own dashboard/API (this session
+has no access to either) — the repo-side evidence alone was genuinely
+ambiguous: `main` had zero GitHub commit statuses/check-runs ever posted
+to it and was ~3 months stale relative to the actively-developed branch,
+and `ai/current-state.md` had separately flagged the Netlify-vs-Vercel
+deployment target as an unresolved founder decision. If that evidence ever
+looks stale again, re-confirm with the founder before trusting `main`
+as production rather than assuming it still is.
+
+Once a task reaches `COMPLETE` and its branch is pushed (see "Autonomous
+push" above), `attemptProductionMerge()` (`cycle.ts`) additionally merges
+it into `main` and pushes that, non-force, via
+`mergeToProductionBranch()` (`src/git/worktree.ts`) — a dedicated,
+disposable, detached worktree freshly checked out from `origin/main` each
+time, never the caller's own checkout. Two deliberate exceptions, both
+`code decides` — never a model judgment call:
+
+- **No `rentals/` files changed** → nothing product-facing to deploy
+  (e.g. a pure `orchestrator/`-infra fix) — skipped silently, no event.
+- **Touches `prisma/schema.prisma` or `prisma/migrations/`** → never
+  auto-merged. Code that expects an unapplied schema change can crash the
+  live backend for everyone, not just users of the new feature, and this
+  environment has no way to apply a migration against a real database
+  (see "Safety bounds"/CLAUDE.md's founder-authority list — this is
+  exactly a destructive-DB-operation-adjacent case). Recorded as
+  `PRODUCTION_MERGE_SKIPPED` plus a `DESTRUCTIVE_ACTION_APPROVAL_REQUIRED`
+  approval; a human applies the migration and merges manually.
+
+A real merge conflict against production, or a rejected (non-fast-forward)
+push, is reported (`PRODUCTION_MERGE_CONFLICT`/`PRODUCTION_MERGE_FAILED` +
+a `RECOVERY_REQUIRED` approval) — **never** auto-resolved or force-pushed;
+`git push` without `--force` is what actually guarantees that, not just a
+convention this code follows.
+
+After a successful production merge, `verifyLiveDeployAfterProductionMerge`
+runs one bounded QA WebFetch check (`src/autonomy/liveDeployVerification.ts`)
+against the live URL, scoped to confirming that one specific change. This
+is where a real, confirmed environment limitation applies: **this
+container's network egress proxy denies all outbound connections to
+`muslimrentals.netlify.app`** (verified directly — both `WebFetch` and a
+raw `curl` get a 403 at the CONNECT stage; see the proxy's own
+`recentRelayFailures`). That makes the site unreachable, not the deploy
+broken — `verifyLiveDeploy()` reports that honestly as
+`reachable: false` (event `LIVE_VERIFICATION_UNREACHABLE`), which is never
+treated as a regression. Only `reachable: true, verified: false` — the
+site was actually reached and the change wasn't confirmed working — is a
+real finding (`LIVE_VERIFICATION_FAILED` + a `RECOVERY_REQUIRED`
+approval). Until this environment's network policy allows that domain (or
+a differently-networked environment runs this), live verification stays
+real, wired, and honestly unable to complete — never faked.
+
+Both `autoMergeToProduction` and `verifyLiveDeployAfterProductionMerge`
+are off by default in `cycle.ts` itself, on by default for real autonomous
+runs (`--no-auto-merge-production`/`--no-verify-live-deploy` opt out).
+Tests inject `mergeToProductionFn`/`verifyLiveDeployFn` so no test ever
+touches the real production branch or makes a real network call
+(`tests/cycle.test.ts`).
+
 ### Dashboard-ready data (no UI built yet)
 
 Every store module (`backlogStore`, `signalStore`, `memoryStore`,
@@ -673,14 +736,22 @@ there's a real need for one.
   fully-reviewed pipeline (specialists → implementer(s) → QA → Security →
   Integrator → correction loops), on isolated branches, same as any manual
   task; push a `COMPLETE` task's reviewed `agents/<taskId>/...` branch to
-  `origin` (non-force, never `main`/`master` — see "Autonomous push" above).
+  `origin` (non-force — see "Autonomous push" above); for an actual
+  product change (not schema/migration-touching), merge that reviewed
+  branch into the real production branch (`main`) and push it, non-force,
+  by explicit standing founder authorization — see "Production deploy
+  policy" above. This is a founder-granted exception to the general
+  never-touch-production default below, scoped exactly as that policy
+  describes; nothing else in this list is affected by it.
 - May not, ever: auto-select or auto-start HIGH-risk work; weaken any
   existing approval gate, risk threshold, concurrency limit, budget limit,
-  reviewer independence, or production restriction; deploy to production;
-  merge to the default/production branch automatically; force-push any
-  branch; spend money; fabricate access to an unconfigured external
-  service; recursively spawn agents (the Lead has no `Bash`/`Write`/`Edit`
-  tools at all — it can only propose, never act).
+  or reviewer independence; auto-merge a schema/migration-changing branch
+  into production (always founder-gated — "Production deploy policy");
+  force-push any branch; spend money; fabricate access to an unconfigured
+  external service or claim a live check ran when it didn't (see
+  "Production deploy policy"'s honest-unreachable handling); recursively
+  spawn agents (the Lead has no `Bash`/`Write`/`Edit` tools at all — it
+  can only propose, never act).
 - A change to the autonomy platform's own safety rules is infrastructure
   work like any other — it goes through the same review pipeline, and
   anything that would materially expand agent authority needs explicit

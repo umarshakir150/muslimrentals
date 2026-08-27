@@ -37,10 +37,11 @@ function deadPid(): number {
 }
 import { getBacklogItem, listAllBacklogItems } from '../src/autonomy/backlogStore.js';
 import { listApprovalRequests } from '../src/autonomy/approvalStore.js';
-import { scriptedAnalysis, scriptedImplementation, scriptedPlan, scriptedReview } from './testUtils.js';
+import { scriptedAnalysis, scriptedImplementation, scriptedImplementationWithFiles, scriptedPlan, scriptedReview } from './testUtils.js';
 import type { LeadPlan } from '../src/autonomy/types.js';
 import { listAutonomyEvents } from '../src/autonomy/eventLog.js';
-import type { PushResult, WorktreeHandle } from '../src/git/worktree.js';
+import type { PushResult, ProductionMergeResult, WorktreeHandle } from '../src/git/worktree.js';
+import type { LiveVerificationResult } from '../src/autonomy/liveDeployVerification.js';
 
 function freshDb(): void {
   closeDb();
@@ -210,6 +211,179 @@ describe('runCycle — end to end (real execution engine, scripted Claude)', () 
     expect(failEvents).toHaveLength(1);
     expect(failEvents[0]?.message).toContain('simulated rejection');
     expect(listAutonomyEvents({ type: 'BRANCH_PUSHED' })).toHaveLength(0);
+  });
+
+  it('autoMergeToProduction never invokes the merge function when the completed task touches no rentals/ files (orchestrator-infra-only change)', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: infra-only change is never deployed' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'orchestrator/src/some-infra-file.ts': 'export const x = 1;\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    let calls = 0;
+    const mergeToProductionFn = async (): Promise<ProductionMergeResult> => {
+      calls += 1;
+      return { merged: true, pushed: true, productionSha: 'deadbeef' };
+    };
+
+    const outcome = await runCycle({ invoker, autoPush: true, pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }), autoMergeToProduction: true, mergeToProductionFn });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(calls).toBe(0);
+    expect(listAutonomyEvents({ type: 'PRODUCTION_MERGED' })).toHaveLength(0);
+  });
+
+  it('autoMergeToProduction skips a schema-changing branch and files a DESTRUCTIVE_ACTION_APPROVAL_REQUIRED instead of deploying it', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: schema change is never auto-deployed' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'rentals/backend/prisma/schema.prisma': 'model X { id String @id }\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    let calls = 0;
+    const mergeToProductionFn = async (): Promise<ProductionMergeResult> => {
+      calls += 1;
+      return { merged: true, pushed: true, productionSha: 'deadbeef' };
+    };
+
+    const outcome = await runCycle({ invoker, autoPush: true, pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }), autoMergeToProduction: true, mergeToProductionFn });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(calls).toBe(0); // never even attempted a production merge
+    expect(listAutonomyEvents({ type: 'PRODUCTION_MERGE_SKIPPED' })).toHaveLength(1);
+    const approvals = listApprovalRequests('PENDING');
+    expect(approvals.some((a) => a.type === 'DESTRUCTIVE_ACTION_APPROVAL_REQUIRED')).toBe(true);
+  });
+
+  it('autoMergeToProduction merges and pushes a real product change, recording PRODUCTION_MERGED with the production sha', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      // Deliberately avoids the word "deploy(s)" in the title/rationale —
+      // that bare keyword trips the founder-gate's production_deployment
+      // pattern (see ai/decisions.md's false-positive writeup) and would
+      // make the Lead correctly refuse to select this as HIGH risk,
+      // exactly like the real bl_a29a729f incident this session found.
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: a real safe product change is merged and pushed' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/example/page.tsx': 'export default function P() { return null; }\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const mergeCalls: Array<{ source: string; production: string }> = [];
+    const mergeToProductionFn = async (source: string, production: string): Promise<ProductionMergeResult> => {
+      mergeCalls.push({ source, production });
+      return { merged: true, pushed: true, productionSha: 'cafef00d' };
+    };
+
+    const outcome = await runCycle({
+      invoker,
+      autoPush: true,
+      pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }),
+      autoMergeToProduction: true,
+      productionBranch: 'main',
+      mergeToProductionFn,
+    });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(mergeCalls).toHaveLength(1);
+    expect(mergeCalls[0]?.production).toBe('main');
+    const events = listAutonomyEvents({ type: 'PRODUCTION_MERGED' });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.message).toContain('cafef00d');
+  });
+
+  it('a failed/conflicted production merge records PRODUCTION_MERGE_CONFLICT or PRODUCTION_MERGE_FAILED and files a RECOVERY_REQUIRED approval, never force-pushed', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: a real merge conflict is reported, not forced' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/example2/page.tsx': 'export default function P() { return null; }\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const mergeToProductionFn = async (): Promise<ProductionMergeResult> => ({
+      merged: false,
+      pushed: false,
+      conflictedFiles: ['rentals/frontend/src/app/example2/page.tsx'],
+      reason: 'Real merge conflict against production — not auto-resolved, needs founder/human attention.',
+    });
+
+    const outcome = await runCycle({ invoker, autoPush: true, pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }), autoMergeToProduction: true, mergeToProductionFn });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    const conflictEvents = listAutonomyEvents({ type: 'PRODUCTION_MERGE_CONFLICT' });
+    expect(conflictEvents).toHaveLength(1);
+    expect(listAutonomyEvents({ type: 'PRODUCTION_MERGED' })).toHaveLength(0);
+    const approvals = listApprovalRequests('PENDING');
+    expect(approvals.some((a) => a.type === 'RECOVERY_REQUIRED')).toBe(true);
+  });
+
+  it('live verification: an unreachable live site is recorded as LIVE_VERIFICATION_UNREACHABLE, never treated as a regression (no approval filed)', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: unreachable live site is not a regression' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/example3/page.tsx': 'export default function P() { return null; }\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const mergeToProductionFn = async (): Promise<ProductionMergeResult> => ({ merged: true, pushed: true, productionSha: 'abc123' });
+    const verifyLiveDeployFn = async (): Promise<LiveVerificationResult> => ({
+      verified: false,
+      reachable: false,
+      summary: 'Could not run the live verification check at all: network egress blocked.',
+      findings: [],
+    });
+
+    const outcome = await runCycle({
+      invoker,
+      autoPush: true,
+      pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }),
+      autoMergeToProduction: true,
+      mergeToProductionFn,
+      verifyLiveDeployAfterProductionMerge: true,
+      verifyLiveDeployFn,
+    });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(listAutonomyEvents({ type: 'LIVE_VERIFICATION_UNREACHABLE' })).toHaveLength(1);
+    expect(listAutonomyEvents({ type: 'LIVE_VERIFICATION_FAILED' })).toHaveLength(0);
+    const approvals = listApprovalRequests('PENDING');
+    expect(approvals.some((a) => a.title.includes('Live regression'))).toBe(false);
+  });
+
+  it('live verification: a reachable-but-broken live site is recorded as LIVE_VERIFICATION_FAILED and files a RECOVERY_REQUIRED approval', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'prodMerge test: a real live regression is a real finding' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementationWithFiles({ 'rentals/frontend/src/app/example4/page.tsx': 'export default function P() { return null; }\n' }),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const mergeToProductionFn = async (): Promise<ProductionMergeResult> => ({ merged: true, pushed: true, productionSha: 'def456' });
+    const verifyLiveDeployFn = async (): Promise<LiveVerificationResult> => ({
+      verified: false,
+      reachable: true,
+      summary: 'REACHABLE — the new page returns a 500 error.',
+      findings: ['GET /example4 returns HTTP 500'],
+    });
+
+    const outcome = await runCycle({
+      invoker,
+      autoPush: true,
+      pushBranchFn: async (h) => ({ pushed: true, branch: h.branch }),
+      autoMergeToProduction: true,
+      mergeToProductionFn,
+      verifyLiveDeployAfterProductionMerge: true,
+      verifyLiveDeployFn,
+    });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(listAutonomyEvents({ type: 'LIVE_VERIFICATION_FAILED' })).toHaveLength(1);
+    const approvals = listApprovalRequests('PENDING');
+    const found = approvals.find((a) => a.title.includes('Live regression'));
+    expect(found).toBeDefined();
+    expect(found?.type).toBe('RECOVERY_REQUIRED');
+    expect(found?.description).toContain('500');
   });
 
   it('an empty backlog and no signals still terminates cleanly with no selection and no execution call', async () => {

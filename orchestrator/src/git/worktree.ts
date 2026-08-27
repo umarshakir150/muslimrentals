@@ -267,6 +267,72 @@ export async function commitMerge(handle: WorktreeHandle, message: string): Prom
   return stdout.trim();
 }
 
+export interface ProductionMergeResult {
+  merged: boolean;
+  pushed: boolean;
+  productionSha?: string;
+  conflictedFiles?: string[];
+  reason?: string;
+}
+
+/**
+ * Merges `sourceBranch` (a reviewed, COMPLETE task's branch) into the real
+ * production branch (`main` — see ai/operating-directive.md "Production
+ * deploy policy") and pushes it, non-force, so the live Netlify deploy
+ * actually picks it up. Never touches the caller's own checkout — always
+ * works in a dedicated, disposable, detached worktree freshly checked out
+ * from `origin/<productionBranch>` (fetched first), so it's never stale
+ * and never interferes with whatever branch the orchestrator/founder has
+ * checked out in REPO_ROOT.
+ *
+ * A real merge conflict is reported, never resolved automatically — this
+ * is production, not an isolated integration worktree, so an unsupervised
+ * agent resolving a production conflict is a materially different risk
+ * than the Integrator reconciling two feature branches; it needs a human.
+ * A push that isn't a fast-forward (someone else moved the production
+ * branch in the meantime) is likewise just reported — `git push` without
+ * `--force` refuses it on its own, which is the actual guarantee here,
+ * not just a convention this function follows.
+ */
+export async function mergeToProductionBranch(sourceBranch: string, productionBranch: string): Promise<ProductionMergeResult> {
+  const worktreesRoot = getWorktreesRoot();
+  if (!existsSync(worktreesRoot)) mkdirSync(worktreesRoot, { recursive: true });
+  const worktreePath = path.join(worktreesRoot, `__production_merge_${sanitize(productionBranch)}__`);
+
+  if (existsSync(worktreePath)) {
+    await git(['worktree', 'remove', worktreePath, '--force'], REPO_ROOT).catch(() => undefined);
+  }
+
+  try {
+    await git(['fetch', 'origin', productionBranch], REPO_ROOT);
+  } catch (err) {
+    return { merged: false, pushed: false, reason: `Could not fetch origin/${productionBranch}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  await git(['worktree', 'add', '--detach', worktreePath, `origin/${productionBranch}`], REPO_ROOT);
+
+  try {
+    try {
+      await git(['merge', '--no-ff', sourceBranch], worktreePath);
+    } catch {
+      const conflictedFiles = await unresolvedConflicts({ branch: productionBranch, path: worktreePath });
+      await git(['merge', '--abort'], worktreePath).catch(() => undefined);
+      return { merged: false, pushed: false, conflictedFiles, reason: 'Real merge conflict against production — not auto-resolved, needs founder/human attention.' };
+    }
+
+    try {
+      await git(['push', 'origin', `HEAD:${productionBranch}`], worktreePath);
+    } catch (err) {
+      return { merged: true, pushed: false, reason: `Push to origin/${productionBranch} was rejected (not a fast-forward, or another failure) — never force-pushed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    const { stdout } = await git(['rev-parse', 'HEAD'], worktreePath);
+    return { merged: true, pushed: true, productionSha: stdout.trim() };
+  } finally {
+    await git(['worktree', 'remove', worktreePath, '--force'], REPO_ROOT).catch(() => undefined);
+  }
+}
+
 export interface PushResult {
   pushed: boolean;
   branch: string;

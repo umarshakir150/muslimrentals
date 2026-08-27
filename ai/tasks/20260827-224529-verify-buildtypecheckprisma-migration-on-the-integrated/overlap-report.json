@@ -1,0 +1,317 @@
+{
+  "taskId": "20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated",
+  "overlaps": [
+    {
+      "path": "rentals/backend/package-lock.json",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/routes/roommateProfiles.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/package-lock.json",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileCard.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileDetail.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileFilters.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileFormModal.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/store/roommateFilterStore.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/prisma/schema.prisma",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/index.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/routes/admin.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/src/routes/messages.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/backend/tsconfig.json",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/.gitignore",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/layout/Navbar.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/components/messaging/Inbox.tsx",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/lib/api.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/lib/utils.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    },
+    {
+      "path": "rentals/frontend/src/types/index.ts",
+      "agents": [
+        "backend",
+        "frontend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (backend, frontend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    }
+  ],
+  "outOfScope": [
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/package-lock.json",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/package-lock.json\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/app/roommates/page.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/app/roommates/page.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileCard.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/roommates/RoommateProfileCard.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileDetail.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/roommates/RoommateProfileDetail.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileFilters.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/roommates/RoommateProfileFilters.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/roommates/RoommateProfileFormModal.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/roommates/RoommateProfileFormModal.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/store/roommateFilterStore.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/store/roommateFilterStore.ts\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/.gitignore",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/.gitignore\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/layout/Navbar.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/layout/Navbar.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/components/messaging/Inbox.tsx",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/components/messaging/Inbox.tsx\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/lib/api.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/lib/api.ts\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/lib/utils.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/lib/utils.ts\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "backend",
+      "path": "rentals/frontend/src/types/index.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"backend\" modified \"rentals/frontend/src/types/index.ts\", which is outside its expected scope (rentals/backend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/package-lock.json",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/package-lock.json\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/roommateProfiles.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/roommateProfiles.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/types/multer-s3.d.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/types/multer-s3.d.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/package.json",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/package.json\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/prisma/schema.prisma",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/prisma/schema.prisma\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/index.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/index.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/admin.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/admin.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/messages.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/messages.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/utils/jwt.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/utils/jwt.ts\", which is outside its expected scope (rentals/frontend/**)."
+    },
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/tsconfig.json",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/tsconfig.json\", which is outside its expected scope (rentals/frontend/**)."
+    }
+  ],
+  "hasBlockingIssues": true
+}

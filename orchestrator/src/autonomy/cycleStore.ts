@@ -10,6 +10,7 @@
  */
 import { getDb } from './db.js';
 import { definedOnly, newId, nowIso } from './ids.js';
+import { isPidDead } from '../process/liveness.js';
 import { AutonomousCycle, type CycleStatus } from './types.js';
 
 interface CycleRow {
@@ -171,20 +172,6 @@ export function acquireCycleLock(cycleId: string): boolean {
 export function releaseCycleLock(): void {
   const db = getDb();
   db.prepare("UPDATE cycle_lock SET locked = 0, cycle_id = NULL, locked_at = NULL, locked_by_pid = NULL WHERE id = 'lock'").run();
-}
-
-/** True if `pid` is not (or no longer) a live OS process. Uses the
- * zero-signal form of kill() — it never actually signals the process, it
- * only probes whether the OS still recognizes the PID. ESRCH = genuinely
- * gone; any other outcome (including EPERM, which means it exists but is
- * owned by someone else) counts as alive. */
-function isPidDead(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ESRCH';
-  }
 }
 
 /**

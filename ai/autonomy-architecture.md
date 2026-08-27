@@ -284,6 +284,23 @@ does to it" isn't lost:
   tradeoffs to review, and leaving it missing would keep breaking every
   future task whose worktree runs a real install.
 
+- **A cycle timeout released the cycle lock without terminating the
+  worker process it was waiting on.** `raceWithTimeout()` only abandoned
+  the `Promise` — the underlying `claude` child process (and anything it
+  had spawned) kept running with no owner, meaning continued model usage
+  and, potentially, overlapping future work once the lock was free again.
+  Found and fixed after the fact, before autonomous scheduling was
+  enabled: every worker is now spawned as the leader of its own detached
+  process group, timeouts (worker- and cycle-level) actually SIGTERM →
+  wait → SIGKILL → verify that group, `CliClaudeInvoker.killAll()` is
+  called unconditionally whenever a cycle ends, and a durable
+  `worker_processes` table (tagged by the spawning orchestrator process's
+  own PID) lets a NEW process clean up anything a crashed OLD process left
+  running — with PID-reuse protection (a kernel-recorded process
+  start-time, not just the PID number) before anything is ever terminated.
+  See `orchestrator/README.md` "Process ownership" and
+  `tests/processLifecycle.test.ts`.
+
 None of these were hypothetical — each was found by an actual autonomous
 cycle doing actual work, which is the strongest evidence available that
 "the system observes, plans, executes, and its failures are visible and

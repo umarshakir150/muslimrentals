@@ -30,8 +30,20 @@
  *                            stop hook), while still loading user-level auth.
  *   --no-session-persistence worker sessions are throwaway; don't clutter
  *                            `claude --resume` history with dozens of them.
+ *
+ * Process ownership: every worker this module spawns is run as the leader
+ * of its own detached process group (`detached: true`), specifically so a
+ * timeout or explicit cancellation can terminate not just the worker but
+ * anything IT spawned (`process.kill(-pid, signal)` — see
+ * src/process/liveness.ts) — a real gap until this was added: a cycle
+ * timeout previously abandoned the in-flight Promise without touching the
+ * underlying child process at all, which could leave a live worker (and
+ * ongoing model spend) running well after the cycle that started it had
+ * already been marked stopped. See CliClaudeInvoker.killAll() and
+ * ClaudeInvokeOptions.timeoutMs below.
  */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { terminateProcessGroup, readProcStartTicks } from '../process/liveness.js';
 
 export interface ClaudeInvokeOptions {
   role: string;
@@ -49,6 +61,11 @@ export interface ClaudeInvokeOptions {
   disallowedToolPatterns: string[];
   maxBudgetUsd: number;
   model?: string;
+  /** Per-call worker timeout override. Falls back to the invoker's own
+   * `defaultTimeoutMs` (constructor option) when omitted; no timeout is
+   * enforced if neither is set (existing behavior for every call site that
+   * doesn't opt in — this is purely additive). */
+  timeoutMs?: number;
 }
 
 export interface ClaudeInvokeResult {
@@ -62,6 +79,48 @@ export interface ClaudeInvokeResult {
 
 export interface ClaudeInvoker {
   invoke(options: ClaudeInvokeOptions): Promise<ClaudeInvokeResult>;
+  /** Optional: terminate every worker process this invoker instance
+   * currently has in flight. Implemented by CliClaudeInvoker (real OS
+   * processes to reap); intentionally absent from ScriptedClaudeInvoker
+   * (nothing real to kill) — callers must check for its existence
+   * (`invoker.killAll?.(...)`) rather than assume every ClaudeInvoker
+   * supports it, so adding this never breaks a fake/test implementation. */
+  killAll?(reason: string): Promise<void>;
+}
+
+/** Thrown when a worker process is terminated for exceeding its configured
+ * timeout — deliberately a distinct, identifiable error type (rather than
+ * a plain Error with a matching message) so callers can tell "this failed
+ * because it timed out and was killed" apart from any other failure mode
+ * without string-matching, and can decide not to retry it (see
+ * CliClaudeInvoker.invoke()'s retry loop below — retrying a call that just
+ * proved it can hang is not obviously useful, and doubles the wait). */
+export class WorkerTimeoutError extends Error {
+  constructor(
+    public readonly role: string,
+    public readonly pid: number,
+    public readonly timeoutMs: number,
+    public readonly termination: string
+  ) {
+    super(`Worker for role "${role}" (pid ${pid}) exceeded its ${timeoutMs}ms timeout and was terminated (${termination}).`);
+    this.name = 'WorkerTimeoutError';
+  }
+}
+
+/** Optional hooks so a caller can durably record which OS processes this
+ * invoker has spawned — needed only for surviving a *process* crash (the
+ * in-memory `activeChildren` registry below is enough for same-process
+ * cancellation, e.g. killAll() on a cycle timeout, but a crash of the
+ * orchestrator itself loses in-memory state entirely). CliClaudeInvoker
+ * calls these best-effort; a hook throwing never fails the underlying
+ * Claude call. See src/autonomy/workerRegistry.ts for the real
+ * SQLite-backed implementation the autonomy layer wires in for cycle/
+ * scheduler-loop runs — deliberately not wired in by default (e.g. for the
+ * ad-hoc single-task CLI), since cross-restart worker recovery only
+ * matters for unattended/autonomous operation. */
+export interface ProcessRegistryHooks {
+  onSpawn(info: { pid: number; role: string; startTicks: string | undefined }): void;
+  onExit(pid: number): void;
 }
 
 /** Pure function so argv construction is unit-testable without spawning a process. */
@@ -152,48 +211,130 @@ export function extractStructuredPayload(stdout: string): { json: unknown; costU
   );
 }
 
-/**
- * Runs the CLI via `spawn` (not `execFile`) specifically so stdin can be
- * closed immediately (`stdio: ['ignore', ...]`). Without this, the CLI
- * waits ~3s per invocation for stdin data that will never arrive (we pass
- * the prompt as a positional argument, not via stdin) — across a handful
- * of concurrent/sequential worker calls that adds up fast. Verified against
- * the installed CLI (2.1.243): closing stdin up front removes the wait
- * entirely with no change in behavior.
- */
-function runClaudeProcess(
-  binary: string,
-  args: string[],
-  cwd: string,
-  maxBufferBytes: number
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutBytes = 0;
+const DEFAULT_GRACEFUL_TERMINATION_MS = 5000;
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes <= maxBufferBytes) stdoutChunks.push(chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
-      const stderr = Buffer.concat(stderrChunks).toString('utf8');
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`claude exited with code ${code}. stderr: ${stderr || '(none)'}`));
-    });
-  });
+export interface CliClaudeInvokerOptions {
+  /** Applied to every invoke() call that doesn't set its own
+   * ClaudeInvokeOptions.timeoutMs. Undefined (the default) means no
+   * worker-level timeout is enforced — existing ad-hoc/test usage of
+   * `new CliClaudeInvoker()` is completely unaffected. */
+  defaultTimeoutMs?: number;
+  /** See ProcessRegistryHooks. */
+  registry?: ProcessRegistryHooks;
+  /** How long to wait after SIGTERM before escalating to SIGKILL. */
+  gracefulTerminationMs?: number;
 }
 
 export class CliClaudeInvoker implements ClaudeInvoker {
-  constructor(private readonly binary: string = 'claude') {}
+  /** Every worker currently in flight FOR THIS INVOKER INSTANCE — explicit,
+   * narrow ownership: killAll() only ever touches a PID this exact
+   * instance spawned and is still tracking, never any other Claude
+   * process, and never any unrelated developer process. Removed as soon
+   * as the process exits (successfully, on error, or via termination), so
+   * this is also always an accurate live picture, never a stale list. */
+  private readonly activeChildren = new Map<number, ChildProcess>();
+  private readonly defaultTimeoutMs?: number;
+  private readonly registry?: ProcessRegistryHooks;
+  private readonly gracefulTerminationMs: number;
+
+  constructor(
+    private readonly binary: string = 'claude',
+    opts: CliClaudeInvokerOptions = {}
+  ) {
+    this.defaultTimeoutMs = opts.defaultTimeoutMs;
+    this.registry = opts.registry;
+    this.gracefulTerminationMs = opts.gracefulTerminationMs ?? DEFAULT_GRACEFUL_TERMINATION_MS;
+  }
+
+  /**
+   * Runs the CLI via `spawn` (not `execFile`) specifically so stdin can be
+   * closed immediately (`stdio: ['ignore', ...]`). Without this, the CLI
+   * waits ~3s per invocation for stdin data that will never arrive (we pass
+   * the prompt as a positional argument, not via stdin) — across a handful
+   * of concurrent/sequential worker calls that adds up fast. Verified
+   * against the installed CLI (2.1.243): closing stdin up front removes
+   * the wait entirely with no change in behavior.
+   *
+   * `detached: true` makes this child the leader of its own new process
+   * group (see module docstring) — required for terminateProcessGroup() to
+   * be able to reach anything this worker itself spawns, not just the
+   * worker's own PID.
+   */
+  private runProcess(
+    args: string[],
+    cwd: string,
+    role: string,
+    maxBufferBytes: number,
+    timeoutMs: number | undefined
+  ): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env, detached: true });
+      const pid = child.pid;
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      let settled = false;
+      let timedOut = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const startTicks = pid !== undefined ? readProcStartTicks(pid) : undefined;
+      if (pid !== undefined) {
+        this.activeChildren.set(pid, child);
+        this.registry?.onSpawn({ pid, role, startTicks });
+      }
+
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (pid !== undefined) {
+          this.activeChildren.delete(pid);
+          this.registry?.onExit(pid);
+        }
+      };
+
+      if (timeoutMs !== undefined && pid !== undefined) {
+        timer = setTimeout(() => {
+          timedOut = true;
+          // Requirement: "stop accepting new work for that run" at the
+          // worker level — once we've decided to time this out, a late
+          // stdout/close event must never be allowed to resolve
+          // successfully (see the `close` handler below, which checks
+          // `timedOut` before resolving).
+          void terminateProcessGroup(pid, { gracefulMs: this.gracefulTerminationMs }).then((outcome) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(new WorkerTimeoutError(role, pid, timeoutMs, outcome));
+          });
+        }, timeoutMs);
+      }
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdoutBytes += chunk.length;
+        if (stdoutBytes <= maxBufferBytes) stdoutChunks.push(chunk);
+      });
+      child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      child.on('error', (err) => {
+        if (settled || timedOut) return; // already handled by the timeout path
+        settled = true;
+        cleanup();
+        reject(err);
+      });
+      child.on('close', (code) => {
+        if (settled || timedOut) return; // a timeout already won; ignore any late settlement
+        settled = true;
+        cleanup();
+        const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+        const stderr = Buffer.concat(stderrChunks).toString('utf8');
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`claude exited with code ${code}. stderr: ${stderr || '(none)'}`));
+      });
+    });
+  }
 
   async invoke(options: ClaudeInvokeOptions): Promise<ClaudeInvokeResult> {
     const args = buildClaudeArgs(options);
     const start = Date.now();
+    const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     // One bounded retry for a raw process-level failure (nonzero exit,
     // transient network/rate-limit hiccup) — NOT for a schema-validation
     // failure, which is a model-output problem the caller already handles
@@ -203,21 +344,47 @@ export class CliClaudeInvoker implements ClaudeInvoker {
     // process instead of being absorbed. One retry with a short backoff is
     // cheap insurance against exactly that; if it fails twice, it's
     // probably not transient and should still surface as a real error.
+    //
+    // A WorkerTimeoutError is NOT retried: the call already proved it can
+    // hang for the full timeout window, so an immediate retry would just
+    // risk hanging for the full window again with no reason to expect a
+    // different outcome — this is also what keeps a timeout from ever
+    // turning into an unbounded retry loop (see cycle.ts/README "Bounds").
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 5000));
       try {
         // Context bundles + tool output can be sizable; default buffers are too small.
-        const result = await runClaudeProcess(this.binary, args, options.cwd, 64 * 1024 * 1024);
+        const result = await this.runProcess(args, options.cwd, options.role, 64 * 1024 * 1024, timeoutMs);
         const durationMs = Date.now() - start;
         const { json, costUsd } = extractStructuredPayload(result.stdout);
         return { raw: result.stdout, json, costUsd, durationMs };
       } catch (err) {
+        if (err instanceof WorkerTimeoutError) throw err;
         lastErr = err;
       }
     }
     throw new Error(
       `claude CLI invocation failed for role "${options.role}" after retry: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`
     );
+  }
+
+  /**
+   * Terminates every worker THIS INSTANCE currently has in flight — the
+   * mechanism cycle.ts calls (unconditionally, in a `finally`) whenever a
+   * cycle ends for any reason, so no worker process a cycle started can
+   * ever outlive the cycle itself, whether it ended in success, an
+   * ordinary failure, or a timeout. Bounded and safe to call when nothing
+   * is running (resolves immediately). Never touches a PID this instance
+   * didn't itself record spawning.
+   */
+  // `reason` isn't used internally — it exists so a call site reads
+  // naturally (`killAll('cycle timeout exceeded')`) and so a caller that
+  // wants to log the termination has a ready-made string to attach to its
+  // own event, without this module needing to know about cycle.ts's
+  // logging conventions.
+  async killAll(_reason: string): Promise<void> {
+    const pids = [...this.activeChildren.keys()];
+    await Promise.all(pids.map((pid) => terminateProcessGroup(pid, { gracefulMs: this.gracefulTerminationMs }).then(() => undefined)));
   }
 }

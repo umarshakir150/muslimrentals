@@ -10,6 +10,7 @@
  *   npm run agents:backlog                          -- list backlog (top priority first)
  *   npm run agents:backlog -- show <id>             -- one backlog item in full
  *   npm run agents:cycle                            -- run ONE bounded cycle now (mode=full by default)
+ *   npm run agents:cycle -- --worker-timeout-ms N   -- override the per-worker process timeout (default: DEFAULT_WORKER_TIMEOUT_MS)
  *   npm run agents:cycle -- --dry-run               -- run one cycle, plan/analyze only
  *   npm run agents:cycle -- status                  -- show the most recent cycle, don't launch one
  *   npm run agents:cycle -- history                 -- list past cycles
@@ -32,11 +33,30 @@ import type { AgentRole } from './types/schemas.js';
 import { getStandingObjective, setStandingObjective } from './autonomy/objective.js';
 import { listBacklogItems, listAllBacklogItems, getBacklogItem } from './autonomy/backlogStore.js';
 import { getCycleLock, getLatestCycle, listCycles } from './autonomy/cycleStore.js';
-import { runCycle } from './autonomy/cycle.js';
+import { runCycle, DEFAULT_WORKER_TIMEOUT_MS } from './autonomy/cycle.js';
 import { getSchedulerState, pauseAutonomy, resumeAutonomy, runSchedulerLoop, startAutonomy, stopAutonomy } from './autonomy/scheduler.js';
 import { decideApprovalRequest, getApprovalRequest, listApprovalRequests } from './autonomy/approvalStore.js';
 import { listAutonomyEvents } from './autonomy/eventLog.js';
+import { createWorkerProcessRegistry } from './autonomy/workerRegistry.js';
 import type { BacklogStatus, EventType } from './autonomy/types.js';
+
+/** Every REAL autonomous run (a launched `cycle` or the scheduler loop —
+ * never the ad-hoc single-task `agents:task` CLI, which a human is
+ * presumably watching) gets an invoker that (a) enforces a worker-level
+ * timeout on every Claude call it makes, including ones deep inside
+ * runTask()'s specialists/implementers/reviewers, since this exact same
+ * invoker instance is threaded all the way through, and (b) durably
+ * records every worker process it spawns so a crash of THIS orchestrator
+ * process can still be cleaned up by a later one (see
+ * workerRegistry.cleanupOrphanedWorkers(), called at the top of every
+ * runCycle()). This is the one place both of those get wired together. */
+function newAutonomousInvoker(args: string[]): CliClaudeInvoker {
+  const override = flag(args, 'worker-timeout-ms');
+  return new CliClaudeInvoker('claude', {
+    defaultTimeoutMs: override ? Number(override) : DEFAULT_WORKER_TIMEOUT_MS,
+    registry: createWorkerProcessRegistry(),
+  });
+}
 
 export const AUTONOMY_COMMANDS = ['status', 'backlog', 'cycle', 'autonomous', 'approvals', 'events', 'agents', 'tasks', 'objective', 'scheduler-loop'] as const;
 export type AutonomyCommand = (typeof AUTONOMY_COMMANDS)[number];
@@ -139,7 +159,7 @@ async function cmdCycle(args: string[]): Promise<void> {
   const mode = args.includes('--dry-run') ? 'dry_run' : 'full';
   const includeDeepSignals = args.includes('--deep-signals');
   console.log(`\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals}\n`);
-  const outcome = await runCycle({ invoker: new CliClaudeInvoker(), mode, includeDeepSignals });
+  const outcome = await runCycle({ invoker: newAutonomousInvoker(args), mode, includeDeepSignals });
   if (outcome.skippedReason) {
     console.log(`[autonomy] skipped: ${outcome.skippedReason}`);
     return;
@@ -265,7 +285,7 @@ async function cmdSchedulerLoop(args: string[]): Promise<void> {
   const tickIntervalMs = Number(flag(args, 'tick-interval-ms') ?? '60000');
   console.log(`[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`);
   await runSchedulerLoop({
-    invoker: new CliClaudeInvoker(),
+    invoker: newAutonomousInvoker(args),
     tickIntervalMs,
     onTick: (outcome) => {
       const ts = new Date().toISOString();

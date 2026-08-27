@@ -549,13 +549,46 @@ even when the Lead-level check didn't (see
 |---|---|---|
 | Max implementation tasks selected per cycle | 1 | Structural — `LeadPlan.selectedItemId` is a single nullable string |
 | Max Claude calls per cycle (Lead + opt-in deep signal sources only — the execution engine's own per-task/per-worker budgets above are unaffected and apply on top) | 5 | `DEFAULT_MAX_MODEL_CALLS_PER_CYCLE`, `src/autonomy/cycle.ts` |
-| Cycle timeout | 30 min | `DEFAULT_CYCLE_TIMEOUT_MS`, `src/autonomy/cycle.ts` — stops the autonomy layer's own bookkeeping and releases the lock; does **not** forcibly kill an already-spawned `claude` child process (documented limitation, not a silent gap) |
+| Cycle timeout | 30 min | `DEFAULT_CYCLE_TIMEOUT_MS`, `src/autonomy/cycle.ts` — terminates every worker process the cycle still owns (`invoker.killAll()`, unconditional in a `finally`) before releasing the lock; see "Process ownership" below |
+| Worker timeout (per Claude CLI call) | 20 min | `DEFAULT_WORKER_TIMEOUT_MS`, `src/autonomy/cycle.ts`, applied via `CliClaudeInvoker`'s `defaultTimeoutMs` for real `cycle`/`scheduler-loop` runs (`autonomyCli.ts`) — not the ad-hoc single-task CLI, which stays timeout-free by default |
 | Scheduler cadence | 240 min | `DEFAULT_CADENCE_MINUTES`, `src/autonomy/scheduler.ts` — conservative on purpose, changeable via `--cadence-minutes` |
 
 A cycle never retries itself — "ONE invocation = ONE finite cycle" — so
 there is no cycle-level retry counter beyond the execution engine's own
 existing `maxRetryCycles` correction-loop budget, which is unaffected by
-any of this.
+any of this. A worker timeout is never retried by `CliClaudeInvoker`'s own
+bounded (2-attempt) retry loop either — a call that already proved it can
+hang for the full timeout window gets no second attempt, which is also
+what keeps a timeout from ever compounding into a longer wait.
+
+### Process ownership
+
+Every real worker (`claude` CLI call) is spawned as the leader of its own
+detached process group (`src/claude/claudeAdapter.ts`), specifically so a
+timeout can terminate not just that process but anything IT spawned too
+(`process.kill(-pid, signal)` reaches the whole group — see
+`src/process/liveness.ts`). On a worker or cycle timeout: SIGTERM the
+group, poll for real death for a short bounded grace period, escalate to
+SIGKILL if it didn't cooperate, and verify before reporting what happened
+(`WorkerTimeoutError.termination` is `'terminated_gracefully'` or
+`'force_terminated'`, never assumed). `CliClaudeInvoker.killAll()` is
+called unconditionally in `cycle.ts`'s `finally` block, so no worker a
+cycle started can outlive the cycle itself regardless of which branch it
+exits through (success, an ordinary failure, or a timeout) — this was a
+real, previously-documented gap (a cycle timeout used to just abandon the
+in-flight Promise) found and fixed after the first live autonomous cycle.
+
+Ownership survives a crash of the orchestrator process itself, not just a
+hung worker: every spawned worker's PID is durably recorded
+(`worker_processes` table, tagged with the spawning orchestrator process's
+own PID — `src/autonomy/workerRegistry.ts`), and every `runCycle()` call
+starts by reconciling that table (`cleanupOrphanedWorkers()`) — for any
+row whose recording orchestrator process is confirmed dead, the worker's
+own identity is re-verified (PID liveness *and* a kernel-recorded
+start-time match, via `/proc/<pid>/stat`) before it's ever terminated, so
+a PID that's since been reused by an unrelated process is never touched.
+A worker whose recording orchestrator is still alive is left completely
+alone, no matter how long it's been running.
 
 ### Recovery
 
@@ -686,11 +719,20 @@ back safely, near-duplicate merging, escalations becoming approvals), and
 Claude scripted — proving successful/founder-gated/incomplete outcomes
 update the backlog correctly, the model-call budget short-circuits before
 ever calling Claude, the cycle lock prevents overlap, and a simulated crash
-is detected and marked on the next call). Each of these three files points
+is detected and marked on the next call). Each of these test files points
 `ORCHESTRATOR_AUTONOMY_DB` at its own scratch file (set at the top of the
 file, overriding `vitest.config.ts`'s shared default) — Vitest runs test
 files in parallel, and SQLite is one shared file, unlike the independent
 per-task directories `ai/tasks/`/`.worktrees/` tests already relied on.
+
+`tests/processLifecycle.test.ts` covers worker/cycle process ownership —
+timeout termination, process-group child cleanup, graceful-then-force
+escalation, never touching an unrelated process, and cross-restart orphan
+detection/cleanup — using real disposable local processes
+(`tests/fixtures/*.mjs`, standing in for `claude`), never real Claude
+calls. See "Process ownership" above for what's actually being tested and
+why it needed a real `kill -9` (not just a unit test) to find the gap it
+fixes in the first place.
 
 `scripts/regression-saved-listings.ts` (`npx tsx
 scripts/regression-saved-listings.ts` from `orchestrator/`) is a standalone

@@ -134,6 +134,32 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
   next_eligible_at TEXT,
   updated_at TEXT NOT NULL
 );
+
+-- Durable record of real OS worker processes (claude CLI subprocesses)
+-- spawned during a cycle — see src/claude/claudeAdapter.ts's
+-- ProcessRegistryHooks and src/autonomy/workerRegistry.ts. Exists
+-- specifically so a crash of the orchestrator process itself (which loses
+-- claudeAdapter.ts's in-memory activeChildren registry entirely) can still
+-- be recovered from: on restart, any row still marked RUNNING is a
+-- candidate orphan to verify and clean up (workerRegistry.cleanupOrphanedWorkers()).
+-- owner_pid is the ORCHESTRATOR process's own pid (process.pid at spawn
+-- time, same convention as cycle_lock.locked_by_pid) — a worker row is
+-- only ever a cleanup candidate once its owner_pid is confirmed dead;
+-- never touched while a legitimately-running orchestrator still owns it.
+-- start_ticks is the worker's own /proc start-time (see
+-- src/process/liveness.ts readProcStartTicks) — required to confirm the
+-- pid we'd be about to terminate is still the SAME process we spawned,
+-- not an unrelated process that has since reused that pid number.
+CREATE TABLE IF NOT EXISTS worker_processes (
+  id TEXT PRIMARY KEY,
+  pid INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  owner_pid INTEGER NOT NULL,
+  start_ticks TEXT,
+  spawned_at TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_worker_processes_status ON worker_processes(status);
 `;
 
 export function getDb(): DatabaseSync {

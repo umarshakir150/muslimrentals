@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildClaudeArgs, extractStructuredPayload, type ClaudeInvokeOptions } from '../src/claude/claudeAdapter.js';
+import { buildClaudeArgs, extractStructuredPayload, STDIN_PROMPT_POINTER, type ClaudeInvokeOptions } from '../src/claude/claudeAdapter.js';
 
 function baseOptions(overrides: Partial<ClaudeInvokeOptions> = {}): ClaudeInvokeOptions {
   return {
@@ -84,9 +84,19 @@ describe('buildClaudeArgs', () => {
     expect(JSON.parse(args[idx + 1] as string)).toEqual(schema);
   });
 
-  it('puts the user prompt last as the positional argument', () => {
+  it('never puts the user prompt in argv — it goes over stdin instead (regression test for a real spawn E2BIG on the Integrator role)', () => {
     const args = buildClaudeArgs(baseOptions({ userPrompt: 'DO THE THING' }));
-    expect(args[args.length - 1]).toBe('DO THE THING');
+    expect(args).not.toContain('DO THE THING');
+    // The positional slot is a fixed-size pointer, not task content, so argv
+    // size never scales with how large a task's aggregated context gets.
+    expect(args[args.length - 1]).toBe(STDIN_PROMPT_POINTER);
+  });
+
+  it('the positional pointer never grows with the prompt size', () => {
+    const hugePrompt = 'x'.repeat(5_000_000); // far past any OS argv/single-arg limit
+    const args = buildClaudeArgs(baseOptions({ userPrompt: hugePrompt }));
+    const totalArgvBytes = args.reduce((sum, a) => sum + Buffer.byteLength(a, 'utf8'), 0);
+    expect(totalArgvBytes).toBeLessThan(100_000);
   });
 
   it('only sets --model when explicitly requested', () => {

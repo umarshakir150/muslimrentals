@@ -151,11 +151,29 @@ export function buildClaudeArgs(options: ClaudeInvokeOptions): string[] {
 
   if (options.model) args.push('--model', options.model);
 
-  // Positional prompt goes last.
-  args.push(options.userPrompt);
+  // Positional prompt is a short, FIXED-size pointer, never the actual task
+  // content — the real userPrompt is piped over stdin instead (see
+  // runProcess()). This is what caused a real `spawn E2BIG` failure on the
+  // Integrator role: it uniquely aggregates every implementer's full report
+  // plus the deterministic overlap/scope analysis into one userPrompt, and
+  // nothing in this codebase bounds how large that gets, while the OS caps
+  // total argv/environ size well under what a large multi-implementer task
+  // can produce. `claude -p` combining a positional prompt with piped stdin
+  // content is a standard, documented CLI usage pattern (it's also why the
+  // CLI briefly waits on stdin before proceeding — see the historical "3s
+  // wait" note in runProcess()'s docstring), so this keeps argv permanently
+  // tiny regardless of task size instead of just patching today's specific
+  // oversized case.
+  args.push(STDIN_PROMPT_POINTER);
 
   return args;
 }
+
+/** The only positional prompt content that ever reaches argv — everything
+ * task-specific goes over stdin instead (see buildClaudeArgs()/runProcess()
+ * comments above). Kept as an exported constant, not inlined, so a test can
+ * assert against it without duplicating the literal string. */
+export const STDIN_PROMPT_POINTER = 'Read your full task prompt from stdin (already provided) and follow it.';
 
 /**
  * Extracts the structured payload from `claude -p --output-format json`'s
@@ -247,13 +265,18 @@ export class CliClaudeInvoker implements ClaudeInvoker {
   }
 
   /**
-   * Runs the CLI via `spawn` (not `execFile`) specifically so stdin can be
-   * closed immediately (`stdio: ['ignore', ...]`). Without this, the CLI
-   * waits ~3s per invocation for stdin data that will never arrive (we pass
-   * the prompt as a positional argument, not via stdin) — across a handful
-   * of concurrent/sequential worker calls that adds up fast. Verified
-   * against the installed CLI (2.1.243): closing stdin up front removes
-   * the wait entirely with no change in behavior.
+   * Runs the CLI via `spawn` (not `execFile`) and feeds the prompt to the
+   * child over stdin rather than as a positional CLI argument — see
+   * buildClaudeArgs()'s comment for why (a real `spawn E2BIG` on the
+   * Integrator role: an oversized aggregated userPrompt hit the OS's argv
+   * size limit). Writing to a pipe has no equivalent size ceiling.
+   *
+   * Earlier versions of this code closed stdin immediately (`stdio:
+   * ['ignore', ...]`) to dodge a ~3s wait the CLI does for stdin data that
+   * never arrives when nothing is piped in. Now that real content is always
+   * written and the stream is ended right after, that wait never triggers
+   * (EOF arrives essentially immediately) — verified against the installed
+   * CLI (2.1.243).
    *
    * `detached: true` makes this child the leader of its own new process
    * group (see module docstring) — required for terminateProcessGroup() to
@@ -262,13 +285,14 @@ export class CliClaudeInvoker implements ClaudeInvoker {
    */
   private runProcess(
     args: string[],
+    stdinContent: string,
     cwd: string,
     role: string,
     maxBufferBytes: number,
     timeoutMs: number | undefined
   ): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env, detached: true });
+      const child = spawn(this.binary, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env, detached: true });
       const pid = child.pid;
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
@@ -308,6 +332,15 @@ export class CliClaudeInvoker implements ClaudeInvoker {
         }, timeoutMs);
       }
 
+      // If the child exits (or was never able to start) before it's read all
+      // of stdin, writing/ending the stream can raise EPIPE/ECONNRESET here.
+      // That's informational, not the real failure — the real failure is
+      // always surfaced separately via the child's own 'error' or 'close'
+      // handler below, so this must never reject/crash on its own (an
+      // unhandled 'error' on a stream is otherwise an uncaught exception).
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(stdinContent, 'utf8');
+
       child.stdout?.on('data', (chunk: Buffer) => {
         stdoutBytes += chunk.length;
         if (stdoutBytes <= maxBufferBytes) stdoutChunks.push(chunk);
@@ -319,14 +352,28 @@ export class CliClaudeInvoker implements ClaudeInvoker {
         cleanup();
         reject(err);
       });
-      child.on('close', (code) => {
+      child.on('close', (code, signal) => {
         if (settled || timedOut) return; // a timeout already won; ignore any late settlement
         settled = true;
         cleanup();
         const stdout = Buffer.concat(stdoutChunks).toString('utf8');
         const stderr = Buffer.concat(stderrChunks).toString('utf8');
         if (code === 0) resolve({ stdout, stderr });
-        else reject(new Error(`claude exited with code ${code}. stderr: ${stderr || '(none)'}`));
+        else {
+          // A bare nonzero exit with empty stderr has been observed for real
+          // (see orchestrator/README.md Troubleshooting) with nothing to go
+          // on afterward. Always include enough to diagnose it without
+          // re-running: exit code/signal, how much stdout arrived before the
+          // process died, and the argv size (rules out — or confirms — a
+          // still-oversized argv despite the prompt no longer living there).
+          const argvBytes = args.reduce((sum, a) => sum + Buffer.byteLength(a, 'utf8'), 0);
+          reject(
+            new Error(
+              `claude exited with code ${code}${signal ? ` (signal ${signal})` : ''}. ` +
+                `stderr: ${stderr || '(none)'}. stdout bytes received: ${stdoutBytes}. argv bytes: ${argvBytes}.`
+            )
+          );
+        }
       });
     });
   }
@@ -355,7 +402,7 @@ export class CliClaudeInvoker implements ClaudeInvoker {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 5000));
       try {
         // Context bundles + tool output can be sizable; default buffers are too small.
-        const result = await this.runProcess(args, options.cwd, options.role, 64 * 1024 * 1024, timeoutMs);
+        const result = await this.runProcess(args, options.userPrompt, options.cwd, options.role, 64 * 1024 * 1024, timeoutMs);
         const durationMs = Date.now() - start;
         const { json, costUsd } = extractStructuredPayload(result.stdout);
         return { raw: result.stdout, json, costUsd, durationMs };

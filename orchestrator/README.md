@@ -864,6 +864,29 @@ just a synthetic approximation of it.
   (or a crashed run) left a worktree/branch behind. Remove it manually:
   `git worktree remove orchestrator/.worktrees/<task-id>-<role> --force`
   then `git branch -D agents/<task-id>/<role>`, or use a fresh task ID.
+- **`spawn E2BIG` (or a bare nonzero exit with no stderr) on the Integrator
+  role** — root-caused to the userPrompt being passed as a positional CLI
+  argument. The Integrator uniquely aggregates every implementer's full
+  report plus the deterministic overlap/scope analysis into one prompt (see
+  `runIntegrator()` in `src/supervisor/orchestrator.ts`), and nothing bounds
+  how large that gets — for a real multi-implementer feature it can exceed
+  the OS's argv/environ size limit outright (`spawn E2BIG`), or land close
+  enough to it that failures become intermittent and silent (a bare nonzero
+  exit, no stderr, nothing to diagnose after the fact). An earlier fix
+  (committing a missing `.gitignore` for `node_modules/`, see
+  `ai/autonomy-architecture.md` section 9) addressed one specific trigger —
+  tens of thousands of accidentally-tracked `node_modules` paths bloating
+  the Integrator's overlap report — but didn't address the underlying
+  design flaw: argv has no headroom for genuinely large legitimate task
+  context, node_modules or not. Fixed for real by never putting `userPrompt`
+  in argv at all — `CliClaudeInvoker.runProcess()` now pipes it over the
+  child's stdin (which has no comparable size ceiling), and argv carries
+  only a small fixed pointer (`STDIN_PROMPT_POINTER`) telling the model to
+  read its task from stdin. If a role's invocation ever fails again for a
+  reason that isn't obviously *this*, the close handler now also reports
+  stdout bytes received and total argv byte size in the thrown error, so a
+  future silent failure at least leaves something to diagnose from — see
+  `claudeAdapter.test.ts`'s regression tests for this.
 - **`filesChanged` ground truth must be diffed against the base commit, not
   `git status`** — bit us once while adding `commitAll()` (the orchestrator
   now commits an implementer's/the Integrator's work itself rather than

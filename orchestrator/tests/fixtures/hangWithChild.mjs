@@ -5,18 +5,18 @@
 // POSIX process-group inheritance stays in THIS process's group (the one
 // CliClaudeInvoker tracks, since it spawned this fixture with
 // `detached: true`), then writes the grandchild's pid to the file path
-// given as the last CLI argument (CliClaudeInvoker always puts
-// `userPrompt` last — this test (ab)uses that slot to pass the pidfile
-// path) so the test can verify the grandchild died too, not just this
-// top-level process. Both this process and its grandchild ignore SIGTERM,
-// so only a real process-GROUP SIGKILL (not a parent-exit cascade) can
-// account for the grandchild dying alongside its parent.
+// given via stdin (CliClaudeInvoker pipes `userPrompt` over stdin, not
+// argv — this test (ab)uses that channel to pass the pidfile path) so the
+// test can verify the grandchild died too, not just this top-level
+// process. Both this process and its grandchild ignore SIGTERM, so only a
+// real process-GROUP SIGKILL (not a parent-exit cascade) can account for
+// the grandchild dying alongside its parent.
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const pidFile = process.argv.at(-1);
+const pidFile = readFileSync(0, 'utf8').trim();
 const ignoreSigtermScript = path.join(path.dirname(fileURLToPath(import.meta.url)), 'hangIgnoreSigterm.mjs');
 
 const child = spawn(process.execPath, [ignoreSigtermScript], { stdio: 'ignore' });

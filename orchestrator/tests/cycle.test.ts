@@ -19,7 +19,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { closeDb } from '../src/autonomy/db.js';
+import { spawnSync } from 'node:child_process';
+import { closeDb, getDb } from '../src/autonomy/db.js';
 import { getAutonomyDbPath } from '../src/paths.js';
 
 // See tests/autonomyStores.test.ts for why each autonomy test file needs
@@ -27,7 +28,13 @@ import { getAutonomyDbPath } from '../src/paths.js';
 process.env.ORCHESTRATOR_AUTONOMY_DB = path.join(path.dirname(getAutonomyDbPath()), 'autonomy-cycle.db');
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
 import { runCycle } from '../src/autonomy/cycle.js';
-import { createCycle, getCycle, updateCycle } from '../src/autonomy/cycleStore.js';
+import { acquireCycleLock, createCycle, getCycle, updateCycle } from '../src/autonomy/cycleStore.js';
+
+/** A PID guaranteed to no longer be alive — spawnSync blocks until the
+ * child has already exited, so by the time it returns, its pid is dead. */
+function deadPid(): number {
+  return spawnSync(process.execPath, ['-e', '0']).pid ?? 999999;
+}
 import { getBacklogItem, listAllBacklogItems } from '../src/autonomy/backlogStore.js';
 import { listApprovalRequests } from '../src/autonomy/approvalStore.js';
 import { scriptedAnalysis, scriptedImplementation, scriptedPlan, scriptedReview } from './testUtils.js';
@@ -184,8 +191,21 @@ describe('runCycle — end to end (real execution engine, scripted Claude)', () 
   });
 
   it('detects a cycle left interrupted by a crashed process, marks it FAILED for visibility, and still runs a normal new cycle without duplicating any work', async () => {
+    // Faithfully simulate a real crash: BOTH the cycle row is left
+    // non-terminal AND the lock is left held, by a PID that is actually
+    // dead — not just the cycle row alone. An earlier version of this test
+    // only did the former, which passed by accident (getInterruptedCycle()
+    // alone was enough at the time) and masked a real gap: isLockStale()
+    // used to only treat a lock as stale once the cycle it pointed at was
+    // already terminal, which a genuine crash — by definition — never
+    // reaches on its own. That gap was only caught by a real kill -9
+    // against a real running cycle (see the PART 21 demonstration), not by
+    // this suite, precisely because this test wasn't simulating the lock
+    // half of a real crash. It does now.
     const crashed = createCycle();
-    updateCycle(crashed.id, { status: 'EXECUTING' }); // simulate the process dying mid-cycle
+    updateCycle(crashed.id, { status: 'EXECUTING' });
+    acquireCycleLock(crashed.id);
+    getDb().prepare("UPDATE cycle_lock SET locked_by_pid = ? WHERE id = 'lock'").run(deadPid());
 
     const invoker = new ScriptedClaudeInvoker({ lead: emptyPlan });
     const outcome = await runCycle({ invoker });
@@ -194,8 +214,20 @@ describe('runCycle — end to end (real execution engine, scripted Claude)', () 
     expect(getCycle(crashed.id)?.result).toBe('recovery_marked_incomplete');
     expect(getCycle(crashed.id)?.tasksCreated).toEqual([]); // nothing was fabricated for it
 
+    expect(outcome.skippedReason).toBeUndefined();
     expect(outcome.cycle?.id).not.toBe(crashed.id);
     expect(outcome.cycle?.status).toBe('COMPLETED');
+  });
+
+  it('does NOT treat a lock held by a still-alive process as stale, even if its cycle is non-terminal — a genuinely concurrent run must be left alone, not barged into', async () => {
+    const stillRunning = createCycle();
+    updateCycle(stillRunning.id, { status: 'EXECUTING' });
+    acquireCycleLock(stillRunning.id); // acquired by THIS test process — very much alive
+
+    const invoker = new ScriptedClaudeInvoker({ lead: emptyPlan });
+    const outcome = await runCycle({ invoker });
+    expect(outcome.skippedReason).toBe('ANOTHER_CYCLE_RUNNING');
+    expect(getCycle(stillRunning.id)?.status).toBe('EXECUTING'); // untouched — never barged into
   });
 
   it('a stale held lock (pointing at an already-terminal cycle) is cleared automatically rather than blocking forever', async () => {

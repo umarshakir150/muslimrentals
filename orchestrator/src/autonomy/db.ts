@@ -109,13 +109,18 @@ CREATE TABLE IF NOT EXISTS standing_objective (
 );
 
 -- Single-row mutex: exactly one cycle may run at a time (Part 9 / Part 20
--- "cycle lock prevents overlapping cycles"). locked_by/locked_at let a
--- restart tell an actually-abandoned lock apart from a live one.
+-- "cycle lock prevents overlapping cycles"). locked_by_pid + locked_at let
+-- a restart tell an actually-abandoned lock apart from a live one — see
+-- cycleStore.ts's isLockStale(), which checks whether locked_by_pid is
+-- still a live OS process (this whole system is single-machine by design,
+-- so a PID liveness check is meaningful and reliable, unlike a purely
+-- time-based heuristic).
 CREATE TABLE IF NOT EXISTS cycle_lock (
   id TEXT PRIMARY KEY CHECK (id = 'lock'),
   locked INTEGER NOT NULL,
   cycle_id TEXT,
-  locked_at TEXT
+  locked_at TEXT,
+  locked_by_pid INTEGER
 );
 
 -- status: 'STOPPED' | 'RUNNING' | 'PAUSED' (see scheduler.ts). Distinct from
@@ -142,7 +147,20 @@ export function getDb(): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** CREATE TABLE IF NOT EXISTS never adds a column to a table that already
+ * exists — this file has no other migration mechanism (deliberately, per
+ * "don't overbuild"), so a column added after a real .autonomy/state.db
+ * already exists needs one small, explicit, idempotent step here rather
+ * than silently failing to apply. */
+function migrate(database: DatabaseSync): void {
+  const columns = database.prepare('PRAGMA table_info(cycle_lock)').all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === 'locked_by_pid')) {
+    database.exec('ALTER TABLE cycle_lock ADD COLUMN locked_by_pid INTEGER;');
+  }
 }
 
 /** Closes the shared connection so a new getDb() call re-opens (and

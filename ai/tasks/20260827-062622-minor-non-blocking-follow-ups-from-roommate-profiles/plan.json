@@ -1,0 +1,83 @@
+{
+  "taskId": "20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles",
+  "objective": "Minor non-blocking follow-ups from Roommate Profiles review\n\nTwo small non-blocking items flagged during the Roommate Profiles review: (1) RoommateProfileFilters' 'EITHER' audience pill only strictly matches profiles with audiencePref=EITHER set, so a searcher misses profiles that left audiencePref unset but might still be open to anyone — worth a Product Designer pass on the filter semantics. (2) The conversation-lookup logic in POST /roommate-profiles/:id/message uses participants.every(...) rather than an exact 2-participant match, which is only correct because conversations are always created with exactly 2 participants today — a small defense-in-depth hardening, not a current bug.\n\nWhy this matters (backlog rationale): Both items were explicitly identified with file-level evidence by QA and Security during an approved review, but both reviewers marked them non-blocking/low severity, so they belong in the backlog as low-priority polish rather than being actioned ahead of the build-verification gap.\n\nEvidence:\n- sig_0edaa6a8\n- sig_a396e2ec",
+  "requiredAgents": [
+    "designer",
+    "frontend",
+    "backend",
+    "qa",
+    "security",
+    "trust_safety"
+  ],
+  "dependencies": {
+    "designer": [],
+    "trust_safety": [],
+    "frontend": [
+      "designer",
+      "trust_safety"
+    ],
+    "backend": [
+      "designer",
+      "trust_safety"
+    ],
+    "qa": [
+      "designer",
+      "trust_safety",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "designer",
+      "trust_safety",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer",
+      "trust_safety"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Updated filter semantics spec/decision for the EITHER audience pill (treat unset audiencePref as matching 'open to anyone', or explicit alternative)",
+    "Frontend change implementing the agreed filter semantics",
+    "Backend change requiring an exact 2-participant match in the conversation lookup for POST /roommate-profiles/:id/message",
+    "QA verification of both changes",
+    "Security review confirming the hardening doesn't regress conversation access control",
+    "Trust & Safety confirmation that the filter semantics change doesn't misrepresent user audience preferences"
+  ],
+  "riskNotes": [
+    "Both items were explicitly marked non-blocking/low severity by QA and Security in the prior Roommate Profiles review (sig_0edaa6a8, sig_a396e2ec); this is backlog polish, not urgent remediation",
+    "Changing default audience-pref matching behavior could unintentionally broaden or narrow who a profile matches with — Trust & Safety should confirm the change doesn't misrepresent a user's stated preference",
+    "Backend change is additive hardening only; must not alter today's correct behavior since conversations are always created with exactly 2 participants"
+  ]
+}

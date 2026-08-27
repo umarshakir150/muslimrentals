@@ -1,0 +1,37 @@
+{
+  "taskId": "20260825-011522-design-a-feature-allowing-users-to",
+  "objective": "Design a feature allowing users to report roommate profiles.",
+  "requiredAgents": [
+    "designer",
+    "trust_safety",
+    "legal"
+  ],
+  "dependencies": {
+    "designer": [],
+    "trust_safety": [],
+    "legal": []
+  },
+  "parallelGroups": [
+    [
+      "designer",
+      "trust_safety",
+      "legal"
+    ]
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Design spec: report-roommate-profile UX flow (report button/modal, reason taxonomy, confirmation state)",
+    "Trust & Safety spec: moderation/triage workflow, extension of admin report review to a new target type, abuse/false-report risk notes",
+    "Legal issue-spotting memo: privacy, data retention, consent, and discrimination-risk considerations for collecting/reviewing report data on user profiles",
+    "Consolidated Supervisor summary flagging the roommate-profiles-not-yet-built dependency and the Report model schema extension this design implies (no userId/profileId target on Report today, scoped to listings only)"
+  ],
+  "riskNotes": [
+    "Roommate profiles are not yet implemented anywhere in the codebase (no schema/routes/UI) — this design is necessarily speculative/forward-looking and cannot be implemented until roommate profiles ship as their own scoped feature (schema + auth model + T&S + Legal review, per ai/current-state.md's roadmap item).",
+    "Today's Report model is scoped only to listings (no userId/messageId/profileId target) — any design here implies a future schema extension that Backend/Engineering will need to scope separately once roommate profiles exist.",
+    "This is a design/scoping deliverable only, not code — Engineering/Frontend/Backend/QA/Security should be pulled in as a separate implementation task once (a) roommate profiles exist and (b) this design is approved, at which point the full build+review pipeline (including QA and Security) applies.",
+    "DRY RUN — planning/analysis only, no implementation will occur."
+  ]
+}

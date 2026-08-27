@@ -12,6 +12,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import { ListingStatus } from '@prisma/client';
 import { prisma } from '../prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
@@ -94,12 +95,32 @@ router.post('/me/change-password', authenticate, writeRateLimiter, async (req: A
 router.get('/me/saved', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const saved = await prisma.savedListing.findMany({
-      where:   { userId: req.user!.id },
-      include: { listing: { include: { images: { take: 1 }, amenities: { select: { name: true } } } } },
+      // Exclude listings that were later removed/deactivated so the saved list
+      // never surfaces de-listed content or dead links (mirrors GET /listings).
+      where:   { userId: req.user!.id, listing: { status: ListingStatus.ACTIVE } },
+      include: {
+        listing: {
+          include: {
+            images:    { take: 1 },
+            amenities: { select: { name: true } },
+            user:      { select: { id: true, name: true, avatarUrl: true } },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    res.json({ success: true, data: saved.map(s => s.listing) });
+    res.json({
+      success: true,
+      // Every row here is, by definition, saved by the current user — set isSaved
+      // explicitly so ListingCard's heart toggle renders correctly on first paint.
+      data: saved.map(s => ({
+        ...s.listing,
+        amenities: s.listing.amenities.map(a => a.name),
+        thumbnailUrl: s.listing.images[0]?.url || null,
+        isSaved: true,
+      })),
+    });
   } catch (err) { next(err); }
 });
 

@@ -240,3 +240,52 @@ Not built in this phase, and why:
 - **maxTasksPerCycle > 1** — the config exists and is respected, but the
   default stays at 1 until autonomous prioritization has been observed
   working correctly over real cycles.
+
+## 9. What the real demonstration actually found (post-implementation)
+
+This section was written after running real cycles against this repo
+(`ai/tasks/20260826-210142-...`, `20260826-212054-...`, `20260826-212634-...`,
+`20260827-035341-...`) — the plan above was necessarily written before any
+of this was exercised for real, and three genuine bugs plus one repo gap
+only surfaced under real execution, not under the mocked-Claude test suite.
+Recorded here so the gap between "the design" and "what real load actually
+does to it" isn't lost:
+
+- **`execFileAsync`'s default 1MB stdout buffer** (`src/git/worktree.ts`)
+  overflowed on a real `npm install`-sized `git diff`/`git status` output
+  and crashed a task mid-execution. Fixed with the same generous-buffer
+  pattern `claudeAdapter.ts` already used for an analogous problem.
+- **`{...existing, ...patch}` merges in `updateBacklogItem`/`updateCycle`**
+  silently nulled out untouched fields whenever a patch simply *omitted*
+  them (JS/TS makes "field omitted" and "field explicitly undefined"
+  indistinguishable once spread) — a real Lead status-only update crashed
+  Zod validation on `NaN`/`undefined` scoring fields. Fixed with a shared
+  `definedOnly()` helper (`src/autonomy/ids.ts`) applied at both merge
+  sites.
+- **`isLockStale()` could not detect a real crash.** It only treated a
+  lock as stale once the cycle it pointed at had already reached a
+  terminal status — but a genuine crash, by definition, never reaches one
+  on its own; that's what makes it a crash. Caught only by actually
+  killing a live cycle's real OS process and observing the next
+  invocation refuse to recover (the mocked-crash unit test had the same
+  blind spot — it set the cycle row's status but never acquired the lock,
+  so it happened to pass without ever exercising the buggy path). Fixed
+  with a PID-liveness check (`cycle_lock.locked_by_pid`, `process.kill(pid,
+  0)`) — reliable specifically because this system is single-machine by
+  design; a purely time-based staleness heuristic was considered and
+  rejected as strictly worse here.
+- **`rentals/backend/` and `rentals/frontend/` had no `.gitignore` for
+  `node_modules`.** Not an autonomy-layer bug, but it directly caused both
+  problems above to actually trigger, and after the buffer fix landed it
+  caused a second, worse failure (`spawn E2BIG` — ~41,000 "changed" files
+  overflowing the OS argument-length limit on the Integrator's CLI
+  invocation). Added directly rather than routed through the Lead/
+  Supervisor pipeline: it's dev-environment hygiene with no product
+  tradeoffs to review, and leaving it missing would keep breaking every
+  future task whose worktree runs a real install.
+
+None of these were hypothetical — each was found by an actual autonomous
+cycle doing actual work, which is the strongest evidence available that
+"the system observes, plans, executes, and its failures are visible and
+recoverable rather than silent" actually holds, not just that the design
+document claims it does.

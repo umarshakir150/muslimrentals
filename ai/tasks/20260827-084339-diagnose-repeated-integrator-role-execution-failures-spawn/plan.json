@@ -1,0 +1,51 @@
+{
+  "taskId": "20260827-084339-diagnose-repeated-integrator-role-execution-failures-spawn",
+  "objective": "Diagnose repeated Integrator-role execution failures (spawn E2BIG, exit code 1) on large-diff verification tasks\n\nThe Roommate Profiles build-verification task (bl_368a454b) has failed twice more since the stdout-buffer-overflow fix shipped (bl_d53d390c): once with 'spawn E2BIG' (argument list too long, typically from passing an oversized diff/context as a process argument) and once with a bare 'claude exited with code 1' with no stderr captured. Both occurred specifically on the 'integrator' role for this task. Root cause is unknown — likely the size of the integrated Roommate Profiles diff/context being passed via CLI args rather than stdin/file, or a transient CLI issue with no error surfaced. Needs investigation into how the integrator role invocation constructs its process arguments and whether large diffs need to be passed via a temp file instead of inline args, plus better stderr capture so failures aren't silent.\n\nWhy this matters (backlog rationale): Two consecutive, distinct execution failures on the same task after the previously-diagnosed buffer overflow was already fixed (mem_1c13d8df, mem_f2066119) indicate an unresolved second infra issue specific to large-diff integrator invocations, currently blocking the highest-priority backlog item (bl_368a454b) from ever completing autonomously.\n\nEvidence:\n- mem_1c13d8df-0d05-47d1-a6d0-50ed17f2cb2b\n- mem_f2066119-7ca8-49ba-b201-af52a918c043\n- mem_0bc54a1e-dcdb-4bfa-a801-f7a2108f02e3",
+  "requiredAgents": [
+    "engineering",
+    "qa",
+    "security"
+  ],
+  "dependencies": {
+    "engineering": [],
+    "qa": [
+      "engineering"
+    ],
+    "security": [
+      "engineering"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "engineering"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "engineering",
+      "expectedPaths": [
+        "rentals/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Fix in claudeAdapter.ts moving large prompt/schema payloads off argv (stdin or temp file)",
+    "Improved error/stderr diagnostics for spawn failures and empty-stderr nonzero exits",
+    "Unit tests covering an oversized-prompt/large-diff invocation",
+    "Updated task file at ai/tasks/integrator-e2big-argv-fix.md documenting root cause and fix"
+  ],
+  "riskNotes": [
+    "This is orchestrator-internal infrastructure code (src/claude/claudeAdapter.ts), not the rentals/ product codebase — no end-user impact, but any regression here breaks all agent invocations including for production-facing product work, so QA review of the invocation change is important.",
+    "If switching to temp-file-based prompt passing, ensure temp files are cleaned up after each invocation and don't leak worktree paths or secrets onto disk with weak permissions.",
+    "This is the second distinct infra failure mode on this same task after the earlier stdout-buffer-overflow fix (mem_1c13d8df, mem_f2066119); verify the fix actually resolves bl_368a454b rather than just reducing failure likelihood."
+  ]
+}

@@ -99,6 +99,15 @@ const REVIEW_BASH_ALLOW = [
   'Bash(git log*)',
   ...VERIFY_BASH_ALLOW,
 ];
+// Live-product review (ai/operating-directive.md, agents/qa.md "Live
+// product review"): scoped to the one published origin this product
+// actually owns, never arbitrary external URLs. This is a domain-scoped
+// --allowedTools pattern (WebFetch(domain:...)), not a bare 'WebFetch'
+// grant — under --permission-mode dontAsk a role only gets to fetch that
+// one origin, exactly like the Bash subcommand scoping above.
+const LIVE_SITE_DOMAIN = 'muslimrentals.netlify.app';
+const LIVE_SITE_WEBFETCH_ALLOW = [`WebFetch(domain:${LIVE_SITE_DOMAIN})`];
+
 const DANGEROUS_BASH_DENY = [
   'Bash(git push*)',
   'Bash(git commit*)',
@@ -169,8 +178,8 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
   designer: {
     role: 'designer',
     roleFile: 'agents/designer.md',
-    tools: READ_ONLY_TOOLS,
-    allowedToolPatterns: [],
+    tools: [...READ_ONLY_TOOLS, 'WebFetch'],
+    allowedToolPatterns: LIVE_SITE_WEBFETCH_ALLOW,
     disallowedToolPatterns: [],
     canWriteCode: false,
     needsWorktree: false,
@@ -217,8 +226,8 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
   qa: {
     role: 'qa',
     roleFile: 'agents/qa.md',
-    tools: ['Read', 'Grep', 'Glob', 'Bash'],
-    allowedToolPatterns: REVIEW_BASH_ALLOW,
+    tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch'],
+    allowedToolPatterns: [...REVIEW_BASH_ALLOW, ...LIVE_SITE_WEBFETCH_ALLOW],
     disallowedToolPatterns: DANGEROUS_BASH_DENY,
     canWriteCode: false,
     needsWorktree: false,
@@ -229,8 +238,8 @@ export const REGISTRY: Record<AgentRole, PermissionProfile> = {
   security: {
     role: 'security',
     roleFile: 'agents/security.md',
-    tools: ['Read', 'Grep', 'Glob', 'Bash'],
-    allowedToolPatterns: REVIEW_BASH_ALLOW,
+    tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch'],
+    allowedToolPatterns: [...REVIEW_BASH_ALLOW, ...LIVE_SITE_WEBFETCH_ALLOW],
     disallowedToolPatterns: DANGEROUS_BASH_DENY,
     canWriteCode: false,
     needsWorktree: false,

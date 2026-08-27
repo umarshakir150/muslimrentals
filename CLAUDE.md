@@ -84,6 +84,12 @@ involves more than a trivial one-file fix. See `ai/workflow.md` for how the
 task file moves through the pipeline and `ai/orchestration-plan.md` for how
 this evolves into concurrent agents later.
 
+For how the autonomous team operates on an ongoing basis — deciding
+priorities itself, running specialists concurrently, reviewing the live
+site, and committing/pushing reviewed work without per-instance founder
+approval — see `ai/operating-directive.md`. It supplements this file and
+never overrides it.
+
 ## Directory map
 
 ```

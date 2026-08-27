@@ -255,6 +255,32 @@ export async function commitMerge(handle: WorktreeHandle, message: string): Prom
   return stdout.trim();
 }
 
+export interface PushResult {
+  pushed: boolean;
+  branch: string;
+  reason?: string;
+}
+
+/**
+ * Pushes `handle`'s branch to `origin`, creating/updating a remote branch of
+ * the same name (never main/master — every branch this system creates is
+ * under the `agents/<taskId>/...` namespace, see createWorktree() and
+ * createIntegrationWorktree()). Never force-pushed: a genuine rejection
+ * (e.g. someone else pushed to the same branch name) is reported back
+ * rather than overwritten, per ai/operating-directive.md's push-authority
+ * constraints ("no overwriting unrelated branches, no silently discarding
+ * conflicts"). This never touches main/master/any shared default branch —
+ * callers only ever pass a task-scoped worktree handle.
+ */
+export async function pushBranch(handle: WorktreeHandle): Promise<PushResult> {
+  try {
+    await git(['push', '-u', 'origin', `${handle.branch}:${handle.branch}`], handle.path);
+    return { pushed: true, branch: handle.branch };
+  } catch (err) {
+    return { pushed: false, branch: handle.branch, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Paths still marked unmerged (conflict markers) in `handle` right now — the
  * ground-truth check after an Integrator agent claims to have resolved
  * everything. Never trust "I fixed it" without verifying. */

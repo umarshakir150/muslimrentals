@@ -170,7 +170,7 @@ interface ReviewFinding {
   recommendedAction?: string;
 }
 
-function categoryForFindingText(text: string): BacklogCategory {
+export function categoryForFindingText(text: string): BacklogCategory {
   const t = text.toLowerCase();
   if (/(idor|auth|inject|xss|csrf|vulnerab)/.test(t)) return 'SECURITY';
   if (/(privacy|pii|personal data|expos)/.test(t)) return 'PRIVACY';

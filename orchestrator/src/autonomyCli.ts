@@ -158,8 +158,13 @@ async function cmdCycle(args: string[]): Promise<void> {
   // No subcommand: actually launch one bounded cycle.
   const mode = args.includes('--dry-run') ? 'dry_run' : 'full';
   const includeDeepSignals = args.includes('--deep-signals');
-  console.log(`\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals}\n`);
-  const outcome = await runCycle({ invoker: newAutonomousInvoker(args), mode, includeDeepSignals });
+  const includeLiveSiteSignal = args.includes('--live-site-signal');
+  // Real autonomous cycles push reviewed work by default
+  // (ai/operating-directive.md "Autonomous commit + push authority") —
+  // --no-auto-push opts back out for a manual/inspection run.
+  const autoPush = !args.includes('--no-auto-push');
+  console.log(`\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush}\n`);
+  const outcome = await runCycle({ invoker: newAutonomousInvoker(args), mode, includeDeepSignals, includeLiveSiteSignal, autoPush });
   if (outcome.skippedReason) {
     console.log(`[autonomy] skipped: ${outcome.skippedReason}`);
     return;
@@ -283,10 +288,16 @@ async function cmdObjective(args: string[]): Promise<void> {
 
 async function cmdSchedulerLoop(args: string[]): Promise<void> {
   const tickIntervalMs = Number(flag(args, 'tick-interval-ms') ?? '60000');
-  console.log(`[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`);
+  const includeDeepSignals = args.includes('--deep-signals');
+  const includeLiveSiteSignal = args.includes('--live-site-signal');
+  const autoPush = !args.includes('--no-auto-push');
+  console.log(`[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush}. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`);
   await runSchedulerLoop({
     invoker: newAutonomousInvoker(args),
     tickIntervalMs,
+    includeDeepSignals,
+    includeLiveSiteSignal,
+    autoPush,
     onTick: (outcome) => {
       const ts = new Date().toISOString();
       if (outcome.result === 'launched') {

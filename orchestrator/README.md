@@ -620,6 +620,41 @@ service — never fabricate access to one that isn't), add it to the list
 it costs money or is slow), and nothing else needs to change — the Lead,
 backlog, and risk classification are already source-agnostic.
 
+### Live-site review
+
+`liveSiteSignalSource.ts` mirrors `deepSignalSource.ts`: one bounded, opt-in
+QA pass against the real published site
+(`https://muslimrentals.netlify.app/`), reusing the `qa` role and its
+`AgentAnalysis` structured output. QA's registry profile grants `WebFetch`
+scoped to `WebFetch(domain:muslimrentals.netlify.app)` only — it cannot
+fetch any other URL even if the model tried (`src/agents/registry.ts`,
+`tests/registry.test.ts`). Off by default (real Claude call + real HTTP
+requests); pass `--live-site-signal` to `agents:autonomy cycle`/
+`scheduler-loop` to include it. Findings are tagged `source: 'live_site'`
+and `metadata.environment: 'PRODUCTION'` so downstream consumers never
+confuse a live-site finding with a repo-only one. See
+`ai/operating-directive.md` ("Live product as a signal source") and
+`agents/qa.md` ("Live product review") for the policy this implements.
+
+### Autonomous push
+
+Once `runTask()` reaches `COMPLETE` — meaning the work already passed
+required reviews through the existing pipeline — `runCycle()` can push the
+reviewed branch to `origin`: the integration branch when 2+ implementers
+ran, otherwise the single implementer's own branch. Never `main`/`master`;
+every branch this system creates lives under the `agents/<taskId>/...`
+namespace, and the push (`pushBranch()`, `src/git/worktree.ts`) is a plain
+non-force push of that one branch — a genuine rejection is reported, never
+overwritten. This is off by default in `cycle.ts` itself (`autoPush`
+option) but on by default for real autonomous runs specifically —
+`agents:autonomy cycle` and `scheduler-loop` push unless `--no-auto-push`
+is passed — per `ai/operating-directive.md` ("Autonomous commit + push
+authority"). Push success/failure is recorded as a `BRANCH_PUSHED`/
+`BRANCH_PUSH_FAILED` event either way; a failed push never fails the cycle
+or the underlying task, it's left for manual follow-up. Tests inject a
+fake `pushBranchFn` so no test ever touches the real remote
+(`tests/cycle.test.ts`).
+
 ### Dashboard-ready data (no UI built yet)
 
 Every store module (`backlogStore`, `signalStore`, `memoryStore`,
@@ -637,14 +672,15 @@ there's a real need for one.
 - May: select and execute LOW/MEDIUM-risk work through the existing,
   fully-reviewed pipeline (specialists → implementer(s) → QA → Security →
   Integrator → correction loops), on isolated branches, same as any manual
-  task.
+  task; push a `COMPLETE` task's reviewed `agents/<taskId>/...` branch to
+  `origin` (non-force, never `main`/`master` — see "Autonomous push" above).
 - May not, ever: auto-select or auto-start HIGH-risk work; weaken any
   existing approval gate, risk threshold, concurrency limit, budget limit,
   reviewer independence, or production restriction; deploy to production;
-  merge to the default/production branch automatically; spend money;
-  fabricate access to an unconfigured external service; recursively spawn
-  agents (the Lead has no `Bash`/`Write`/`Edit` tools at all — it can only
-  propose, never act).
+  merge to the default/production branch automatically; force-push any
+  branch; spend money; fabricate access to an unconfigured external
+  service; recursively spawn agents (the Lead has no `Bash`/`Write`/`Edit`
+  tools at all — it can only propose, never act).
 - A change to the autonomy platform's own safety rules is infrastructure
   work like any other — it goes through the same review pipeline, and
   anything that would materially expand agent authority needs explicit

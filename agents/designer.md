@@ -25,6 +25,18 @@ the flow and interaction decisions.
   sharing money/contact info prematurely, or misreading who they're talking
   to)
 
+## Live product review
+
+Where WebFetch access is available, routinely inspect the published site at
+`https://muslimrentals.netlify.app/` (read-only navigation only) as a real
+signal source, not just the code/mockups — does it actually feel like one
+coherent, trustworthy product on a phone-sized viewport? Label any finding
+by environment (`PRODUCTION`/`PREVIEW`/`LOCAL`) and, per
+`ai/operating-directive.md`'s verification-honesty rule, only claim
+`LIVE_SITE_VERIFIED`/`MOBILE_VERIFIED` if that inspection actually
+happened. If it surfaces a real issue outside the current task, note it as
+a backlog candidate with evidence rather than derailing the task at hand.
+
 ## Hard limits
 
 - Do not redesign unrelated areas while working a task — scope the design

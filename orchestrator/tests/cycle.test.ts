@@ -39,6 +39,8 @@ import { getBacklogItem, listAllBacklogItems } from '../src/autonomy/backlogStor
 import { listApprovalRequests } from '../src/autonomy/approvalStore.js';
 import { scriptedAnalysis, scriptedImplementation, scriptedPlan, scriptedReview } from './testUtils.js';
 import type { LeadPlan } from '../src/autonomy/types.js';
+import { listAutonomyEvents } from '../src/autonomy/eventLog.js';
+import type { PushResult, WorktreeHandle } from '../src/git/worktree.js';
 
 function freshDb(): void {
   closeDb();
@@ -115,6 +117,99 @@ describe('runCycle — end to end (real execution engine, scripted Claude)', () 
     // Proves QA and Security really ran as part of this — not bypassed.
     expect(invoker.callsFor('qa')).toHaveLength(1);
     expect(invoker.callsFor('security')).toHaveLength(1);
+  });
+
+  it('autoPush=false (the default) never invokes the push function, even on a real COMPLETE', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      // Distinct titles per test below (taskId = timestamp + title slug,
+      // second-granularity — see src/task/taskId.ts) so two tests reaching
+      // real execution in the same wall-clock second never collide on the
+      // same worktree path.
+      lead: leadSelectsNewCandidate({ title: 'autoPush test: no-op when autoPush is off' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementation(),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    let calls = 0;
+    const pushBranchFn = async (): Promise<PushResult> => {
+      calls += 1;
+      return { pushed: true, branch: 'should-not-be-called' };
+    };
+
+    const outcome = await runCycle({ invoker, pushBranchFn });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(calls).toBe(0);
+    expect(listAutonomyEvents({ type: 'BRANCH_PUSHED' })).toHaveLength(0);
+  });
+
+  it('autoPush=true pushes the reviewed branch exactly once when execution reaches COMPLETE, and records a BRANCH_PUSHED event — the real origin remote is never touched (pushBranchFn is fully injected)', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'autoPush test: pushes on COMPLETE' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementation(),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const pushedHandles: WorktreeHandle[] = [];
+    const pushBranchFn = async (handle: WorktreeHandle): Promise<PushResult> => {
+      pushedHandles.push(handle);
+      return { pushed: true, branch: handle.branch };
+    };
+
+    const outcome = await runCycle({ invoker, autoPush: true, pushBranchFn });
+
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    expect(pushedHandles).toHaveLength(1);
+    expect(pushedHandles[0]?.branch).toMatch(/^agents\//);
+    const events = listAutonomyEvents({ type: 'BRANCH_PUSHED' });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.message).toContain(pushedHandles[0]?.branch);
+  });
+
+  it('autoPush=true does NOT push when execution does not reach COMPLETE (dry_run)', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'autoPush test: no push on non-COMPLETE (dry run)' }),
+      supervisor: scriptedPlan(['engineering']),
+      engineering: scriptedAnalysis('engineering'),
+    });
+    let calls = 0;
+    const pushBranchFn = async (): Promise<PushResult> => {
+      calls += 1;
+      return { pushed: true, branch: 'should-not-be-called' };
+    };
+
+    const outcome = await runCycle({ invoker, mode: 'dry_run', autoPush: true, pushBranchFn });
+
+    expect(outcome.execution?.finalState).toBe('DRY_RUN_COMPLETE');
+    expect(calls).toBe(0);
+  });
+
+  it('autoPush=true records BRANCH_PUSH_FAILED (not a cycle failure) when the push itself fails, and the cycle still completes with the task marked DONE', async () => {
+    const invoker = new ScriptedClaudeInvoker({
+      lead: leadSelectsNewCandidate({ title: 'autoPush test: push failure is recorded, not fatal' }),
+      supervisor: scriptedPlan(['engineering', 'qa', 'security']),
+      engineering: scriptedImplementation(),
+      qa: scriptedReview('PASS'),
+      security: scriptedReview('APPROVED'),
+    });
+    const pushBranchFn = async (handle: WorktreeHandle): Promise<PushResult> => ({
+      pushed: false,
+      branch: handle.branch,
+      reason: 'simulated rejection — remote branch diverged',
+    });
+
+    const outcome = await runCycle({ invoker, autoPush: true, pushBranchFn });
+
+    expect(outcome.cycle?.status).toBe('COMPLETED');
+    expect(outcome.execution?.finalState).toBe('COMPLETE');
+    const item = getBacklogItem(outcome.leadResult!.selected!.item.id);
+    expect(item?.status).toBe('DONE'); // a push failure doesn't undo a reviewed, completed task
+    const failEvents = listAutonomyEvents({ type: 'BRANCH_PUSH_FAILED' });
+    expect(failEvents).toHaveLength(1);
+    expect(failEvents[0]?.message).toContain('simulated rejection');
+    expect(listAutonomyEvents({ type: 'BRANCH_PUSHED' })).toHaveLength(0);
   });
 
   it('an empty backlog and no signals still terminates cleanly with no selection and no execution call', async () => {

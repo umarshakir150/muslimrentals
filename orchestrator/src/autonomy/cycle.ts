@@ -36,6 +36,7 @@ import { runTask } from '../supervisor/orchestrator.js';
 import { getStandingObjective } from './objective.js';
 import { DEFAULT_SIGNAL_SOURCES } from './signalSources.js';
 import { deepSignalSource } from './deepSignalSource.js';
+import { liveSiteSignalSource } from './liveSiteSignalSource.js';
 import { recordSignal } from './signalStore.js';
 import { runLeadPlanning, type LeadPlanningResult } from './lead.js';
 import { updateBacklogItem, linkBacklogItemToTask } from './backlogStore.js';
@@ -55,6 +56,7 @@ import {
   updateCycle,
 } from './cycleStore.js';
 import type { AutonomousCycle, Signal } from './types.js';
+import { pushBranch as realPushBranch, type PushResult, type WorktreeHandle } from '../git/worktree.js';
 
 export const DEFAULT_MAX_MODEL_CALLS_PER_CYCLE = 5;
 export const DEFAULT_CYCLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — generous default for a real full task run
@@ -83,6 +85,21 @@ export interface RunCycleOptions {
   /** Opt-in Designer/Security "deep" signal source — costs two real Claude
    * calls, so off by default (PART 2). */
   includeDeepSignals?: boolean;
+  /** Opt-in QA pass against the real published site
+   * (https://muslimrentals.netlify.app/) — costs one real Claude call plus
+   * real WebFetch requests, so off by default (ai/operating-directive.md
+   * "Live product as a signal source"). */
+  includeLiveSiteSignal?: boolean;
+  /** Push the reviewed branch to `origin` once execution reaches COMPLETE
+   * (ai/operating-directive.md "Autonomous commit + push authority") —
+   * never main/master, only the task-scoped `agents/<taskId>/...` branch
+   * runTask() already produced and had reviewed. Off by default here;
+   * autonomyCli.ts turns this on specifically for `cycle`/`scheduler-loop`
+   * real autonomous runs, not the ad-hoc single-task CLI. */
+  autoPush?: boolean;
+  /** Injectable so tests can assert push *decisions* without ever touching
+   * the real `origin` remote. Defaults to the real git push. */
+  pushBranchFn?: (handle: WorktreeHandle) => Promise<PushResult>;
   maxAgentsPerTask?: number;
   maxRetryCycles?: number;
   maxConcurrency?: number;
@@ -233,6 +250,10 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
         modelCalls += 1;
       }
     }
+    if (options.includeLiveSiteSignal && canCallModel()) {
+      sources.push(liveSiteSignalSource(options.invoker, objective));
+      modelCalls += 1;
+    }
 
     const collectedSignals: Signal[] = [];
     let newSignalCount = 0;
@@ -330,6 +351,35 @@ export async function runCycle(options: RunCycleOptions): Promise<CycleOutcome> 
             confidence: 0.9,
           });
           logAutonomyEvent({ type: 'TASK_COMPLETED', cycleId: cycle.id, backlogItemId: item.id, taskId: runResult.taskId, message: `Completed: ${item.title}` });
+
+          if (options.autoPush) {
+            // The reviewed, mergeable result: the integration branch when
+            // 2+ implementers ran (see orchestrator.ts "this is the
+            // reviewed, mergeable result"), otherwise the single
+            // implementer's own branch. Never main/master — both are
+            // always a task-scoped agents/<taskId>/... branch.
+            const handle = runResult.integrationWorktree ?? Object.values(runResult.worktrees)[0];
+            if (handle) {
+              const push = await (options.pushBranchFn ?? realPushBranch)(handle);
+              if (push.pushed) {
+                logAutonomyEvent({
+                  type: 'BRANCH_PUSHED',
+                  cycleId: cycle.id,
+                  backlogItemId: item.id,
+                  taskId: runResult.taskId,
+                  message: `Pushed reviewed branch "${push.branch}" to origin.`,
+                });
+              } else {
+                logAutonomyEvent({
+                  type: 'BRANCH_PUSH_FAILED',
+                  cycleId: cycle.id,
+                  backlogItemId: item.id,
+                  taskId: runResult.taskId,
+                  message: `Push of reviewed branch "${push.branch}" failed — left unpushed for manual follow-up: ${push.reason ?? 'unknown reason'}`,
+                });
+              }
+            }
+          }
         } else if (runResult.finalState === 'FOUNDER_APPROVAL_REQUIRED') {
           const approval = createApprovalRequest({
             type: 'FOUNDER_DECISION_REQUIRED',

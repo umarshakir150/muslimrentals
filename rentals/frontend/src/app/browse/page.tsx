@@ -21,6 +21,8 @@ export default function BrowsePage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [messageTarget, setMessageTarget] = useState<Listing | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -32,9 +34,17 @@ export default function BrowsePage() {
   const { toast } = useToast();
   const isAuth = useIsAuthenticated();
 
+  const page = filters.page || 1;
+
   const fetchListings = useCallback(async () => {
-    setLoading(true);
-    setHasError(false);
+    const isFirstPage = page === 1;
+    if (isFirstPage) {
+      setLoading(true);
+      setHasError(false);
+    } else {
+      setLoadingMore(true);
+      setLoadMoreError(false);
+    }
     try {
       const params: Record<string, any> = {
         ...(filters.keyword   && { keyword: filters.keyword }),
@@ -47,21 +57,25 @@ export default function BrowsePage() {
         ...(filters.parking   && { parking: true }),
         ...(filters.utilities && { utilities: true }),
         sort:  filters.sort  || 'newest',
-        page:  filters.page  || 1,
+        page,
         limit: 24,
         ...(filters.lat && { lat: filters.lat, lng: filters.lng, radiusKm: filters.radiusKm }),
       };
       const res = await listingsApi.getAll(params);
-      setListings(res.data);
+      setListings(prev => (isFirstPage ? res.data : [...prev, ...res.data]));
       setTotal(res.pagination?.total ?? res.data.length);
     } catch {
-      setHasError(true);
+      if (isFirstPage) setHasError(true);
+      else setLoadMoreError(true);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [filters]);
+  }, [filters, page]);
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
+
+  const handleLoadMore = () => useFilterStore.getState().setFilter('page', page + 1);
 
   async function handleSendMessage(e: React.FormEvent) {
     e.preventDefault();
@@ -131,18 +145,41 @@ export default function BrowsePage() {
               </button>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
-              {listings.map((listing, i) => (
-                <ListingCard
-                  key={listing.id}
-                  listing={listing}
-                  index={i}
-                  onView={setSelectedListing}
-                  onMap={() => {}}
-                  onMessage={(l) => { if (!isAuth) setAuthOpen(true); else setMessageTarget(l); }}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                {listings.map((listing, i) => (
+                  <ListingCard
+                    key={listing.id}
+                    listing={listing}
+                    index={i}
+                    onView={setSelectedListing}
+                    onMap={() => {}}
+                    onMessage={(l) => { if (!isAuth) setAuthOpen(true); else setMessageTarget(l); }}
+                  />
+                ))}
+              </div>
+
+              {listings.length < total && (
+                <div className="flex flex-col items-center gap-2 mt-8">
+                  {loadMoreError ? (
+                    <>
+                      <p className="text-sm text-muted">Could not load more listings.</p>
+                      <button onClick={handleLoadMore} className="btn-ghost px-6 py-2.5 text-sm min-h-[44px]">
+                        Try again
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={loadingMore}
+                      className="btn-ghost px-8 py-2.5 text-sm min-h-[44px] disabled:opacity-60"
+                    >
+                      {loadingMore ? 'Loading more...' : 'Load more listings'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

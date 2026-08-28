@@ -1,0 +1,23 @@
+{
+  "role": "qa",
+  "taskId": "20260828-151147-dead-map-button-on-listing-cards",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Map button on Browse and Saved cards now navigates to /map?listingId=<id>; the map page reads the param via useSearchParams (wrapped in Suspense, matching the existing reset-password/page.tsx pattern), pans/centers to the listing, reuses the existing ListingDetail overlay, shows a toast if the listing isn't in the current 200-listing fetch, and strips the query param via router.replace so refresh/back-nav don't re-trigger it.",
+      "evidence": "rentals/frontend/src/app/browse/page.tsx:143, rentals/frontend/src/app/saved/page.tsx:137, rentals/frontend/src/app/map/page.tsx:17-55"
+    },
+    {
+      "severity": "info",
+      "finding": "ListingCard's Map button is now properly disabled (native disabled attribute + aria-disabled + muted styling + title tooltip) for listings lacking lat/lng, matching the Listing type's nullable lat/lng (types/index.ts:119-120), rather than navigating to a dead end.",
+      "evidence": "rentals/frontend/src/components/listings/ListingCard.tsx:127-140"
+    },
+    {
+      "severity": "low",
+      "finding": "Not independently verified in a running browser (dev server / build denied by sandbox permissions in this pass) — verification is code review + typecheck only. Recommend a quick manual click-through (including narrow viewport) before/at next deploy, consistent with Frontend's own stated caveat.",
+      "evidence": "npm run type-check passed clean; npm run build and a browser session were not available in this review session"
+    }
+  ],
+  "notes": "Implementation matches the designer's spec closely: both dead call sites (browse/page.tsx, saved/page.tsx) fixed, no-coords case handled with a disabled control rather than navigate-then-fail, map page deep-link handling added following an existing Suspense/useSearchParams pattern already in the codebase (reset-password page), not-found case surfaces a toast instead of failing silently, and the URL is cleaned up post-handling. Diff is tightly scoped to the four files named in the task with no unrelated changes. `cn` and `useToast` imports already existed/resolve correctly; `router` was already imported in saved/page.tsx. `tsc --noEmit` is clean. Verification level: TYPECHECKED + CODE_REVIEWED — no local runtime/browser check was possible in this sandbox pass (Bash build/dev-server execution was denied), so BROWSER_VERIFIED cannot be claimed; recommend a manual click-through pass before/at deploy per Frontend's own note."
+}

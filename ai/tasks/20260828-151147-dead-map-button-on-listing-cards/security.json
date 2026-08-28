@@ -1,0 +1,7 @@
+{
+  "role": "security",
+  "taskId": "20260828-151147-dead-map-button-on-listing-cards",
+  "verdict": "APPROVED",
+  "findings": [],
+  "notes": "Reviewed commit 9d727bc in isolation (the actual implementer diff, distinct from unrelated pre-existing saved/page.tsx history). Changes: browse/page.tsx and saved/page.tsx now pass onMap={(l) => router.push(`/map?listingId=${l.id}`)}; map/page.tsx reads listingId via useSearchParams (wrapped in Suspense), does a client-side array lookup against already-fetched listings, sets map center/selected listing, and strips the param via router.replace; ListingCard.tsx disables the Map button (no onClick, aria-disabled, muted styling) when a listing lacks lat/lng. No new backend/API surface, no auth/authorization change, no new data exposure (listing id/coords already returned by existing listings endpoints to the same viewer), no injection vector (listingId is only used for strict equality lookup in a local array, never interpolated into HTML, a query, or a URL beyond the safe template literal with a UUID-shaped API-sourced id). Pure client-side navigation/UX fix, consistent with the existing reset-password/page.tsx Suspense pattern already in the codebase."
+}

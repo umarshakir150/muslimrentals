@@ -34,10 +34,15 @@ describe('registerSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('lowercases and trims the email', () => {
-    const result = registerSchema.safeParse({ name: 'Ahmad Khan', email: '  Ahmad@Example.COM  ', password: 'password123' });
+  it('lowercases the email', () => {
+    const result = registerSchema.safeParse({ name: 'Ahmad Khan', email: 'Ahmad@Example.COM', password: 'password123' });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.email).toBe('ahmad@example.com');
+  });
+
+  it('rejects an email padded with leading/trailing whitespace (validated before trim)', () => {
+    const result = registerSchema.safeParse({ name: 'Ahmad Khan', email: '  ahmad@example.com  ', password: 'password123' });
+    expect(result.success).toBe(false);
   });
 });
 

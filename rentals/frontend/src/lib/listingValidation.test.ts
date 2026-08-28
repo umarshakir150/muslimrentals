@@ -27,6 +27,14 @@ describe('bedroomsSchema', () => {
   it('rejects non-numeric input', () => {
     expect(bedroomsSchema.safeParse('abc').success).toBe(false);
   });
+
+  it('rejects an emptied field instead of silently coercing to 0', () => {
+    const result = bedroomsSchema.safeParse('');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe('Enter a number of bedrooms');
+    }
+  });
 });
 
 describe('bathroomsSchema', () => {
@@ -56,5 +64,13 @@ describe('bathroomsSchema', () => {
 
   it('rejects non-numeric input', () => {
     expect(bathroomsSchema.safeParse('abc').success).toBe(false);
+  });
+
+  it('rejects an emptied field instead of silently coercing to 0', () => {
+    const result = bathroomsSchema.safeParse('');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe('Enter a number of bathrooms');
+    }
   });
 });

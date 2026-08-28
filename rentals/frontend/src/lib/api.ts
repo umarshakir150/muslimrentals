@@ -221,6 +221,15 @@ export const citiesApi = {
   getAll: () => api.get<{ data: { name: string; province: string }[] }>('/cities/all'),
 };
 
+// ─── Neighbourhoods API ────────────────────────────────────────────────────────
+// Curated city+neighbourhood -> real lat/lng lookup (same pattern as
+// citiesApi.getAll, seeded server-side rather than geocoded live).
+export interface NeighbourhoodEntry { name: string; city: string; lat: number; lng: number; }
+export const neighbourhoodsApi = {
+  getAll: (city: string) =>
+    api.get<{ data: NeighbourhoodEntry[] }>(`/neighbourhoods/all?city=${encodeURIComponent(city)}`),
+};
+
 // ─── Users API ────────────────────────────────────────────────────────────────
 export const usersApi = {
   getProfile: (id: string) => api.get<{ data: any }>(`/users/${id}`),

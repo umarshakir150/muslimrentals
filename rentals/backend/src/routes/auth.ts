@@ -14,7 +14,6 @@
  */
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
-import { z } from 'zod';
 import { OAuth2Client } from 'google-auth-library';
 import crypto from 'crypto';
 
@@ -24,6 +23,7 @@ import { sendEmail, passwordResetEmail, welcomeEmail } from '../utils/email';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
+import { registerSchema, loginSchema, googleSchema, forgotSchema, resetSchema } from '../validation/authSchemas';
 
 const router = Router();
 
@@ -38,33 +38,6 @@ const COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000,                        // 7 days
   path: '/api/v1/auth',                                   // scope cookie to auth routes only
 };
-
-// ─── Input schemas ─────────────────────────────────────────────────────────────
-// .strict() rejects any extra fields not listed — prevents mass-assignment attacks.
-
-const registerSchema = z.object({
-  name:     z.string().min(2).max(80).trim(),
-  email:    z.string().email().max(254).toLowerCase().trim(),
-  password: z.string().min(8).max(128),
-}).strict();
-
-const loginSchema = z.object({
-  email:    z.string().email().max(254).toLowerCase().trim(),
-  password: z.string().min(1).max(128),
-}).strict();
-
-const googleSchema = z.object({
-  credential: z.string().min(1).max(4096),
-}).strict();
-
-const forgotSchema = z.object({
-  email: z.string().email().max(254).toLowerCase().trim(),
-}).strict();
-
-const resetSchema = z.object({
-  token:    z.string().length(64),   // 32 bytes = 64 hex chars
-  password: z.string().min(8).max(128),
-}).strict();
 
 // ─── POST /auth/register ──────────────────────────────────────────────────────
 router.post('/register', authRateLimiter, async (req: Request, res: Response, next: NextFunction) => {

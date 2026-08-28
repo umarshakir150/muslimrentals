@@ -28,14 +28,16 @@ history.
 | Map browsing (full map + mini-map) | high | never | — | — | NOT_YET_CHECKED | — |
 | View listing detail | critical | never | — | — | NOT_YET_CHECKED | — |
 | Post a new listing | critical | never | — | — | NOT_YET_CHECKED | — |
+| Post listing — city selection sets valid lat/lng (not the hardcoded Toronto default) | high | 2026-08-28 | production | TYPECHECKED, DB-verified (Supabase `City` table seeded, 82 rows, `/cities/all` select now includes lat/lng), backend deployed live on Render | FIXED_NOT_LIVE_SITE_VERIFIED | ai/decisions.md 2026-08-28 city-dropdown/lat-lng entry — still needs a real browser click-through once frontend deploy lands |
 | Edit a listing (owner) | medium | never | — | — | NOT_YET_CHECKED | — |
 | Save / unsave a listing | medium | never | — | — | NOT_YET_CHECKED | — |
 | Remove a listing (owner) | medium | never | — | — | NOT_YET_CHECKED | — |
 | Report a listing | high | never | — | — | NOT_YET_CHECKED | — |
 | Sign up (email/password) | critical | never | — | — | NOT_YET_CHECKED | — |
 | Log in (email/password) | critical | never | — | — | NOT_YET_CHECKED | — |
+| Log in with wrong credentials shows correct error (not "Session expired") | high | 2026-08-28 | — | TYPECHECKED, CODE_REVIEWED, Security-reviewed (APPROVED) | FIXED_NOT_LIVE_SITE_VERIFIED | Fixed in api.ts (PUBLIC_AUTH_ENDPOINTS) — frontend fix not yet deployed to Netlify production (blocked, see decisions.md); needs live re-check once deployed |
 | Google OAuth sign-in | high | never | — | — | NOT_YET_CHECKED | — |
-| Forgot / reset password | high | never | — | — | NOT_YET_CHECKED | — |
+| Forgot / reset password (request → email → set new password → login with new password) | high | 2026-08-28 | production (backend only) | TYPECHECKED, CODE_REVIEWED, Security-reviewed (APPROVED); backend fire-and-forget fix deployed live on Render | FIXED_NOT_LIVE_SITE_VERIFIED | Frontend /reset-password page built but not yet deployed to Netlify (blocked, see decisions.md); SMTP still unconfigured on Render (SMTP_HOST/USER/PASS unset) — reset emails will not actually send until SMTP is configured, this is a real external-setup gap, not a code bug |
 | JWT refresh / session persistence | high | never | — | — | NOT_YET_CHECKED | — |
 | Start a conversation about a listing | critical | never | — | — | NOT_YET_CHECKED | — |
 | Send/receive messages in real time (Socket.IO) | critical | never | — | — | NOT_YET_CHECKED | — |
@@ -46,7 +48,7 @@ history.
 | Admin: listing removal | high | never | — | — | NOT_YET_CHECKED | — |
 | Admin: report review (resolve/dismiss) | high | never | — | — | NOT_YET_CHECKED | — |
 | Static/policy pages render (Home, Browse, Map, Post, Contact, Messages, Safety, Terms, Privacy) | medium | never | — | — | NOT_YET_CHECKED | — |
-| City autocomplete | low | never | — | — | NOT_YET_CHECKED | — |
+| City autocomplete | medium | 2026-08-28 | production | DB-verified (82 real cities seeded, `/cities/all` now returns lat/lng) | FIXED_NOT_LIVE_SITE_VERIFIED | Bumped from low to medium — this endpoint directly blocks listing posts when broken; see ai/decisions.md 2026-08-28 entry |
 | Mobile viewport — browse/map/post/messages | high | never | — | — | NOT_YET_CHECKED | — |
 | Unauthorized-access checks (cross-user listing/conversation/report actions, non-admin hitting admin routes) | critical | never | — | — | NOT_YET_CHECKED | — |
 

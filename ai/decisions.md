@@ -355,3 +355,121 @@ today, just not ideally. Also revisit once a genuine authenticated
 end-to-end test (login + open messages) is run, to move Socket.IO from
 "configured correctly" to "independently traffic-verified" like the
 REST endpoints already are.
+
+## 2026-08-28 — Fix three live-production bugs (wrong-password message, forgot/reset password, empty city dropdown)
+
+**Decision:** Fix and deploy three founder-reported live-production bugs
+as a single reviewed batch, on `claude/multi-agent-os-setup-y2wprj`
+(Render's tracked branch), independently security-reviewed given the
+auth-related surface touched.
+
+**Context:** Founder reported, after confirming the P0 signup bug was
+resolved: (1) wrong-password login showed "Session expired. Please log
+in again." instead of a correct incorrect-credentials message; (2) the
+forgot/reset-password flow was unusable end-to-end; (3) posting a
+listing was blocked because the city dropdown had no cities.
+
+**What was actually wrong, per bug:**
+- (1) `rentals/frontend/src/lib/api.ts`'s `request()` unconditionally
+  attempted a token-refresh-and-retry on any 401, including from
+  `/auth/login` itself — which always 401s on wrong credentials since
+  there was never a session to refresh — throwing a generic
+  "Session expired" error before the existing login-specific error
+  remapping further down the same function could ever run.
+- (2) Two independent bugs, not one: the frontend had **no
+  `/reset-password` page at all** (the backend's email already linked to
+  it — 404 on click), and the backend's `/forgot-password` handler
+  `await`ed `sendEmail()` directly, so an SMTP failure (SMTP is
+  unconfigured on Render — confirmed via repeated
+  "SMTP_HOST is not set" warnings in Render's own logs) 500'd the whole
+  request, defeating the deliberate always-200
+  anti-email-enumeration design (`SAFE_RESPONSE`).
+- (3) Also two bugs: production's `City` table was completely empty (0
+  rows — confirmed via direct `SELECT count(*)`), and even once seeded,
+  `GET /cities/all` only ever selected `{ name, province }`, never
+  `lat`/`lng` — so `CityAutocomplete`'s `coords` would always resolve to
+  `undefined` and every listing would silently keep the post form's
+  hardcoded Toronto default coordinates regardless of the city actually
+  chosen. This second bug was invisible until the first was fixed and
+  would otherwise have silently mis-geotagged every future listing.
+
+**Fix:**
+- `api.ts`: added a `PUBLIC_AUTH_ENDPOINTS` allowlist
+  (register/login/google/forgot-password/reset-password) excluded from
+  the refresh-and-retry path, since none of them have an existing
+  session to refresh.
+- Built `rentals/frontend/src/app/reset-password/page.tsx` from scratch,
+  matching existing UI/form conventions.
+- `auth.ts`'s `/forgot-password`: changed `await sendEmail(...)` to
+  `sendEmail(...).catch(() => {})`, mirroring the existing pattern
+  already used for `/register`'s welcome email.
+- `cities.ts`'s `/all`: added `lat: true, lng: true` to the Prisma
+  `select`.
+- Seeded production's empty `City` table with all 82 real Canadian
+  cities already present (unused) in the repo's own
+  `rentals/backend/prisma/seed.ts`, via a generated SQL `INSERT ...
+  ON CONFLICT (name, province) DO NOTHING`, executed directly against
+  Supabase. Verified `count(*) = 82` afterward.
+
+**Review:** Independent security review (per `agents/security.md`)
+requested given the auth-related surface (login error path,
+forgot/reset-password). Verdict: **APPROVED**, no findings — the
+anti-enumeration property is preserved (token still persisted and
+`SAFE_RESPONSE` returned identically regardless of email outcome), no
+XSS/open-redirect/information-disclosure in the new reset-password page,
+no cookie/CSRF regression from the retry-skip change, and the
+newly-exposed `lat`/`lng` on `/cities/all` is non-sensitive public
+reference data. One non-blocking note: the swallowed SMTP error isn't
+logged anywhere, so a persistent delivery failure would be invisible to
+ops — worth a follow-up to log the error (without PII) on catch.
+
+**Verification so far:** `npx tsc --noEmit` clean on both
+`rentals/backend` and `rentals/frontend`. All four files committed
+(`fe20a0d`) and pushed to `claude/multi-agent-os-setup-y2wprj`. Render
+auto-deployed the backend half cleanly (`dep-da8j51gu01pc73f630t0`,
+status `live`, boots with no new errors). The city-data fix is real and
+live in production right now, independent of any frontend deploy
+(`/cities/all` already served real names before this fix; it now also
+serves real coordinates). **Not yet independently confirmed on the live
+site by this session** — this sandbox's network egress currently blocks
+both `muslim-rentals-backend.onrender.com` and `muslimrentals.netlify.app`
+outright (confirmed via the egress proxy's own status endpoint, which
+lists repeated `connect_rejected`/403 policy denials against both hosts
+today), so neither `curl` nor `WebFetch` can reach either host from this
+session right now — a stricter block than the earlier
+intermittent-502/backoff pattern recorded in the Railway→Render entry
+above. Verification of the deployed backend changes relies on Render's
+own logs (clean boot, no errors) plus a direct Supabase read
+confirming the seeded city data, not a live HTTP round-trip from this
+session.
+
+**Outstanding blocker — frontend not yet deployed:** The `api.ts` and
+`reset-password/page.tsx` fixes only exist on
+`claude/multi-agent-os-setup-y2wprj`. Netlify's production deploy
+tracks `main`, and this session's CCR configuration explicitly restricts
+pushes to the designated branch above (never `main`) — the same
+constraint that made pointing Render at the working branch necessary
+during the Railway migration. Netlify's MCP tools expose env-var/name/
+form/access-control management but **no way to change a project's
+tracked deploy branch**. So, unlike Render, this can't be self-served:
+it needs the founder to either point Netlify's production branch at
+`claude/multi-agent-os-setup-y2wprj` (same pattern as Render) or merge/
+push this branch into `main` themselves. Until then, bug (1) is fixed in
+code but not live, and bug (2) is only half-live (backend fixed, but the
+reset-password page users would land on still 404s).
+
+**Regression inventory:** `ai/regression-inventory.md` updated — new
+rows for wrong-password error messaging and city-selection lat/lng,
+`Forgot / reset password` row filled in, `City autocomplete` importance
+raised from low to medium. All marked `FIXED_NOT_LIVE_SITE_VERIFIED`
+pending the frontend deploy above and a real founder click-through.
+
+**Revisit when:** the Netlify branch/main question is resolved by the
+founder — at that point, re-verify all three fixes live (per the
+founder's explicit "do not just patch the UI — verify the real backend
+behavior and live production flow" instruction) and flip the regression
+inventory rows to `LIVE_SITE_VERIFIED`. Also revisit SMTP configuration
+itself — reset-password emails will not actually send to real users
+until `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` (or equivalent) are configured
+on Render; that is a real external-setup gap, not a code defect, and is
+outside what this session can configure without provider credentials.

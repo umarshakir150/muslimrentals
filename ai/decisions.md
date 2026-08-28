@@ -910,3 +910,82 @@ Worth a founder-facing note if the always-on scheduler process is something
 they specifically want kept alive continuously (e.g. by running it outside
 this on-demand session type, or via a different hosting model) — flagging,
 not deciding, since that's an infra/architecture choice.
+
+## 2026-08-28 (later) — Scheduler paused; possible stale-Netlify-build explanation for several reports; 5-bug batch launched
+
+**Founder instruction: autonomous background scheduler paused.** Per explicit
+request, the persistent `scheduler-loop` background process (60-min-cadence
+autonomous backlog-driven cycles) is stopped and will NOT be relaunched
+until the founder asks for it again. This does NOT affect the multi-agent
+pipeline itself (Supervisor/specialists/QA/Security/Integrator) — tasks the
+founder gives directly are still run through the full pipeline, delegated,
+reviewed, integrated, and promoted exactly as before. Only the *unprompted,
+periodic* cycle-picking-its-own-work behavior is paused. The scheduler's
+code/config is untouched, so `nohup npx tsx src/cli.ts scheduler-loop
+--live-site-signal` (from `orchestrator/`) resumes it exactly as before
+whenever asked.
+
+**Possible explanation for some of the founder's live-bug reports:**
+investigating the map-overlay-persists-after-navigation report (extensive
+local Playwright testing against both dev and a local production build —
+plain navigation, fast-race timing at 0–500ms after mount, modal-open
+navigation, and full browser back/forward chains — never reproduced a
+leftover `.leaflet-container`), it turned out `git blame` shows the bad
+`fastq@1.20.2` lockfile pin (see the "Fix Netlify production deploy
+failure" entry above) was present on `main` as early as commit `6a844d6`
+this morning — well before today's map-cleanup fix (`04b6f35`), the
+neighbourhood/clustering feature (`89bf614`), and today's whole 4-feature
+batch reached `main`. Since the standing production-deploy policy
+auto-merges non-schema changes straight to `main`, and Netlify builds from
+`main`, this means Netlify was very likely failing to build (ETARGET) for
+a meaningful stretch of today — production may have been serving a stale,
+pre-fix build the entire time the founder was testing several of these
+"still broken" features. This is a real possibility, not a certainty — the
+5-bug task launched just now is instructed to verify against a
+confirmed-current (post-`b730deb`) deploy before concluding any further
+code change is actually needed for the map-overlay item specifically, and
+to say plainly if it turns out to already be fixed rather than inventing a
+change to justify the task.
+
+**New batch launched:** a 5-item founder-reported bug batch (map overlay
+persisting after nav, marker appearance as a green price bubble, My
+Listings → listing detail crash, Post Listing modal closing on outside
+click, and the broken/never-wired-up photo upload flow) was launched via
+`npm run agents:task -- "<objective>" --full` (task id
+`20260828-210708-task-fix-5-founder-reported-live-product`), running in the
+background. Before delegating, root-caused 3 of the 5 items with certainty
+by reading the actual code (not guessing):
+- Item 3 (My Listings crash): `GET /users/me/listings` in
+  `rentals/backend/src/routes/users.ts` returns raw Prisma `amenities` as
+  `{name}` objects (not strings) and omits the `user` relation entirely —
+  unlike the correctly-shaped `GET /users/me/saved` two routes above it in
+  the same file. `ListingDetail.tsx` renders `amenities.map(a => <span
+  key={a}>{a}</span>)` assuming strings, so React throws "Objects are not
+  valid as a React child" on any listing with amenities. Also silently
+  breaks the owner-detection (`isOwner`) check for listings viewed this
+  way.
+- Item 4 (Post Listing modal closes on outside click): confirmed backdrop
+  `onClick` handlers on both `PostListingModal.tsx` render variants call
+  `handleClose()` (which resets the whole form) on any click that hits the
+  backdrop.
+- Item 5 (photo upload): confirmed `onSubmit` in `PostListingModal.tsx`
+  unconditionally sends `imageUrls: []` — selected images are held in local
+  state and never uploaded anywhere, regardless of any click-handling
+  issue. The backend route (`POST /uploads/listing-images/:listingId`) and
+  a generic frontend `api.upload()` helper already exist and are simply
+  never called from the posting flow. The specific "click submits instead
+  of opening the picker" complaint was not reproducible from static code
+  reading — left as an explicit real-browser investigation item for
+  Frontend.
+Item 1 (map overlay) and item 2 (marker color) already look correct/present
+in the current code on paper (see stale-deploy note above) — instructed the
+pipeline to verify against a live, confirmed-current deploy before treating
+either as still-broken.
+
+**Revisit when:** the 5-bug task's Integrator/QA output is ready — check via
+`orchestrator/.autonomy/../.tasks` or the task's own `ai/tasks/<id>/` record
+once it lands, review its findings (especially whether item 1 turned out to
+be a stale-deploy artifact or a real remaining bug), then promote through
+the same worktree-merge-to-main flow used earlier tonight, verify Render
+and Netlify deploy, and do real live-site checks before flipping any
+regression-inventory rows.

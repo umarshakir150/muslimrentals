@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "next": "14.2.0",
@@ -55,6 +56,7 @@
     "tailwindcss": "^3.4.1",
     "typescript": "^5.4.3",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.0"
+    "eslint-config-next": "14.2.0",
+    "vitest": "^1.6.0"
   }
 }

@@ -69,11 +69,26 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (!isAuth) { setAuthOpen(true); return; }
     setLoading(true);
     try {
-      const listing = await listingsApi.create({
+      const { data: listing } = await listingsApi.create({
         ...data,
         amenities: selectedAmenities,
-        imageUrls: [], // Images would be uploaded separately via /uploads endpoint
+        imageUrls: [],
       });
+      if (images.length > 0) {
+        try {
+          await listingsApi.uploadImages(listing.id, images);
+        } catch (uploadErr: any) {
+          // The listing itself was created successfully -- don't lose that
+          // or block the success flow over an images-specific failure.
+          // Surface it separately so the founder/user knows to retry adding
+          // photos rather than assuming nothing happened.
+          toast({
+            variant: 'destructive',
+            title: 'Listing posted, but photo upload failed',
+            description: uploadErr.message || 'You can add photos later by editing the listing.',
+          });
+        }
+      }
       setSuccess(true);
       toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
       setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
@@ -97,8 +112,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm"
-            onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm">
             <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
               className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-elevated text-center">
               <div className="text-5xl mb-4">🔒</div>
@@ -118,8 +132,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     <AnimatePresence>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 60 }}
             transition={{ type: 'spring', damping: 25, stiffness: 280 }}
             className="w-full sm:max-w-2xl bg-white rounded-t-3xl sm:rounded-3xl shadow-elevated overflow-hidden max-h-[95dvh] flex flex-col">
@@ -312,11 +325,23 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                     </button>
                   )}
                   {step < 3 ? (
-                    <button type="button" onClick={nextStep} className="btn-brand flex-1 py-3">
+                    // Distinct `key`s from the type="submit" button below are
+                    // required, not cosmetic: without them, React reconciles
+                    // both branches as "the same button" at this JSX position
+                    // and patches type="button" -> type="submit" in place on
+                    // the existing DOM node. nextStep()'s `await trigger(...)`
+                    // can resolve fast enough that this attribute flip lands
+                    // while the browser is still evaluating that same click's
+                    // default action -- so one tap on "Continue" both
+                    // advances the step AND submits the form. A `key` forces
+                    // a real unmount/remount instead of an in-place patch,
+                    // so the click that landed on the old (type="button")
+                    // node can never retroactively submit anything.
+                    <button key="continue" type="button" onClick={nextStep} className="btn-brand flex-1 py-3">
                       Continue →
                     </button>
                   ) : (
-                    <button type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+                    <button key="submit" type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
                       {loading ? <><Loader2 size={16} className="animate-spin" /> Posting...</> : 'Post listing'}
                     </button>
                   )}

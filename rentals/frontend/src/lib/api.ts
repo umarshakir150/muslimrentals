@@ -203,6 +203,11 @@ export const listingsApi = {
   // Permanent hard-delete -- distinct from `delete` above, which is the
   // existing soft-remove (status=REMOVED, admin-reversible).
   deletePermanent: (id: string) => api.delete<{ success: boolean; message: string }>(`/listings/${id}/permanent`),
+  uploadImages: (listingId: string, files: File[]) => {
+    const formData = new FormData();
+    files.forEach(f => formData.append('images', f));
+    return api.upload<{ success: boolean; data: any[] }>(`/uploads/listing-images/${listingId}`, formData);
+  },
   save: (id: string) => api.post<{ success: boolean; saved: boolean }>(`/listings/${id}/save`, {}),
   report: (id: string, reason: string, description?: string) =>
     api.post(`/listings/${id}/report`, { reason, description }),

@@ -129,10 +129,22 @@ router.get('/me/listings', authenticate, async (req: AuthRequest, res: Response,
   try {
     const listings = await prisma.listing.findMany({
       where:   { userId: req.user!.id },
-      include: { images: { take: 1 }, amenities: { select: { name: true } }, _count: { select: { savedBy: true } } },
+      include: {
+        images:    { take: 1 },
+        amenities: { select: { name: true } },
+        user:      { select: { id: true, name: true, avatarUrl: true } },
+        _count:    { select: { savedBy: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ success: true, data: listings });
+    res.json({
+      success: true,
+      data: listings.map(l => ({
+        ...l,
+        amenities:    l.amenities.map(a => a.name),
+        thumbnailUrl: l.images[0]?.url || null,
+      })),
+    });
   } catch (err) { next(err); }
 });
 

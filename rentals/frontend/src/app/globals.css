@@ -58,6 +58,20 @@
     margin-top: -1px;
   }
 
+  /* Leaflet's own stylesheet gives .leaflet-top/.leaflet-bottom (the zoom
+     and attribution control panes) z-index:1000, well above every app
+     modal (AuthModal/PostListingModal at z-[100], DeleteListingDialog at
+     z-[110]). The map container itself is always clipped by its parent's
+     overflow:hidden, but capping this defensively means a stray map
+     control element can never visually outrank a modal, even in an edge
+     case (an exit-animation frame, a future regression) a lifecycle fix
+     alone wouldn't catch. */
+  .leaflet-top,
+  .leaflet-bottom,
+  .leaflet-control {
+    z-index: 40 !important;
+  }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -111,7 +125,10 @@
   }
 
   .rental-marker {
-    background: #0a5c42;
+    /* Brightened from the original #0a5c42 -- at marker-pill size that dark
+       forest green read as near-black rather than an unambiguous "green
+       bubble" (founder feedback). Still brand-appropriate, just lighter. */
+    background: #178a4c;
     color: white;
     border-radius: 999px;
     padding: 5px 10px;
@@ -127,7 +144,7 @@
 
   .rental-marker:hover {
     transform: scale(1.1);
-    background: #0f7a57;
+    background: #1ca058;
   }
 
 

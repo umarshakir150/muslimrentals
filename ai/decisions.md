@@ -682,3 +682,116 @@ and once the city-selection fix is confirmed live, consider whether
 or whether removing HTTP caching entirely (relying only on the
 already-fixed client-side revalidate-on-mount behavior) would be simpler
 and equally fast for ~82 rows.
+
+## 2026-08-28 — Four founder-requested product features built via the multi-agent workflow; two blocked on lost MCP access
+
+**Decision:** Handle the founder's four live-product feature requests (map
+accuracy/required neighbourhood/clustering+spiderfy, map-overlay-on-
+navigation bug, Beds/Baths numeric inputs, Delete Listing) through the
+real orchestrator multi-agent pipeline as explicitly instructed, with
+hands-on completion where the automated pipeline itself failed
+mid-execution, and hold two of the four back from `main` pending a real
+external blocker (see below) rather than shipping a schema change without
+applying its migration first.
+
+**How each was handled:**
+- **Beds/Baths numeric inputs**: full pipeline (designer, frontend,
+  backend, qa, security) reached COMPLETE cleanly, QA PASS, Security
+  APPROVED, 0 correction cycles. No schema change. Merged to `main` and
+  deployed (Render + Netlify both confirmed live).
+- **Map overlay-after-navigation bug**: full pipeline reached COMPLETE
+  (designer, frontend, qa — no security needed, pure UI cleanup bug), QA
+  PASS. Root cause: FullMap/MiniMap initialize Leaflet inside an async
+  IIFE with no guard against unmounting before the import resolved, so a
+  fast navigation left an orphaned map instance with no cleanup ever
+  applied. Fixed with a `cancelled` flag checked at each async resumption
+  point. No schema change. Merged to `main` and deployed.
+- **Map accuracy + required neighbourhood + clustering/spiderfy**: full
+  implementation completed (curated `Neighbourhood` reference table, 208
+  real entries across every seeded city, mirrors the `City` pattern;
+  neighbourhood-aware coordinate resolution; `leaflet.markercluster`
+  properly wired with spiderfy). Security independently APPROVED. QA's
+  own review crashed mid-run (`claude` CLI invocation failure — an
+  infrastructure issue, not a code finding) — reviewed manually in its
+  place: read the actual migration/schema/clustering logic, found and
+  fixed one real bug (`neighbourhood` used `.min(1).trim()` instead of
+  `.trim().min(1)`, so a whitespace-only value passed validation and
+  silently became `""`), then ran the full verification QA would have
+  (backend + frontend `tsc --noEmit`, all tests, and a full `next build`
+  production build). **Schema change** (new additive `Neighbourhood`
+  table) — held on the working branch pending migration application.
+- **Delete Listing**: backend implementer completed cleanly (its own
+  self-report was partially garbled by the same CLI-crash failure mode,
+  but the actual diff was sound on inspection). Frontend implementer
+  crashed entirely before producing any output. Completed by hand: a new
+  `/my-listings` page (none existed — Designer's analysis found `/profile`
+  and `/saved` were the only user-menu links and neither the "My
+  Listings" surface nor an owner action on `ListingDetail` existed yet, so
+  building the former was correctly scoped as a prerequisite, not
+  optional polish), a reusable `DeleteListingDialog` confirmation
+  component, and the owner-only delete entry point on `ListingDetail`.
+  Independent Security review (explicitly requested by the founder as
+  highest-priority) returned **CHANGES_REQUIRED**: `Conversation.listingId`
+  was `onDelete: Cascade`, so a listing owner's hard-delete silently
+  destroyed the *other* conversation participant's message history too —
+  someone with no say in that listing's deletion losing their own data,
+  directly contradicting the confirmation dialog's own copy. Fixed at the
+  schema level (nullable + `SetNull`, mirroring `Report.listingId`'s
+  already-correct pattern), not just the dialog copy. **Schema change**
+  (this fix) — held on the working branch pending migration application,
+  same as the Neighbourhood table above.
+
+**Real infrastructure problem surfaced, not just individual task
+failures**: the orchestrator's `claude` CLI invocation crashed twice this
+session (once reviewing Feature 1, once implementing Feature 4's
+frontend) with `claude exited with code 1`, no stderr, minimal stdout —
+consistent with a transient CLI/API reliability issue in this
+environment rather than anything content-specific (retrying the
+Delete-Listing launch once already worked earlier this session for the
+same reason). Worth tracking if it recurs; not something this session can
+root-cause further without visibility into the CLI's own failure output.
+
+**Outstanding blocker — this session lost ALL MCP tool access
+mid-run**: `claude mcp list` now reports "No MCP servers configured."
+Earlier in this same session, Supabase/Render/Netlify/Railway tools were
+all working (used repeatedly for the earlier bug-fix batch); a system
+notification mid-session reported those specific servers disconnected,
+and by the time this batch of work was ready to ship, no MCP servers
+were configured at all. This is a session/environment-level failure, not
+a permissions/authorization one — there is nothing in this session's own
+control that caused or can fix it. Concretely, this means:
+- Two real, additive, reversible migrations are sitting on
+  `claude/multi-agent-os-setup-y2wprj`, pushed to GitHub, fully reviewed
+  and tested, but **not applied to production Supabase**:
+  `20260828085539_add_neighbourhood` and
+  `20260828142700_conversation_listing_setnull`.
+- Per this repo's own established policy (`ai/operating-directive.md`'s
+  production deploy policy, and this session's own precedent from the
+  earlier Render/Supabase work), a schema-changing branch is never
+  promoted to `main`/production without a human or this session applying
+  the migration against the real database first — doing otherwise here
+  would risk exactly the failure mode already seen once this session
+  (the empty-City-table incident): the required-neighbourhood posting
+  flow would 500 in production the moment a listing is posted, since the
+  `Neighbourhood` table the new required field depends on wouldn't exist
+  yet.
+- Git operations (push/pull/merge) are unaffected — those go through a
+  separate credential path, not MCP, and have continued working
+  throughout.
+
+**What this means for the founder**: Beds/Baths and the map-cleanup bug
+are live in production right now. Map accuracy/neighbourhood/clustering
+and Delete Listing are code-complete, tested, and security-reviewed, but
+sitting on the working branch until either (a) this session's MCP access
+to Supabase is restored so the migrations can be applied and the branch
+promoted normally, or (b) the founder applies both migration.sql files
+by hand against the production database and confirms so this session can
+promote the branch. Both migrations are additive/reversible and safe to
+apply independently of each other or together, in either order.
+
+**Revisit when:** MCP tool access returns (check via `claude mcp list`)
+or the founder confirms manual migration application; then apply the
+standard promote-to-main flow for both, verify `/my-listings`,
+`DELETE /:id/permanent`, `/neighbourhoods`, and the map clustering/spiderfy
+behavior live, and flip the relevant regression-inventory rows once a
+real check (not just deployment) happens.

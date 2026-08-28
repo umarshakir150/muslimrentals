@@ -46,7 +46,7 @@ history.
 | Admin: listing removal | high | never | — | — | NOT_YET_CHECKED | — |
 | Admin: report review (resolve/dismiss) | high | never | — | — | NOT_YET_CHECKED | — |
 | Static/policy pages render (Home, Browse, Map, Post, Contact, Messages, Safety, Terms, Privacy) | medium | never | — | — | NOT_YET_CHECKED | — |
-| Mosque/city autocomplete | low | never | — | — | NOT_YET_CHECKED | — |
+| City autocomplete | low | never | — | — | NOT_YET_CHECKED | — |
 | Mobile viewport — browse/map/post/messages | high | never | — | — | NOT_YET_CHECKED | — |
 | Unauthorized-access checks (cross-user listing/conversation/report actions, non-admin hitting admin routes) | critical | never | — | — | NOT_YET_CHECKED | — |
 

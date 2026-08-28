@@ -44,18 +44,25 @@ export default function FullMap({
     if (initializedRef.current || !containerRef.current) return;
     initializedRef.current = true;
 
-    let map: LeafletMap;
+    // Captured so the async init below never touches a ref React may have
+    // already nulled out by the time it resolves (route-navigation race).
+    let cancelled = false;
+    const container = containerRef.current;
 
     (async () => {
       const L = (await import('leaflet')).default;
       await import('leaflet.markercluster');
+
+      // Component unmounted (e.g. user navigated away) while these
+      // dynamic imports were still in flight — abort before touching the DOM.
+      if (cancelled) return;
 
       // Fix webpack-broken default icon
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({ iconRetinaUrl: '', iconUrl: '', shadowUrl: '' });
 
-      map = L.map(containerRef.current!, {
+      const map = L.map(container, {
         center: centerRef.current,
         zoom: 7,
         zoomControl: true,
@@ -63,6 +70,15 @@ export default function FullMap({
         fadeAnimation: true,
         markerZoomAnimation: true,
       });
+
+      // Unmounted between L.map() creation and here (unlikely, but cheap
+      // to guard) — tear the freshly created instance down immediately
+      // instead of leaving it orphaned with no registered cleanup.
+      if (cancelled) {
+        map.remove();
+        return;
+      }
+
       mapRef.current = map;
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -107,30 +123,35 @@ export default function FullMap({
       // ── invalidateSize after paint ─────────────────────────────────────
       // Two staggered calls handle slow paints and CSS transitions.
       requestAnimationFrame(() => {
+        if (cancelled) return;
         map.invalidateSize({ animate: false });
-        setTimeout(() => map.invalidateSize({ animate: false }), 300);
+        setTimeout(() => {
+          if (cancelled) return;
+          map.invalidateSize({ animate: false });
+        }, 300);
       });
 
       // ── ResizeObserver keeps the map correct if container resizes ──────
       const ro = new ResizeObserver(() => {
         map.invalidateSize({ animate: false });
       });
-      ro.observe(containerRef.current!);
+      ro.observe(container);
 
       // Store cleanup
-      (containerRef.current as any).__leaflet_ro = ro;
+      (container as any).__leaflet_ro = ro;
     })();
 
     return () => {
+      cancelled = true;
       delete (window as any).__mapListingClick;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ro = (containerRef.current as any)?.__leaflet_ro as ResizeObserver | undefined;
+      const ro = (container as any)?.__leaflet_ro as ResizeObserver | undefined;
       ro?.disconnect();
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
-        initializedRef.current = false;
       }
+      initializedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

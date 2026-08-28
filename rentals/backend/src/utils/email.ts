@@ -1,15 +1,24 @@
 import nodemailer from 'nodemailer';
 import { logger } from './logger';
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_PORT === '465',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// Real credentials, not just a truthy host: nodemailer's SMTP transport
+// silently defaults `host` to "localhost" when SMTP_HOST is undefined,
+// which in production means every send attempt fails with a confusing
+// `ECONNREFUSED 127.0.0.1:587` instead of a clear "not configured"
+// signal -- SMTP_USER/SMTP_PASS being unset would fail the same way.
+const SMTP_CONFIGURED = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+
+const transporter = SMTP_CONFIGURED
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_PORT === '465',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    })
+  : null;
 
 interface EmailOptions {
   to: string;
@@ -18,6 +27,16 @@ interface EmailOptions {
 }
 
 export async function sendEmail({ to, subject, html }: EmailOptions) {
+  if (!transporter) {
+    // Do not attempt a doomed connection -- log once per call with a clear,
+    // actionable diagnosis instead of a generic connection-refused stack
+    // trace. Callers (register/forgot-password) already treat email as
+    // best-effort and never let this block the request.
+    logger.warn(
+      `Email not sent (SMTP not configured -- set SMTP_HOST, SMTP_USER, SMTP_PASS on the backend host): "${subject}" to ${to}`
+    );
+    throw new Error('SMTP not configured');
+  }
   try {
     await transporter.sendMail({
       from: process.env.EMAIL_FROM,

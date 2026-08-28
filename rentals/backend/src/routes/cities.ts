@@ -37,8 +37,12 @@ router.get('/all', async (_req: Request, res: Response, next: NextFunction) => {
       select:  { name: true, province: true, lat: true, lng: true },
       orderBy: { name: 'asc' },
     });
-    // 1 hour public cache — city list rarely changes
-    res.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    // Short public cache -- city list rarely changes, but a long max-age
+    // (previously 1 hour) meant a browser that fetched this before a data
+    // fix (e.g. the empty-City-table/missing-lat-lng bugs) would keep
+    // serving that stale response for up to an hour with no revalidation
+    // at all, masking the fix. 60s still meaningfully cuts DB load.
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     res.json({ success: true, data: cities });
   } catch (err) { next(err); }
 });

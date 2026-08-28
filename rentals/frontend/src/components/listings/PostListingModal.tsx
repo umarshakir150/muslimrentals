@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
+import { X, Upload, Loader2, ImageIcon } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
+import { bedroomsSchema, bathroomsSchema } from '@/lib/listingValidation';
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
 
@@ -26,8 +27,8 @@ const schema = z.object({
   title: z.string().min(5, 'Title must be at least 5 characters').max(200),
   description: z.string().min(20, 'Description too short').max(5000),
   price: z.coerce.number().positive('Enter a valid price').max(50000),
-  bedrooms: z.coerce.number().min(0).max(20),
-  bathrooms: z.coerce.number().int().min(0).max(20),
+  bedrooms: bedroomsSchema,
+  bathrooms: bathroomsSchema,
   audience: z.enum(['BROTHERS', 'SISTERS', 'COUPLES', 'FAMILIES', 'ALL']),
   city: z.string().min(1, 'Select a city'),
   town: z.string().optional(),
@@ -190,15 +191,14 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                         </div>
                         <div>
                           <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Beds *</label>
-                          <select {...register('bedrooms')} className="input-field appearance-none">
-                            {[0, 1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n === 0 ? 'Studio' : n}</option>)}
-                          </select>
+                          <input {...register('bedrooms')} type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 2" className="input-field" />
+                          <p className="text-[11px] text-muted mt-1">Enter 0 for a studio</p>
+                          {errors.bedrooms && <p className="text-red-500 text-xs mt-1">{errors.bedrooms.message}</p>}
                         </div>
                         <div>
                           <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Baths *</label>
-                          <select {...register('bathrooms')} className="input-field appearance-none">
-                            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
-                          </select>
+                          <input {...register('bathrooms')} type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 1" className="input-field" />
+                          {errors.bathrooms && <p className="text-red-500 text-xs mt-1">{errors.bathrooms.message}</p>}
                         </div>
                       </div>
                       <div>

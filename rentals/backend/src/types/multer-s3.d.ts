@@ -20,7 +20,11 @@ declare module 'multer-s3' {
     s3: S3Client;
     bucket: string | ((req: Request, file: Express.Multer.File, cb: (error: any, bucket?: string) => void) => void);
     acl?: string | ((req: Request, file: Express.Multer.File, cb: (error: any, acl?: string) => void) => void);
-    contentType?: string | ((req: Request, file: Express.Multer.File, cb: (error: any, mime?: string) => void) => void);
+    // Runtime (index.js S3Storage constructor) throws a TypeError unless
+    // this is a function or undefined -- a string value type-checks but
+    // crashes at construction time, so it is deliberately NOT part of this
+    // type (this app always passes multerS3.AUTO_CONTENT_TYPE, a function).
+    contentType?: (req: Request, file: Express.Multer.File, cb: (error: any, mime?: string) => void) => void;
     key?: (req: Request, file: Express.Multer.File, cb: (error: any, key?: string) => void) => void;
     metadata?: (req: Request, file: Express.Multer.File, cb: (error: any, metadata?: Record<string, string>) => void) => void;
   }

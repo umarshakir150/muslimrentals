@@ -200,6 +200,9 @@ export const listingsApi = {
   create: (data: any) => api.post<{ data: any }>('/listings', data),
   update: (id: string, data: any) => api.patch<{ data: any }>(`/listings/${id}`, data),
   delete: (id: string) => api.delete(`/listings/${id}`),
+  // Permanent hard-delete -- distinct from `delete` above, which is the
+  // existing soft-remove (status=REMOVED, admin-reversible).
+  deletePermanent: (id: string) => api.delete<{ success: boolean; message: string }>(`/listings/${id}/permanent`),
   save: (id: string) => api.post<{ success: boolean; saved: boolean }>(`/listings/${id}/save`, {}),
   report: (id: string, reason: string, description?: string) =>
     api.post(`/listings/${id}/report`, { reason, description }),

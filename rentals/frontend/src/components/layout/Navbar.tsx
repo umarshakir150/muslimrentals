@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon } from 'lucide-react';
+import { Bell, MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon, Home } from 'lucide-react';
 import { useAuthStore, useUser } from '@/store/authStore';
 import { authApi, messagesApi } from '@/lib/api';
 import { cn, initials } from '@/lib/utils';
@@ -131,6 +131,7 @@ export default function Navbar() {
                         </div>
                         {[
                           { icon: User, label: 'Profile', href: '/profile' },
+                          { icon: Home, label: 'My listings', href: '/my-listings' },
                           { icon: BookmarkIcon, label: 'Saved listings', href: '/saved' },
                           { icon: MessageSquare, label: 'Messages', href: '/messages' },
                           { icon: Settings, label: 'Settings', href: '/settings' },

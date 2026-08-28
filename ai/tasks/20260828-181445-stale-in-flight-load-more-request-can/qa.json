@@ -1,0 +1,26 @@
+{
+  "role": "qa",
+  "taskId": "20260828-181445-stale-in-flight-load-more-request-can",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "requestIdRef sequencing guard correctly fixes the stale in-flight 'Load more' race described in the task.",
+      "evidence": "rentals/frontend/src/app/browse/page.tsx:44-86 — requestId is captured via a pre-incremented ref at the start of each fetchListings call; the success handler (line 73), catch handler (line 77), and finally block (line 81) all bail out (or skip resetting loading/loadingMore) if requestIdRef.current no longer matches the captured requestId. Traced the exact race: page-2 fetch starts (requestId=N, isFirstPage=false, loadingMore=true) → filter change resets filters.page to 1 (confirmed in src/store/filterStore.ts:33, setFilter always resets page to 1 for any non-page key) → fetchListings identity changes (useCallback deps [filters, page]) → effect re-fires, new fetch starts (requestId=N+1) → old page-2 response resolves later, requestIdRef.current(N+1) !== N, early return before setListings/setTotal, so it never appends stale results onto the new page-1 list. The finally-block guard also prevents the stale request from incorrectly clearing loading/loadingMore state that belongs to the newer request.",
+      "recommendedAction": ""
+    },
+    {
+      "severity": "info",
+      "finding": "Diff scope is clean and matches the stated summary.",
+      "evidence": "`git show --stat HEAD` shows only rentals/frontend/src/app/browse/page.tsx changed (67 insertions, 20 deletions) in this commit; the large `git diff main --stat` is explained by this worktree's local main lacking the previously-merged pagination feature (a pre-existing branch-lineage gap noted by the implementer, not something introduced by this fix).",
+      "recommendedAction": ""
+    },
+    {
+      "severity": "info",
+      "finding": "TypeScript typechecks cleanly with a real node_modules install (contrary to the implementer's report of an unusable environment).",
+      "evidence": "`npm install` succeeded (582 packages) and `npx tsc --noEmit -p .` produced zero errors. `npm run build` and `npx eslint` were blocked by this session's Bash permission gate (unrelated to the code itself), so BUILD_VERIFIED/lint-verified was not achievable here, but TYPECHECKED is a real, higher verification level than the implementer's self-reported CODE_REVIEWED-only.",
+      "recommendedAction": ""
+    }
+  ],
+  "notes": "Verification level achieved: CODE_REVIEWED + TYPECHECKED (npm install succeeded and `tsc --noEmit` passed with zero errors, exceeding the implementer's self-reported CODE_REVIEWED-only). BUILD_VERIFIED and BROWSER_VERIFIED were not achievable — `npm run build` and `npx eslint` were blocked by a Bash permission gate in this session (\\\"don't ask mode\\\"), and no dev server/browser check was performed (no display, and driving a real Load-More race in a live browser wasn't feasible in this sandbox). Manually traced all three scenarios from the implementer's test plan against the actual code and confirmed the fix is correct: (1) normal sequential fetches work unchanged, (2) the target race (stale page-2 response arriving after a filter-driven page-1 refetch) is now a no-op via the requestId guard, (3) rapid successive filter changes only let the last request's response through. Confirmed via filterStore.ts that any non-page filter change resets page to 1, which is the actual trigger condition for the described bug. The change is narrow, matches the existing code style, doesn't touch unrelated files, and introduces no new state-management or UI issues. No regression risk observed in the surrounding Load More UI (disabled state, error/retry states) — those were untouched by the fix's logic and still gate correctly. Recommend a real browser confirmation (throttle network, change city filter mid-\\\"Load more\\\") once this branch reaches an environment where the dev server/build can actually run, but this is not a blocker for the fix itself."
+}

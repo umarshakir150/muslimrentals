@@ -1,0 +1,50 @@
+{
+  "taskId": "20260828-064357-stand-up-a-minimal-automated-test",
+  "baseCommit": "0e7ba1b7219d0c3b15f9cea45c11a59dc74975ab",
+  "workers": [
+    {
+      "agent": "backend",
+      "branch": "agents/20260828-064357-stand-up-a-minimal-automated-test/backend",
+      "added": [
+        "rentals/backend/src/utils/geo.ts",
+        "rentals/backend/src/validation/authSchemas.ts",
+        "rentals/backend/src/validation/listingSchemas.ts",
+        "rentals/backend/tests/middleware/sanitize.test.ts",
+        "rentals/backend/tests/routes/auth.schemas.test.ts",
+        "rentals/backend/tests/routes/listings.schemas.test.ts",
+        "rentals/backend/tests/utils/geo.test.ts",
+        "rentals/backend/tests/utils/jwt.test.ts",
+        "rentals/backend/tests/validation/authSchemas.test.ts",
+        "rentals/backend/tests/validation/listingSchemas.test.ts",
+        "rentals/backend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/backend/package.json",
+        "rentals/backend/src/routes/auth.ts",
+        "rentals/backend/src/routes/listings.ts",
+        "rentals/backend/tsconfig.json"
+      ],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "frontend",
+      "branch": "agents/20260828-064357-stand-up-a-minimal-automated-test/frontend",
+      "added": [
+        "rentals/frontend/package-lock.json",
+        "rentals/frontend/src/components/auth/AuthModal.test.tsx",
+        "rentals/frontend/src/components/listings/ListingFilters.test.tsx",
+        "rentals/frontend/src/components/ui/CityAutocomplete.test.tsx",
+        "rentals/frontend/src/test/setup.ts",
+        "rentals/frontend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/frontend/.gitignore",
+        "rentals/frontend/package.json",
+        "rentals/frontend/src/components/ui/CityAutocomplete.tsx"
+      ],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

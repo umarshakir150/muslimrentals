@@ -48,14 +48,27 @@ them because "there are no tests to run."
 
 ## Deployment status
 
-Not deployed by this session, and this operating system explicitly forbids
-deploying without founder authorization. Per the README and
-`rentals/frontend/netlify.toml`, the intended targets are ambiguous between
-Vercel (README's stated recommendation) and Netlify (an actual config file
-present) for the frontend, and Railway/Render/DigitalOcean for the backend
-with a managed Postgres provider (Supabase/Railway/Neon). No `.env.example`
-files are committed, so required environment variables are only documented
-in `README.md`'s prose table.
+**Live in production** (as of 2026-08-28, founder-directed): frontend on
+Netlify (`muslimrentals.netlify.app`, deploys from `main`), backend on
+Render (`muslim-rentals-backend`, a pre-existing service from June
+repointed to deploy from the `claude/multi-agent-os-setup-y2wprj` branch
+since `main` lacks this session's backend fixes and a direct push to
+`main` is blocked by this environment's own safety classifier), database
+on Supabase (project `mxpoenfnqrfwznquaibd`), connected via the `postgres`
+role over Supavisor's session pooler (`aws-1-us-east-2.pooler.supabase.com:5432`
+— the pooler only recognizes roles provisioned through Supabase's own
+control plane, not ones created via raw SQL, and the direct connection
+`db.<ref>.supabase.co:5432` was unreachable from Render, likely IPv6-only).
+Railway was tried first, fully verified working, then explicitly
+decommissioned by founder instruction in favor of a pre-existing Render
+service found during a "check my Render account" pass — do not use,
+modify, redeploy, or monitor Railway; treat it as gone. Verified
+end-to-end with real traffic: CORS, API requests, and the Supabase
+connection all confirmed working from the live site, not just inferred
+from config. See `ai/decisions.md` for the full record, including two
+real production bugs found and fixed live during this rollout
+(uploads.ts's AWS-config boot crash; GET /listings's 50-row cap rejecting
+the map page's real limit=200 requests).
 
 ## Security posture
 

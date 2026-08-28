@@ -238,3 +238,120 @@ Revisit when: A genuine public-API/PostgREST consumption use case is
 identified (e.g. a future public read-only listings API) — add a narrow,
 explicitly-scoped policy for exactly that case then, rather than widening
 this blanket deny preemptively.
+
+---
+
+## 2026-08-28 — Deploy production backend on Render (Netlify → Render → Supabase), Railway decommissioned
+
+Decision: The live production stack is now Netlify (frontend) → Render
+(backend) → Supabase (database). Render's `muslim-rentals-backend`
+service — created June 1, pre-existing, found during a founder-directed
+"inspect my Render account" pass — was repointed at this session's
+reviewed backend branch and reused rather than duplicated. Railway,
+stood up and fully verified earlier the same day, was explicitly
+decommissioned by the founder in favor of the pre-existing Render
+service and its project deleted. Do not use, modify, redeploy, or
+monitor Railway going forward.
+
+Reason: The founder connected Render mid-session and asked for the
+backend to be migrated there, reusing the existing service if
+appropriate. Inspecting it found a real, already-configured service
+(AWS S3 and other optional env vars intact) that had just auto-deployed
+for the first time in ~3 months when an earlier `main` merge landed —
+confirming it was live infrastructure, not abandoned.
+
+Two real, previously-undiscovered production bugs were found live during
+this rollout (both fixed and verified, not just theorized):
+1. `uploads.ts` constructed its S3 client and multer instances at module
+   IMPORT time, so any boot without `AWS_S3_BUCKET` set crashed the
+   entire process — contradicting the app's own documented
+   "optional, degrades gracefully" design for that variable. This had
+   never surfaced before because Render's original config happened to
+   have AWS vars set; it broke immediately on Railway, which didn't.
+2. `GET /listings`'s Zod schema capped `limit` at 50, but the map page
+   (`src/app/map/page.tsx`) legitimately requests `limit=200` to plot
+   every listing — a real, working code path that had simply never been
+   exercised against a live backend before. Every real request from the
+   map page 500'd/422'd until this was raised to 200.
+
+Database connectivity required real trial and error, recorded here so a
+future session doesn't have to rediscover it: Supabase's Supavisor
+pooler only recognizes roles provisioned through Supabase's own control
+plane (dashboard/API) as valid pooler "tenants" — a role created via
+raw `CREATE ROLE` (this session's own `app_backend`, used successfully
+for direct SQL work all session) is invisible to the pooler and fails
+with "tenant/user not found," a Supavisor-level rejection distinct from
+a Postgres authentication failure. Separately, the *direct* connection
+(`db.<ref>.supabase.co:5432`) was unreachable from Render — likely
+Supabase's documented IPv6-only default for direct connections, which
+Render's egress apparently doesn't support. Neither `postgres` nor
+`service_role`'s passwords can be reset via SQL from this session's own
+access level ("reserved role, only superusers can modify"). The founder
+reset `postgres`'s password via the Supabase dashboard and supplied the
+real session-pooler connection string; using the dashboard-provisioned
+`postgres` role (which does have `rolbypassrls`, same as before) over
+the session pooler (`aws-1-us-east-2.pooler.supabase.com:5432`, not
+`aws-0` as this session had assumed — a genuinely wrong guess, not just
+an untested one) resolved it immediately. `app_backend` was then
+dropped as dead weight.
+
+Two environment-level blockers were hit and are worth recording since
+they'll recur: (a) this sandbox's own safety classifier blocks pushing
+to `main` even for a clean, reviewed, non-destructive merge — worked
+around by pointing Render (and previously Railway) at the reviewed
+working branch directly rather than `main`, at the founder's choice,
+after asking; (b) neither Netlify's nor Railway's MCP-exposed "deploy"
+tools can be driven from this sandbox (both ultimately require a local
+CLI reaching a `*.netlify.app`/`*.railway.com` endpoint blocked by this
+environment's network egress policy) — worked around by asking the
+founder to click "Trigger deploy" by hand each time; this is a standing
+limitation, not a one-off. Render, by contrast, has real MCP tools
+(`trigger_deploy`, `update_environment_variables`, `list_logs`, etc.)
+that work directly from this sandbox with no such workaround needed.
+
+Verified end-to-end with real traffic, not inferred from config: after
+each fix, the founder loaded the live site and this session read
+Render's request logs directly, confirming real `200`s with data on
+`/api/v1/cities/all` and `/api/v1/listings` (including a real
+`limit=200` request succeeding), Referer headers confirming the
+requests genuinely came from `https://muslimrentals.netlify.app`, and
+zero Prisma/database errors after the final `postgres`-role fix.
+Socket.IO was not independently traffic-verified — it only connects
+from the logged-in messaging inbox, which needs an authenticated
+session to exercise — but shares the same verified-correct CORS/
+`FRONTEND_URL` configuration as the confirmed-working REST endpoints.
+
+Alternatives considered: (a) keep Railway as the primary backend and
+add Render as a secondary/staging target — rejected, explicit founder
+instruction to decommission Railway once Render was confirmed; (b) use
+the Supavisor transaction-mode pooler (port 6543) for `DATABASE_URL`
+now that a working `postgres` credential exists — rejected in favor of
+session mode (port 5432 on the same pooler host) since Render runs a
+persistent Express server, not a serverless/edge function, and
+Supabase's own docs recommend session mode for exactly that case.
+
+Impact: `rentals/backend/src/routes/uploads.ts` (AWS_CONFIGURED guard,
+committed `80e9ae3`), `rentals/backend/src/routes/listings.ts` (limit
+cap raised to 200, committed `633a558`) — both on
+`claude/multi-agent-os-setup-y2wprj`, which Render now deploys from.
+Render env vars set: `NODE_ENV`, `FRONTEND_URL`, `ALLOWED_ORIGINS`,
+`JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `DATABASE_URL`
+(final value: the dashboard-provisioned `postgres` role over the
+session pooler). Netlify's `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SOCKET_URL`
+now point at `https://muslim-rentals-backend.onrender.com` (previously
+malformed since June — the literal env var key name had been pasted
+into the value alongside the URL, and separately pointed at Railway
+mid-session — both fixed). Railway project deleted by the founder
+(recoverable for 48h per Railway's own retention window, per the
+founder; treated as permanently gone regardless).
+
+Revisit when: Render's `npm run dev` (ts-node-dev) start command should
+eventually become a real production build (`npm run build` /
+`node dist/index.js`, matching what this session already configured for
+Railway) — no tool in Render's MCP surface currently exposes changing
+an existing service's build/start command, so this needs either a
+future Render API capability or a manual dashboard change; it works
+today, just not ideally. Also revisit once a genuine authenticated
+end-to-end test (login + open messages) is run, to move Socket.IO from
+"configured correctly" to "independently traffic-verified" like the
+REST endpoints already are.

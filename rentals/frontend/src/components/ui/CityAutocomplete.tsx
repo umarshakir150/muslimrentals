@@ -82,7 +82,7 @@ export default function CityAutocomplete({ value, onChange, placeholder = 'Searc
           className={cn('input-field pl-9 pr-9', className)}
         />
         {query && (
-          <button onClick={clear} type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink transition-colors">
+          <button onClick={clear} type="button" aria-label="Clear city" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink transition-colors">
             <X size={14} />
           </button>
         )}

@@ -238,11 +238,17 @@ router.post('/forgot-password', authRateLimiter, async (req: Request, res: Respo
     await prisma.user.update({ where: { id: user.id }, data: { resetToken, resetTokenExpiry } });
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-    await sendEmail({
+    // Fire-and-forget, matching /register's welcome email: a real user's
+    // reset token is already saved above regardless of email delivery, so
+    // an SMTP failure (e.g. not configured yet) must never 500 this request
+    // -- that would leak "this email has an account" via a different status
+    // code, defeating SAFE_RESPONSE's anti-enumeration purpose, and would
+    // break the flow for every real user until SMTP is configured.
+    sendEmail({
       to: email,
       subject: 'Reset your Muslim Rentals password',
       html: passwordResetEmail(user.name, resetUrl),
-    });
+    }).catch(() => {});
 
     res.json(SAFE_RESPONSE);
   } catch (err) { next(err); }

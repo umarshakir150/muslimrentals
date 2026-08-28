@@ -149,8 +149,12 @@ model Conversation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  listingId   String
-  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade) -- a listing being permanently deleted
+  // by its owner must never destroy the *other* participant's message
+  // history along with it (that participant has no say in the listing's
+  // deletion). Mirrors Report.listingId's existing pattern below.
+  listingId   String?
+  listing     Listing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
 
   participants ConversationParticipant[]
   messages     Message[]

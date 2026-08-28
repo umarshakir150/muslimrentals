@@ -239,11 +239,15 @@ router.delete('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, a
 // ─── DELETE /listings/:id/permanent ───────────────────────────────────────────
 // Distinct from the soft-remove DELETE /:id above (which sets
 // status=REMOVED and remains admin-reversible). This is a hard delete: the
-// row and all Prisma-cascaded children (images, amenities, saved-listing
-// references, conversations/messages) are gone for good, and the S3 objects
-// backing each image are also removed here since the DB cascade can't reach
-// into object storage. Owner-only by design (not admin/moderator) — admins
-// already have the reversible soft-remove path for moderation.
+// row and its Prisma-cascaded children (images, amenities, saved-listing
+// references) are gone for good, and the S3 objects backing each image are
+// also removed here since the DB cascade can't reach into object storage.
+// Conversations/messages about this listing are deliberately NOT deleted —
+// Conversation.listingId is SetNull, not Cascade (see schema.prisma) —
+// because the other participant has no say in this listing's deletion and
+// must not lose their own message history as a side effect of it.
+// Owner-only by design (not admin/moderator) — admins already have the
+// reversible soft-remove path for moderation.
 router.delete('/:id/permanent', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const listing = await prisma.listing.findUnique({
@@ -276,8 +280,9 @@ router.delete('/:id/permanent', validateUuidParam('id'), authenticate, writeRate
       });
     }
 
-    // Prisma cascade (see schema.prisma) removes images, amenities, saved
-    // references, and conversations/messages; Report.listingId is set null.
+    // Prisma cascade (see schema.prisma) removes images, amenities, and
+    // saved references. Report.listingId and Conversation.listingId are
+    // both SetNull -- reports and conversations survive.
     await prisma.listing.delete({ where: { id: req.params.id } });
 
     res.json({ success: true, message: 'Listing permanently deleted.' });

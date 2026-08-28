@@ -577,3 +577,108 @@ this specific branch" command. Worth checking whether exposing it as a
 narrow CLI subcommand would remove the need to hand-replicate the git
 sequence next time a mid-session out-of-band branch (like this
 founder-reported-bug-fix work) needs production promotion.
+
+## 2026-08-28 — Fix two real bugs found by founder live-verification; SMTP delivery is an external blocker
+
+**Decision:** Treat founder-reported live-verification findings as ground
+truth over this session's own code-level assumptions, and fix accordingly
+rather than re-asserting the earlier fix was sufficient.
+
+**What the founder found, testing the actual production site after the
+previous merge:** wrong-password message — fixed, confirmed. City
+selection during posting — still broken: no suggestions appear, typed
+names aren't recognized, the required field can't be satisfied, a listing
+can't be posted. Forgot-password — the `/reset-password` page itself
+works, but no email ever arrives, so the flow is not actually usable
+end-to-end.
+
+**City bug — root-caused for real, not re-assumed fixed:** confirmed via
+direct SQL (`SELECT count(*), count(lat), count(lng) FROM "City"`) that
+production data is genuinely correct (82 rows, all with lat/lng) — so the
+bug was purely client-side. Two real defects, both in
+`rentals/frontend/src/components/ui/CityAutocomplete.tsx` and
+`rentals/backend/src/routes/cities.ts`:
+1. The component's module-level cache (`let citiesCache = null`) was
+   checked with `if (citiesCache)` — an empty array is truthy in
+   JavaScript, so a browser tab whose very first `/cities/all` fetch ever
+   returned no data (plausible for anyone who opened the app before the
+   city-seed fix landed earlier this session) would permanently reuse
+   that empty cache for the rest of the tab's session, no matter how many
+   times the post-listing modal was reopened — a full page reload was
+   the only escape.
+2. `/cities/all`'s `Cache-Control` was `public, max-age=3600` (1 hour)
+   with no revalidation inside that window — so even a browser tab that
+   never hit the empty-cache bug above could still be served a stale,
+   pre-fix HTTP response (missing lat/lng, or from before seeding) for up
+   to an hour, with the browser never even asking the server again.
+
+Both together meant the exact symptom reported (data genuinely correct
+server-side, but the browser never seeing it) was fully plausible and, in
+fact, likely, given testing happened well inside that 1-hour window.
+Fixed by always revalidating in the background on mount (regardless of
+cached state) and cutting the HTTP cache to `max-age=60,
+stale-while-revalidate=300`.
+
+**Forgot-password — root-caused for real:** Render's own logs showed the
+exact failure on every attempt: `Error: connect ECONNREFUSED
+127.0.0.1:587`. This is nodemailer's SMTP transport silently defaulting
+`host` to `"localhost"` when `SMTP_HOST` is `undefined` — confirming
+SMTP genuinely was never configured (not a code bug masking a working
+config). Checked for any available path to configure it: `ListConnectors`
+returned no email-sending connector available to this session, and no
+SMTP/API credentials exist anywhere in this repo or environment. This is
+a real external blocker, not something fixable from here: someone with
+founder authority needs to create an account with a transactional email
+provider (Resend, SendGrid, Postmark, AWS SES, or similar) and set
+`SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`EMAIL_FROM` as Render env
+vars — this session can wire those in immediately via
+`update_environment_variables` once real values exist, but cannot
+originate them.
+
+Per the founder's explicit instruction, did NOT change the anti-
+enumeration `SAFE_RESPONSE` behavior (still always 200, still identical
+regardless of whether the user exists or the email sends) — that's a
+deliberate OWASP A07 pattern, not the bug. Instead: (a) `sendEmail()` now
+fails fast with a clear `"SMTP not configured -- set SMTP_HOST,
+SMTP_USER, SMTP_PASS..."` log line instead of a confusing connection
+attempt to localhost, and (b) the regression inventory now marks this
+flow's result as `NOT_OPERATIONAL (email delivery)` rather than
+`FIXED`/`LIVE_SITE_VERIFIED` — the founder was explicit that showing
+"email sent" is fine to keep (security-motivated), but the flow itself
+must not be reported as working while it can't actually deliver.
+
+**Review:** Independent security review of the `email.ts` change,
+scoped specifically to the password-reset-adjacent code per the
+founder's instruction. Verdict: **APPROVED** — the anti-enumeration
+property is unchanged and intact (verified against the actual
+`forgot-password` handler's control flow), no credentials or tokens are
+logged, and the fix correctly addresses the root cause without altering
+any security-relevant behavior.
+
+**Verification:** `npx tsc --noEmit` clean on both `rentals/backend` and
+`rentals/frontend`, checked freshly in the actual merge worktree (not
+just the source branch) both before pushing to the working branch and
+again before promoting to `main`, since a fresh worktree has no
+`node_modules` and needs installing first. Merged into `main` cleanly (no
+conflicts this round) at `20b32e0`. Render deployed live
+(`dep-da8jp57lk1mc73f7bb8g`, clean boot). Netlify deployed live
+(`6a913cdf7c4b2900089009ee`, `state: ready`, published 07:47:25Z,
+commit `20b32e0`).
+
+**Still not independently confirmed by this session** — same standing
+limitation as the previous entry: this sandbox's network egress cannot
+reach either live domain, so this fix is deployed and typechecked but not
+`LIVE_SITE_VERIFIED` by this session. Needs a real founder click-through:
+does the city dropdown now show suggestions and let a listing post
+successfully? (The SMTP gap itself cannot be resolved by any further
+code change — that one needs the external provider setup described
+above before it can ever be verified working, not just re-checked.)
+
+**Revisit when:** the founder provides real SMTP/email-provider
+credentials (then wire them into Render's env vars immediately and
+re-verify the full forgot/reset flow including actual email delivery);
+and once the city-selection fix is confirmed live, consider whether
+`/cities/all`'s remaining 60s cache is still worth it at this data size,
+or whether removing HTTP caching entirely (relying only on the
+already-fixed client-side revalidate-on-mount behavior) would be simpler
+and equally fast for ~82 rows.

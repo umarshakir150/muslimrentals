@@ -4,6 +4,7 @@
   "description": "Muslim Rentals \u2013 Muslim-focused rental platform backend",
   "main": "src/index.ts",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",

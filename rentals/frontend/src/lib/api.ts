@@ -15,6 +15,20 @@ function buildBaseUrl(): string {
 
 const BASE_URL = buildBaseUrl();
 
+// Endpoints where a 401 means "invalid credentials/token", never "your
+// session expired" -- none of these require an existing session, so a 401
+// from them must never trigger the refresh-and-retry flow below (that flow
+// always fails for these since there was no valid session to begin with,
+// which previously surfaced as a misleading "Session expired" message on a
+// simple wrong-password login attempt).
+const PUBLIC_AUTH_ENDPOINTS = new Set([
+  '/auth/register',
+  '/auth/login',
+  '/auth/google',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+]);
+
 // ─── Safe JSON parser ─────────────────────────────────────────────────────────
 // Never crashes on HTML/non-JSON responses (e.g. Render cold-start page, 404 HTML).
 async function safeJson(res: Response): Promise<any> {
@@ -75,7 +89,7 @@ class ApiClient {
       throw new Error('Unable to reach the server. Please check your connection.');
     }
 
-    if (res.status === 401 && retry) {
+    if (res.status === 401 && retry && !PUBLIC_AUTH_ENDPOINTS.has(endpoint)) {
       const newToken = await this.refreshAccessToken();
       if (newToken) {
         const { user } = useAuthStore.getState();

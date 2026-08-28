@@ -29,8 +29,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 // All cities for autocomplete — heavily cached
 router.get('/all', async (_req: Request, res: Response, next: NextFunction) => {
   try {
+    // lat/lng are included -- CityAutocomplete.tsx uses them to set the
+    // listing's coordinates on selection. Without them here, every listing
+    // silently fell back to the post form's hardcoded default coordinates
+    // regardless of which city was actually chosen.
     const cities = await prisma.city.findMany({
-      select:  { name: true, province: true },
+      select:  { name: true, province: true, lat: true, lng: true },
       orderBy: { name: 'asc' },
     });
     // 1 hour public cache — city list rarely changes

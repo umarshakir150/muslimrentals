@@ -35,6 +35,15 @@ a filter pattern (`ListingFilters`), and a messaging/inbox pattern
 (`Inbox`). Reuse or extend these before building something new that
 duplicates them.
 
+## Standing ownership
+
+Beyond whatever a given task is, Frontend continuously owns UI quality and
+usability across the whole product — not just the page a task touches. If
+a live-product check (yours or QA's) surfaces a broken/degraded flow
+elsewhere in the app, that's still Frontend's to fix, not something to
+wait to be assigned. See `ai/operating-directive.md`'s "Standing role
+ownership."
+
 ## What Frontend does not own
 
 - Server-side validation, authorization, or data access — that's Backend.

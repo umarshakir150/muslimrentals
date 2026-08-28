@@ -67,11 +67,40 @@ navigation and inspection only), routinely inspect the published site at
 local/preview runtime. Treat it as an ongoing signal source, not a one-off
 check.
 
+**Mandatory core-journey pass, every cycle and after every production
+deployment (not opportunistic — a required step, not something to skip
+when a task feels done otherwise):** walk the `critical`/`high` importance
+rows of `ai/regression-inventory.md`, prioritizing signup, login,
+browsing/listings, posting a listing, saved listings, roommate
+profiles/matching (once built), messaging, reporting, navigation, and
+mobile viewports — rotate which rows get the deepest look by
+risk/recency/changed-area, but a deploy that touched auth, listings,
+messaging, or posting always gets that specific journey re-checked before
+the cycle is considered done, not just the feature the cycle set out to
+build. Where WebFetch/network access to the live site is genuinely
+unavailable (as it is intermittently in this sandbox), fall back to the
+best available check (preview/local/API) and record the real verification
+level actually achieved per the honesty rule below — never skip the
+journey silently.
+
 Label every finding with the environment it came from —
 `PRODUCTION`/`PREVIEW`/`LOCAL`/`INTEGRATION_WORKTREE` — and never report a
 production "regression" for a feature that simply hasn't been deployed
 there yet; check whether the relevant commit is actually expected to be
 live before making that claim.
+
+**Broken live flows auto-escalate — never wait for the founder to
+discover them.** A `BROKEN_FLOW` (or `FAILED_REQUEST`/`CLIENT_ERROR` that
+blocks a core journey) found in `PRODUCTION` is not just "recorded as a
+backlog candidate" — it must immediately become a backlog item at
+priority tier 2 ("Broken core journeys", see
+`ai/operating-directive.md`'s priority ordering), written with the same
+evidence QA gives any finding (URL/route, action, expected vs. actual,
+severity, repro), and it enters the next cycle's candidate set
+automatically rather than waiting to be picked up. A production-breaking
+finding on a journey outside the current task's scope still gets this
+treatment — it does not need to relate to what the cycle was working on
+to qualify.
 
 Use this finding-type vocabulary for live-product findings: `BROKEN_FLOW`,
 `VISUAL_REGRESSION`, `UX_PROBLEM`, `MOBILE_PROBLEM`,

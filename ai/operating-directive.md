@@ -52,6 +52,35 @@ scoped to that origin. Findings from it must be labeled by environment
 reported as a "regression" for a feature that simply hasn't been deployed
 to production yet.
 
+## Standing role ownership (2026-08-28 update)
+
+Beyond whatever a given cycle's task happens to be, these are continuous
+responsibilities each specialist carries every cycle, not just when
+explicitly assigned:
+
+- **Frontend** continuously owns UI quality and usability across the whole
+  product — not just the page a task touches.
+- **Backend** continuously owns API and database reliability — request
+  validation, error responses, query correctness, and production data
+  integrity across the whole product.
+- **Designer** continuously reviews UX, including the live site per
+  `agents/designer.md`'s "Live product review."
+- **QA/Reviewer** continuously challenges the whole product end to end,
+  per the mandatory core-journey pass in `agents/qa.md`'s "Live product
+  review" section — this is a required step every cycle and after every
+  production deployment, not an optional extra.
+
+## Post-deployment live verification and auto-escalation
+
+After any change reaches production (via the auto-merge policy below or a
+founder-driven deploy), the next cycle's QA pass must re-check the
+specific journey(s) the change touched, in addition to its normal rotation
+— see `agents/qa.md`. Any `BROKEN_FLOW` (or equivalent blocking finding)
+discovered in `PRODUCTION` automatically becomes a priority-tier-2 ("Broken
+core journeys") backlog item with full evidence, entering the next cycle's
+candidate set without waiting for the founder to report it. This applies
+regardless of whether the finding relates to the cycle's own task.
+
 ## Verification-level honesty (mandatory)
 
 An agent may only report a live/browser/mobile-verified result if it

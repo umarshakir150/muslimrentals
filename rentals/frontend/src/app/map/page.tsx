@@ -1,22 +1,27 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
 import { listingsApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useFilterStore } from '@/store/filterStore';
+import { useToast } from '@/components/ui/use-toast';
 
 // FullMap is heavy - load client-side only. No SSR loading fallback needed
 // because the map container is always rendered with real dimensions.
 const FullMap = dynamic(() => import('@/components/map/FullMap'), { ssr: false });
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 
-export default function MapPage() {
+function MapPageInner() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const { filters, mapCenter, setMapCenter } = useFilterStore();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -31,6 +36,23 @@ export default function MapPage() {
   }, []);
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
+
+  // Deep-link support: /map?listingId=<id> from a listing card's "Map" button.
+  useEffect(() => {
+    if (loading) return;
+    const listingId = searchParams.get('listingId');
+    if (!listingId) return;
+
+    const target = listings.find((l) => l.id === listingId);
+    if (target && target.lat != null && target.lng != null) {
+      setMapCenter([target.lat, target.lng]);
+      setSelectedListing(target);
+    } else {
+      toast({ title: 'Listing not found', description: "This listing couldn't be located on the map right now." });
+    }
+    router.replace('/map', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, listings, searchParams]);
 
   return (
     // page root: full viewport height, no overflow clip so Leaflet can measure
@@ -105,5 +127,13 @@ export default function MapPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={null}>
+      <MapPageInner />
+    </Suspense>
   );
 }

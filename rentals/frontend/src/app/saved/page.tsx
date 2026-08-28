@@ -134,7 +134,7 @@ export default function SavedPage() {
                   listing={listing}
                   index={i}
                   onView={setSelectedListing}
-                  onMap={() => {}}
+                  onMap={(l) => router.push(`/map?listingId=${l.id}`)}
                   onMessage={(l) => setMessageTarget(l)}
                   onSaveChange={handleSaveChange}
                 />

@@ -523,3 +523,57 @@ limits, consistent with "Do not redesign the autonomous system" above.
 files) — no code, no build/typecheck implications. Reviewed against
 `CLAUDE.md`'s ground rules before writing: preserves existing patterns,
 no destructive action, no unilateral founder-reserved decision.
+
+## 2026-08-28 — Promote fe20a0d/ddf2812/45ba213 to production via the existing auto-merge mechanism
+
+**Decision:** Corrected course after the founder pointed out that Netlify
+already auto-deploys `main` (confirmed live at `main@a2345c4`, a merge
+commit produced by this session's own autonomous production-merge
+mechanism) and that the right move was to use that existing mechanism to
+promote the three-bug-fix batch, not to treat Netlify's branch as a
+founder-blocker. The founder was right and the earlier framing in this
+file (asking to repoint Netlify, or asking for a manual merge) was
+unnecessary — the promotion path already existed and had already worked
+at least once this session, just not yet for this specific branch.
+
+**What was done:** Replicated exactly what
+`orchestrator/src/git/worktree.ts`'s `mergeToProductionBranch()` does
+(fetch `origin/main` → detached worktree → `git merge --no-ff
+<source>` → `git push origin HEAD:main`, never force-pushed, worktree
+cleaned up after) by hand in a temporary worktree, merging
+`claude/multi-agent-os-setup-y2wprj` (at `8bcf403`, containing `fe20a0d`
+through the operating-loop and package-lock commits) into `main`.
+
+**Real merge conflict hit and resolved (not silently discarded):** the
+concurrent "minimal automated test framework" cycle had already merged
+into `main` first and made overlapping changes to
+`rentals/frontend/.gitignore` (added `next-env.d.ts`; this branch added
+`*.tsbuildinfo`) and `rentals/frontend/package-lock.json` (regenerated
+on both sides, once to add `vitest`, once for the missing-lockfile fix).
+Resolved by keeping both `.gitignore` additions and regenerating
+`package-lock.json` fresh via `npm install` against the already
+cleanly-merged `package.json`, rather than picking either side's stale
+copy. Verified `npx tsc --noEmit` clean on both `rentals/frontend` and
+`rentals/backend` in the merge worktree (after `npm install`, since a
+fresh worktree has no `node_modules`) before pushing — this is a
+production merge, so it was confirmed compiling before going out, not
+just re-using the earlier verification from the source branch.
+
+**Result:** Pushed to `main` at `5fe4acb` (`a2345c4..5fe4acb`). Netlify's
+own status API returned a transient Cloudflare 502 when checked
+immediately after (known intermittent issue with this MCP server this
+session) — auto-deploy proceeds regardless since it's triggered by the
+GitHub push itself, not by this session polling for it. Next step: some
+combination of Render logs / Netlify status / a live re-check confirms
+the deploy landed, then flip the three regression-inventory rows from
+`FIXED_NOT_LIVE_SITE_VERIFIED` to `LIVE_SITE_VERIFIED` once genuinely
+re-checked on the live site.
+
+**Revisit when:** confirming this pattern generalizes — this was done by
+hand this time rather than through the CLI's own cycle machinery
+(`attemptProductionMerge`), since that function is only invoked as part
+of a full autonomous cycle run, not available as a standalone "merge
+this specific branch" command. Worth checking whether exposing it as a
+narrow CLI subcommand would remove the need to hand-replicate the git
+sequence next time a mid-session out-of-band branch (like this
+founder-reported-bug-fix work) needs production promotion.

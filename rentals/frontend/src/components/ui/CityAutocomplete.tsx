@@ -28,7 +28,15 @@ export default function CityAutocomplete({ value, onChange, placeholder = 'Searc
   const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (citiesCache) { setCities(citiesCache); return; }
+    // Show a cached list immediately if we have one (snappier reopen), but
+    // always revalidate in the background regardless -- an empty array is
+    // truthy in JS, so a bare `if (citiesCache)` check would permanently
+    // "poison" every future mount in this browser tab with an empty list
+    // forever if the very first fetch ever made here returned no cities
+    // (e.g. hit the app before city data existed). Always refetching also
+    // means a stale/incomplete response never lingers past this component's
+    // next mount, regardless of HTTP cache headers.
+    if (citiesCache && citiesCache.length) setCities(citiesCache);
     citiesApi.getAll()
       .then(res => { citiesCache = res.data; cityNamesCache = res.data.map(c => c.name); setCities(res.data); })
       .catch(() => {});

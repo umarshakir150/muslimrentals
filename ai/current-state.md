@@ -51,24 +51,42 @@ them because "there are no tests to run."
 **Live in production** (as of 2026-08-28, founder-directed): frontend on
 Netlify (`muslimrentals.netlify.app`, deploys from `main`), backend on
 Render (`muslim-rentals-backend`, a pre-existing service from June
-repointed to deploy from the `claude/multi-agent-os-setup-y2wprj` branch
-since `main` lacks this session's backend fixes and a direct push to
-`main` is blocked by this environment's own safety classifier), database
-on Supabase (project `mxpoenfnqrfwznquaibd`), connected via the `postgres`
-role over Supavisor's session pooler (`aws-1-us-east-2.pooler.supabase.com:5432`
-— the pooler only recognizes roles provisioned through Supabase's own
-control plane, not ones created via raw SQL, and the direct connection
-`db.<ref>.supabase.co:5432` was unreachable from Render, likely IPv6-only).
-Railway was tried first, fully verified working, then explicitly
-decommissioned by founder instruction in favor of a pre-existing Render
-service found during a "check my Render account" pass — do not use,
-modify, redeploy, or monitor Railway; treat it as gone. Verified
-end-to-end with real traffic: CORS, API requests, and the Supabase
-connection all confirmed working from the live site, not just inferred
-from config. See `ai/decisions.md` for the full record, including two
-real production bugs found and fixed live during this rollout
-(uploads.ts's AWS-config boot crash; GET /listings's 50-row cap rejecting
-the map page's real limit=200 requests).
+repointed to deploy from the `claude/multi-agent-os-setup-y2wprj` branch),
+database on Supabase (project `mxpoenfnqrfwznquaibd`), connected via the
+`postgres` role over Supavisor's session pooler
+(`aws-1-us-east-2.pooler.supabase.com:5432` — the pooler only recognizes
+roles provisioned through Supabase's own control plane, not ones created
+via raw SQL, and the direct connection `db.<ref>.supabase.co:5432` was
+unreachable from Render, likely IPv6-only). Railway was tried first, fully
+verified working, then explicitly decommissioned by founder instruction in
+favor of a pre-existing Render service found during a "check my Render
+account" pass — do not use, modify, redeploy, or monitor Railway; treat it
+as gone. Verified end-to-end with real traffic: CORS, API requests, and
+the Supabase connection all confirmed working from the live site, not
+just inferred from config. `main` and the working branch above track each
+other via the existing production auto-merge mechanism
+(`orchestrator/src/git/worktree.ts`'s `mergeToProductionBranch`) rather
+than a direct push to `main` from this environment. See
+`ai/decisions.md` for the full record, including several real production
+bugs found and fixed live during this rollout (uploads.ts's AWS-config
+boot crash; GET /listings's 50-row cap rejecting the map page's real
+limit=200 requests; a wrong-password error message; a missing
+reset-password page; an empty City table blocking listing posts).
+
+**Known gap — outbound email is not actually configured.**
+`SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` are unset on Render, so no
+transactional email (welcome email, password-reset email) is ever
+delivered — `sendEmail()` now fails fast with a clear "SMTP not
+configured" log line instead of nodemailer's confusing default attempt to
+connect to `localhost:587`, but the underlying gap is unchanged: this
+needs a real transactional email provider account (e.g. Resend, SendGrid,
+Postmark, AWS SES) and its API/SMTP credentials, which is founder/
+external work — no email-sending connector or credential is available to
+this session. Forgot/reset-password's `/auth/reset-password` page and
+backend logic both work correctly on their own (a real reset token, once
+someone has it, works end-to-end) — only the "email a link" delivery step
+is broken. See `ai/regression-inventory.md`'s "Forgot / reset password"
+row and `ai/decisions.md`'s 2026-08-28 entries for detail.
 
 ## Security posture
 

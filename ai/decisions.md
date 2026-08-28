@@ -161,3 +161,80 @@ independently, or this environment's network policy changes such that
 live verification can actually run — the mechanism doesn't need to
 change, but the honest "unreachable every time" caveat should be revisited
 once it isn't true anymore.
+
+---
+
+## 2026-08-28 — Connect Prisma backend to production Supabase; enable RLS least-privilege
+
+Decision: Connect the existing Express/Prisma backend to the real, already-
+provisioned "Muslim Rentals" Supabase project (`mxpoenfnqrfwznquaibd`) as its
+production Postgres, establish the repo's first real Prisma migration
+against it, and then enable Row Level Security with zero permissive
+policies plus a table-grant `REVOKE` on `anon`/`authenticated` for all 11
+public tables. Prisma/Express remains the sole application-level
+authorization boundary; no auth logic moved to the database or the
+frontend.
+
+Reason: The founder identified this Supabase project as already connected
+and asked for the database side to be made production-ready without
+replacing working architecture. Inspecting the project directly (via
+Supabase MCP tools, since this environment cannot reach `*.supabase.co` or
+`muslimrentals.netlify.app` over raw HTTP — proxy-blocked at the CONNECT
+stage, same as the prior `main`-branch investigation) found: it matched the
+product by name/creation-date, was empty of any tables, and had never had
+a Prisma migration applied (the repo itself had no `prisma/migrations/`
+directory before this — schema was previously only ever pushed via
+`prisma db push`, never tracked as a migration). Applying the baseline
+migration was zero-risk (target was empty; verified before and after).
+
+Once the schema existed, Supabase's own security advisor immediately
+flagged a real, critical vulnerability: RLS was disabled on all 11 tables,
+so the project's public anon API key could read/write every row directly
+via Supabase's auto-generated PostgREST API, completely bypassing the
+Express backend's auth/ownership checks — full exposure of `User`,
+`Message`, `Report`, and every other table to anyone holding the publishable
+key. This was confirmed empirically, not assumed: a probe row inserted into
+`User`/`Report` inside a rolled-back transaction was fully visible when the
+same query ran `SET LOCAL ROLE anon`.
+
+Fix: `ENABLE ROW LEVEL SECURITY` + `REVOKE ALL ... FROM PUBLIC, anon,
+authenticated` on every table, with no policies added for those roles. Two
+independent layers of denial (table-grant revoke, and RLS default-deny)
+were used deliberately so a mistake in one doesn't reopen access. No
+permissive policies were added anywhere because grep confirmed zero
+`@supabase/supabase-js`/PostgREST usage anywhere in the app — every
+read/write already goes through Express, per the founder's explicit
+instruction to keep authorization logic in Express rather than duplicating
+it into RLS policies. This was reviewed independently by a real
+Security-role review before being applied (APPROVED, no changes required),
+and verified empirically after applying: `anon` gets real "permission
+denied for table" errors on SELECT/INSERT; the backend's own role (which
+has `rolbypassrls=true`, confirmed via `pg_roles`) retained a full
+insert/select/update/delete round trip with zero errors; `get_advisors`
+no longer reports the vulnerability.
+
+Alternatives considered: (a) add permissive anon/authenticated policies
+matching what's "safe to expose" (e.g. published listings) — rejected for
+now, since no code path actually uses PostgREST/Supabase-client access at
+all; adding policies for a use case that doesn't exist would be unreviewed
+surface area with no consumer, not a real safety improvement; (b) rely on
+RLS policies instead of table grants, or vice versa — rejected in favor of
+both, specifically so a future mistake in one layer doesn't silently
+reopen access; (c) move authorization logic into RLS itself — rejected per
+explicit founder instruction to keep Prisma/Express as the primary backend.
+
+Impact: `rentals/backend/prisma/migrations/20260828005829_init/` (new,
+baseline schema) and `rentals/backend/prisma/migrations/
+20260828011000_enable_rls_least_privilege/` (new, this decision) committed
+and pushed. Production Supabase project now has the full schema applied
+and RLS enabled with default-deny for anon/authenticated. Whoever first
+connects a real `DATABASE_URL` locally must run `npx prisma migrate
+resolve --applied 20260828005829_init` once, since the migration was
+applied via Supabase's own SQL execution rather than `prisma migrate
+deploy`, so Prisma's `_prisma_migrations` bookkeeping table doesn't know
+about it yet.
+
+Revisit when: A genuine public-API/PostgREST consumption use case is
+identified (e.g. a future public read-only listings API) — add a narrow,
+explicitly-scoped policy for exactly that case then, rather than widening
+this blanket deny preemptively.

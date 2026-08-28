@@ -11,6 +11,7 @@ import type {
   FinalTaskReport,
   Finding,
   ImplementationResult,
+  IntegrationResult,
 } from '../types/schemas.js';
 
 function renderFindings(findings: Finding[]): string {
@@ -88,6 +89,40 @@ export function renderImplementationMd(r: ImplementationResult): string {
     `## Self-check notes`,
     ``,
     r.selfCheckNotes.length ? r.selfCheckNotes.map((n) => `- ${n}`).join('\n') : '_None._',
+    ``,
+  ].join('\n');
+}
+
+export function renderIntegrationMd(r: IntegrationResult): string {
+  return [
+    `# Integration report`,
+    ``,
+    `**Task:** ${r.taskId}`,
+    `**Integration branch:** ${r.branch}`,
+    `**Unresolved conflicts:** ${r.unresolvedConflicts.length ? '⚠ YES — see below' : 'None'}`,
+    ``,
+    `## Summary`,
+    ``,
+    r.summary,
+    ``,
+    `## Reconciliation decisions`,
+    ``,
+    r.decisions.length
+      ? r.decisions
+          .map(
+            (d, i) =>
+              `${i + 1}. **${d.path}** — chose: ${d.chosenSource}${d.combined ? ' (combined with another implementer\'s change)' : ''}\n   - Rationale: ${d.rationale}${d.behaviorChanged ? `\n   - Behavior changed: ${d.behaviorChanged}` : ''}`
+          )
+          .join('\n')
+      : '_No reconciliation decisions were needed — branches merged cleanly with no overlapping or out-of-scope changes._',
+    ``,
+    `## Files changed (integrated worktree)`,
+    ``,
+    r.filesChanged.length ? r.filesChanged.map((f) => `- ${f}`).join('\n') : '_None._',
+    ``,
+    `## Unresolved conflicts`,
+    ``,
+    r.unresolvedConflicts.length ? r.unresolvedConflicts.map((c) => `- ${c}`).join('\n') : '_None._',
     ``,
   ].join('\n');
 }

@@ -27,14 +27,25 @@ import { AppError } from '../middleware/errorHandler';
 const router = Router();
 
 // ─── S3 client — credentials exclusively from env (OWASP A02) ─────────────────
-const s3 = new S3Client({
-  region: process.env.AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-  ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
-});
+// AWS is optional-with-warning (.env.example / validateEnv.ts): the server
+// must still boot without it, with uploads disabled, rather than crash.
+// multer-s3's own S3Storage constructor throws synchronously the moment a
+// bucket-less instance is created, so both the client and the multer
+// instances below are only constructed when fully configured.
+const AWS_CONFIGURED = Boolean(
+  process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_S3_BUCKET
+);
+
+const s3 = AWS_CONFIGURED
+  ? new S3Client({
+      region: process.env.AWS_REGION || 'us-east-1',
+      credentials: {
+        accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
+    })
+  : null;
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 // OWASP A08: restrict to known-safe image MIME types
@@ -57,7 +68,7 @@ function imageFileFilter(_req: any, file: Express.Multer.File, cb: multer.FileFi
 // ─── S3 storage factory ────────────────────────────────────────────────────────
 function makeS3Storage(prefix: string) {
   return multerS3({
-    s3,
+    s3: s3!,
     bucket: process.env.AWS_S3_BUCKET!,
     acl: 'public-read',
     contentType: multerS3.AUTO_CONTENT_TYPE,
@@ -69,17 +80,24 @@ function makeS3Storage(prefix: string) {
   });
 }
 
-const listingUpload = multer({
-  storage:    makeS3Storage('listings'),
-  limits:     { fileSize: MAX_FILE_SIZE, files: MAX_FILES },
-  fileFilter: imageFileFilter,
-});
+const listingUpload = AWS_CONFIGURED
+  ? multer({ storage: makeS3Storage('listings'), limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES }, fileFilter: imageFileFilter })
+  : null;
 
-const avatarUpload = multer({
-  storage:    makeS3Storage('avatars'),
-  limits:     { fileSize: MAX_AVATAR_SIZE, files: 1 },
-  fileFilter: imageFileFilter,
-});
+const avatarUpload = AWS_CONFIGURED
+  ? multer({ storage: makeS3Storage('avatars'), limits: { fileSize: MAX_AVATAR_SIZE, files: 1 }, fileFilter: imageFileFilter })
+  : null;
+
+// Runs before the underlying multer middleware so an unconfigured server
+// returns a clear 503 instead of multer-s3 crashing the process at import
+// time (the bug this whole AWS_CONFIGURED guard exists to fix).
+function uploadMiddleware(upload: multer.Multer | null, field: string, maxCount?: number) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!upload) return next(new AppError('Image uploads are not configured on this server yet.', 503));
+    const handler = maxCount != null ? upload.array(field, maxCount) : upload.single(field);
+    handler(req, res, next);
+  };
+}
 
 // ─── POST /uploads/listing-images/:listingId ──────────────────────────────────
 router.post(
@@ -87,7 +105,7 @@ router.post(
   validateUuidParam('listingId'),
   authenticate,
   uploadRateLimiter,
-  listingUpload.array('images', MAX_FILES),
+  uploadMiddleware(listingUpload, 'images', MAX_FILES),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const listing = await prisma.listing.findUnique({ where: { id: req.params.listingId } });
@@ -121,7 +139,7 @@ router.post(
   '/avatar',
   authenticate,
   uploadRateLimiter,
-  avatarUpload.single('avatar'),
+  uploadMiddleware(avatarUpload, 'avatar'),
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const file = req.file as Express.MulterS3.File;
@@ -146,6 +164,7 @@ router.delete(
       });
       if (!image) throw new AppError('Image not found.', 404);
       if (image.listing.userId !== req.user!.id) throw new AppError('Not authorized.', 403);
+      if (!s3) throw new AppError('Image uploads are not configured on this server yet.', 503);
 
       await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET!, Key: image.key }));
       await prisma.listingImage.delete({ where: { id: image.id } });

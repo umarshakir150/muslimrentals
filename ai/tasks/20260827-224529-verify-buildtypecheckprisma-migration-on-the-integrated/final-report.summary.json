@@ -1,0 +1,50 @@
+{
+  "taskId": "20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated",
+  "objective": "Verify build/typecheck/Prisma migration on the integrated Roommate Profiles branch\n\nInstall dependencies (npm install) in rentals/backend and rentals/frontend on the integrated Roommate Profiles branch/worktree (agents/20260826-093438-design-and-build-the-first-production-ready/integration), then run `npx tsc --noEmit` in both, `npx prisma generate` and the first-ever `npx prisma migrate dev` for the new RoommateProfile model against a real dev Postgres instance, and fix any compile/type/migration errors the new code surfaces. Also do the manual browser pass QA already asked for (create → browse as 2nd user → filter → message → deactivate → reactivate flow) since this is genuinely new, previously-unexercised code that was only reviewed via static reading.\n\nWhy this matters (backlog rationale): QA and Security both approved this feature but explicitly flagged (sig_2446a9fb, sig_e452ff28) that zero automated verification has ever run on it — no install, no tsc, no prisma generate/migrate, no dev server. Confirmed independently that rentals/backend/node_modules does not exist. A brand-new user journey (new DB model, new auth-gated routes, messaging integration) should not be trusted as 'reviewed' until it actually compiles and its migration applies cleanly; this is precisely the kind of reliability/testability gap called out as high priority in the standing objective.\n\nEvidence:\n- sig_2446a9fb\n- sig_e452ff28\n- sig_4d346da1\n- sig_efb0cf62\n- ai/tasks/20260826-093438-design-and-build-the-first-production-ready/qa.json\n- ai/tasks/20260826-093438-design-and-build-the-first-production-ready/security.json",
+  "finalState": "FOUNDER_APPROVAL_REQUIRED",
+  "agentsInvolved": [
+    "backend",
+    "frontend",
+    "integrator"
+  ],
+  "approvalGate": {
+    "required": true,
+    "reasons": [
+      "Correction retry limit (2) exhausted — integration could not reach a clean, fully reconciled state (unresolved: `npx prisma migrate dev` (the first-ever migration for RoommateProfile) has still never been applied against a real Postgres. Both `prisma migrate dev` and the read-only `prisma migrate status` are explicitly denied by this sandbox's Bash tool permission policy, and `prisma validate` (not denied) confirms no DATABASE_URL is configured and no dev Postgres is reachable in this environment. This is the 6th independent session to hit this identical hard environment boundary. Requires a human, or a session granted explicit DB-migration approval plus a provisioned dev Postgres with DATABASE_URL set, to run the migration and review the generated SQL before it's considered applied.; The manual browser QA pass (create → browse as 2nd user → filter → message → deactivate → reactivate) was not performed: no browser tool is available in this session's toolset, and the backend cannot boot end-to-end without a working DATABASE_URL/Postgres regardless. Requires a human, or a session with both browser access and a working dev DB, to complete.). Escalated to founder rather than looping indefinitely."
+    ]
+  },
+  "correctionCycles": 2,
+  "summary": "Execution stopped for founder approval. Agents involved so far: backend, frontend, integrator.",
+  "filesChanged": [
+    "rentals/backend/package-lock.json",
+    "rentals/backend/src/routes/roommateProfiles.ts",
+    "rentals/frontend/package-lock.json",
+    "rentals/frontend/src/app/roommates/page.tsx",
+    "rentals/frontend/src/components/roommates/RoommateProfileCard.tsx",
+    "rentals/frontend/src/components/roommates/RoommateProfileDetail.tsx",
+    "rentals/frontend/src/components/roommates/RoommateProfileFilters.tsx",
+    "rentals/frontend/src/components/roommates/RoommateProfileFormModal.tsx",
+    "rentals/frontend/src/store/roommateFilterStore.ts",
+    "rentals/backend/.gitignore",
+    "rentals/backend/prisma/schema.prisma",
+    "rentals/backend/src/index.ts",
+    "rentals/backend/src/routes/admin.ts",
+    "rentals/backend/src/routes/messages.ts",
+    "rentals/backend/tsconfig.json",
+    "rentals/frontend/.gitignore",
+    "rentals/frontend/src/components/layout/Navbar.tsx",
+    "rentals/frontend/src/components/messaging/Inbox.tsx",
+    "rentals/frontend/src/lib/api.ts",
+    "rentals/frontend/src/lib/utils.ts",
+    "rentals/frontend/src/types/index.ts",
+    "rentals/backend/src/types/multer-s3.d.ts",
+    "rentals/backend/package.json",
+    "rentals/backend/src/utils/jwt.ts"
+  ],
+  "nextSteps": [
+    "Founder review required before this task can proceed — see approval gate reasons above.",
+    "Review/merge the INTEGRATED branch \"agents/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated/integration\" at /home/user/muslimrentals/orchestrator/.worktrees/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated-integration — this is the reviewed, mergeable result. The individual implementer branches below are its inputs, already folded in; they don't need separate merging.",
+    "Implementer branch \"agents/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated/backend\" (backend) at /home/user/muslimrentals/orchestrator/.worktrees/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated-backend — not auto-merged by the orchestrator.",
+    "Implementer branch \"agents/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated/frontend\" (frontend) at /home/user/muslimrentals/orchestrator/.worktrees/20260827-224529-verify-buildtypecheckprisma-migration-on-the-integrated-frontend — not auto-merged by the orchestrator."
+  ]
+}

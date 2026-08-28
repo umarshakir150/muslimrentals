@@ -7,6 +7,13 @@
   "scripts": {
     "agents:task": "tsx src/cli.ts",
     "agents:task:full": "tsx src/cli.ts --full",
+    "agents:status": "tsx src/cli.ts status",
+    "agents:backlog": "tsx src/cli.ts backlog",
+    "agents:cycle": "tsx src/cli.ts cycle",
+    "agents:autonomous": "tsx src/cli.ts autonomous",
+    "agents:approvals": "tsx src/cli.ts approvals",
+    "agents:events": "tsx src/cli.ts events",
+    "agents:scheduler": "tsx src/cli.ts scheduler-loop",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

@@ -30,12 +30,21 @@ const RELEVANCE_MAP: Record<AgentRole, string[]> = {
   engineering: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
   frontend: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
   backend: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
-  qa: ['company/architecture.md', 'ai/current-state.md'],
+  qa: ['company/architecture.md', 'ai/current-state.md', 'ai/regression-inventory.md'],
   security: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
+  integrator: ['company/architecture.md', 'ai/current-state.md', 'company/principles.md'],
   designer: ['company/product.md', 'company/users.md', 'company/principles.md'],
   trust_safety: ['company/product.md', 'company/users.md', 'company/principles.md'],
   legal: ['company/product.md', 'company/users.md', 'company/architecture.md'],
   support: ['company/product.md', 'company/users.md'],
+  lead: [
+    'company/product.md',
+    'company/architecture.md',
+    'company/principles.md',
+    'ai/current-state.md',
+    'ai/roadmap.md',
+    'ai/operating-directive.md',
+  ],
 };
 
 function safeRead(relPath: string): string {

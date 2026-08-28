@@ -73,6 +73,24 @@ describe('agent registry — permission profiles', () => {
     }
   });
 
+  it('QA, Security, and Designer get WebFetch scoped to the published site domain only — never arbitrary URLs', () => {
+    for (const role of ['qa', 'security', 'designer'] as const) {
+      const profile = getProfile(role);
+      expect(profile.tools, role).toContain('WebFetch');
+      expect(profile.allowedToolPatterns, role).toContain('WebFetch(domain:muslimrentals.netlify.app)');
+      // No bare 'WebFetch' allow pattern — that would let dontAsk approve
+      // a fetch to any domain, defeating the scoping above.
+      expect(profile.allowedToolPatterns, role).not.toContain('WebFetch');
+    }
+  });
+
+  it('roles without a live-product-review mandate get no WebFetch at all', () => {
+    for (const [role, profile] of Object.entries(REGISTRY)) {
+      if (role === 'qa' || role === 'security' || role === 'designer') continue;
+      expect(profile.tools, role).not.toContain('WebFetch');
+    }
+  });
+
   it('no role is granted every tool unconditionally — each profile is deliberately scoped', () => {
     for (const [role, profile] of Object.entries(REGISTRY)) {
       expect(profile.tools.length, role).toBeGreaterThan(0);

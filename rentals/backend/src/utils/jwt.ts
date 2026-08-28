@@ -10,7 +10,7 @@
  *    swap to RS256 with a key pair stored in a secrets manager
  *  - Payload contains only userId/email/role — no sensitive PII
  */
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 
 export interface JwtPayload {
   userId: string;
@@ -20,6 +20,13 @@ export interface JwtPayload {
 
 type MinimalUser = { id: string; email: string; role: string };
 
+// jsonwebtoken v9's SignOptions.expiresIn rejects a bare `string` (it wants
+// its own branded StringValue/number union) -- env vars are always plain
+// strings, so the value needs an explicit cast to the option's own type
+// rather than a functional change to what's accepted.
+const ACCESS_TOKEN_EXPIRY = (process.env.JWT_EXPIRES_IN || '15m') as SignOptions['expiresIn'];
+const REFRESH_TOKEN_EXPIRY = (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as SignOptions['expiresIn'];
+
 export function signAccessToken(user: MinimalUser): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not set');
@@ -27,7 +34,7 @@ export function signAccessToken(user: MinimalUser): string {
   return jwt.sign(
     { userId: user.id, email: user.email, role: user.role },
     secret,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '15m', algorithm: 'HS256' }
+    { expiresIn: ACCESS_TOKEN_EXPIRY, algorithm: 'HS256' }
   );
 }
 
@@ -38,7 +45,7 @@ export function signRefreshToken(user: MinimalUser): string {
   return jwt.sign(
     { userId: user.id, email: user.email, role: user.role },
     secret,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d', algorithm: 'HS256' }
+    { expiresIn: REFRESH_TOKEN_EXPIRY, algorithm: 'HS256' }
   );
 }
 

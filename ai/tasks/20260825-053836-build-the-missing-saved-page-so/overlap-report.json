@@ -1,0 +1,23 @@
+{
+  "taskId": "20260825-053836-build-the-missing-saved-page-so",
+  "overlaps": [
+    {
+      "path": "rentals/backend/src/routes/users.ts",
+      "agents": [
+        "frontend",
+        "backend"
+      ],
+      "classification": "CONFLICTING",
+      "reason": "2 workers (frontend, backend) independently modified the same file, and it was not within every one of their expected scopes — undeclared cross-cutting change, not a coordinated shared edit."
+    }
+  ],
+  "outOfScope": [
+    {
+      "agent": "frontend",
+      "path": "rentals/backend/src/routes/users.ts",
+      "classification": "OUT_OF_SCOPE_REVIEW_REQUIRED",
+      "reason": "\"frontend\" modified \"rentals/backend/src/routes/users.ts\", which is outside its expected scope (rentals/frontend/**)."
+    }
+  ],
+  "hasBlockingIssues": true
+}

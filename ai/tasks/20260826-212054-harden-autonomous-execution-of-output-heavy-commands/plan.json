@@ -1,0 +1,49 @@
+{
+  "taskId": "20260826-212054-harden-autonomous-execution-of-output-heavy-commands",
+  "objective": "Harden autonomous execution of output-heavy commands (npm install/build) against stdout buffer overflow\n\nThe Roommate Profiles verification task (bl_368a454b) failed mid-execution with 'stdout maxBuffer length exceeded' while presumably running npm install and/or build/migrate commands in rentals/backend or rentals/frontend. This is a child-process stdout capture limit, not a code defect, but it will recur on any future task that runs a verbose install/build/migrate command through the same execution harness. Fix by having implementer/QA tooling run such commands with reduced-verbosity flags (e.g. npm install --no-fund --no-audit --loglevel=error) and/or redirect output to a log file and only surface the tail/errors, rather than capturing full raw stdout.\n\nWhy this matters (backlog rationale): Directly caused a real execution failure this cycle (mem_0bc54a1e) on the single highest-priority backlog item, and the same failure mode will block any future task that needs npm install/build/migrate output captured in full. Fixing this once removes a recurring source of wasted cycles for testing/verification work, which the standing objective treats as high priority.\n\nEvidence:\n- mem_0bc54a1e-dcdb-4bfa-a801-f7a2108f02e3",
+  "requiredAgents": [
+    "engineering",
+    "qa",
+    "security"
+  ],
+  "dependencies": {
+    "engineering": [],
+    "qa": [
+      "engineering"
+    ],
+    "security": [
+      "engineering"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "engineering"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "engineering",
+      "expectedPaths": [
+        "rentals/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Updated command-execution wrapper(s) in the orchestrator (e.g. src/claude/claudeAdapter.ts) with bounded/streamed output handling",
+    "Documented behavior for how truncated/log-tailed output is surfaced to implementer and QA agents",
+    "Manual verification that a verbose command (e.g. npm install in rentals/backend or rentals/frontend) completes without exceeding buffer limits"
+  ],
+  "riskNotes": [
+    "This changes internal orchestrator execution tooling, not the rentals/ product application code — low blast radius but affects reliability of all future autonomous tasks that run install/build/migrate commands.",
+    "Must ensure error output is still fully surfaced (not silently swallowed) even when truncating success-path stdout, so real failures remain diagnosable."
+  ]
+}

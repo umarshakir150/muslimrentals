@@ -1,0 +1,33 @@
+{
+  "role": "security",
+  "taskId": "20260825-053836-build-the-missing-saved-page-so",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "GET /users/me/saved and POST /listings/:id/save are both correctly scoped to req.user!.id (compound unique key userId_listingId used for lookup/delete/create), preventing IDOR against other users' saved-listing rows.",
+      "evidence": "rentals/backend/src/routes/users.ts:100 (where: { userId: req.user!.id, ... }); rentals/backend/src/routes/listings.ts:290,295,304 (all keyed on req.user!.id)."
+    },
+    {
+      "severity": "info",
+      "finding": "Saved listings that are later soft-removed/deactivated are correctly excluded from the saved list via status: ACTIVE filter, preventing exposure of de-listed content.",
+      "evidence": "rentals/backend/src/routes/users.ts:100"
+    },
+    {
+      "severity": "info",
+      "finding": "user relation on saved listing is limited to safe public fields (id, name, avatarUrl) matching the existing GET /listings pattern, no PII leakage.",
+      "evidence": "rentals/backend/src/routes/users.ts:106"
+    },
+    {
+      "severity": "info",
+      "finding": "/saved page auth gating matches the existing pattern used by /post (useIsAuthenticated + AuthModal, redirect to / on close), no new auth pattern introduced.",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx:70-83 vs rentals/frontend/src/app/post/page.tsx"
+    },
+    {
+      "severity": "info",
+      "finding": "POST /listings/:id/save is UUID-validated, authenticated, and rate-limited (writeRateLimiter); duplicate-save is prevented at the DB level via @@unique([userId, listingId]).",
+      "evidence": "rentals/backend/src/routes/listings.ts:287"
+    }
+  ],
+  "notes": "Reviewed the actual integrated diff (GET /users/me/saved, POST /listings/:id/save, /saved/page.tsx, ListingCard.tsx) directly rather than relying on prior reports. Ownership scoping, UUID validation, rate limiting, and auth gating are all consistent with existing codebase patterns. No new authorization gaps, data exposure, or injection risk introduced. No schema changes were made (query-level fixes only), consistent with the additive/non-destructive requirement."
+}

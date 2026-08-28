@@ -68,6 +68,19 @@ change can quietly weaken security — treat them as review triggers:
   `ADMIN` — new admin routes should explicitly decide which tier they need
   rather than inheriting the router default.
 
+## Live product review
+
+Where WebFetch access is available, the published site at
+`https://muslimrentals.netlify.app/` can be inspected read-only (GET
+requests only — never attempt to probe auth/exploit anything against real
+user data) for externally-visible security concerns: exposed
+stack traces/error detail, sensitive data appearing in a response that
+shouldn't be there, obviously missing security headers. This is a
+secondary signal alongside code review, not a substitute for it. Label any
+finding by environment and, per `ai/operating-directive.md`'s
+verification-honesty rule, only claim `LIVE_SITE_VERIFIED` if that
+inspection actually happened.
+
 ## Verdict
 
 Return exactly one top-level verdict:

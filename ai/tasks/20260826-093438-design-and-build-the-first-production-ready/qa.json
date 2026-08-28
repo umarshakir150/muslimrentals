@@ -1,0 +1,25 @@
+{
+  "role": "qa",
+  "taskId": "20260826-093438-design-and-build-the-first-production-ready",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "No compiler or runtime verification has been performed on this feature at any stage (backend, frontend, or integration) — no node_modules are installed in this worktree and Bash install/build commands are denied by the sandbox. All correctness claims (this review included) are based on manual line-by-line code reading, not tsc/prisma validate/a running dev server.",
+      "evidence": "rentals/backend/node_modules and rentals/frontend/node_modules do not exist (Glob returned no tsc binary in either); prior backend/frontend/integrator reports independently confirm the same restriction.",
+      "recommendedAction": "Before merge: run `npm install && npx tsc --noEmit` in both rentals/backend and rentals/frontend, `npx prisma generate` + first-ever `npx prisma migrate dev` against a real Postgres instance, and do one manual browser pass of the full flow (create → browse as 2nd user → filter → message → deactivate → reactivate → report → admin review) since this is genuinely new, previously-unexercised code."
+    },
+    {
+      "severity": "low",
+      "finding": "Frontend RoommateProfileFilters exposes an 'EITHER' pill as a strict-equality filter on audiencePref, so a searcher who selects 'EITHER' only sees profiles that explicitly set audiencePref=EITHER, not all profiles that would accept them (e.g. a BROTHERS-only searcher won't see a profile with no audiencePref set, which might still be open to anyone).",
+      "evidence": "rentals/frontend/src/components/roommates/RoommateProfileFilters.tsx AUDIENCE_OPTIONS + rentals/backend/src/routes/roommateProfiles.ts:123 `if (q.audiencePref) where.audiencePref = q.audiencePref;`",
+      "recommendedAction": "Non-blocking UX nuance for this MVP; worth a follow-up note to the Product Designer rather than a required fix now."
+    },
+    {
+      "severity": "info",
+      "finding": "RoommateProfile.city browse filter uses `contains`/`insensitive`, and the directory is authenticate-gated (entire router behind `authenticate`), which is a stronger anti-scraping posture than the public Listing browse endpoint — consistent with T&S's stated design goal of reducing enumeration risk on a directory of real people.",
+      "evidence": "rentals/backend/src/routes/roommateProfiles.ts:34 `router.use(authenticate);` and :122 city filter."
+    }
+  ],
+  "notes": "Independently reviewed the full integrated diff in this worktree (schema, roommateProfiles.ts route file in full, messages.ts, admin.ts include, and every new frontend file: page.tsx, RoommateProfileCard/Detail/Filters/FormModal, roommateFilterStore, api.ts, types/index.ts, utils.ts helpers, Navbar, Inbox.tsx). Confirmed: (1) IDOR is structurally prevented — every mutation (create/update/deactivate/reactivate) is scoped to `where: { userId: req.user!.id }` with no client-supplied profile id ever accepted for a write; (2) no email/phone/address/lat-lng field exists anywhere in the schema, route selects, or frontend types/forms — PUBLIC_SELECT is the only select used on every read path; (3) detail endpoint returns 404 (not 403) for inactive/foreign profiles, avoiding existence-confirmation; (4) UUID params validated via the existing regex-based validateUuidParam before any DB query; (5) all Zod schemas are `.strict()` with sane bounds, and the frontend/backend validation-bound mismatch flagged by the integrator (bio 2000 vs 1000, budget min 0 vs >0) has in fact been fixed in the current worktree (frontend now bio max(1000), budgetMin/Max min(1)); (6) Conversation/Report schema changes are additive nullable FKs only, no destructive change to existing Listing/User data; (7) reporting reuses the existing Report model/pattern exactly, matching ListingDetail's own hardcoded-reason report UX; (8) messaging reuses the exact same conversation-creation/socket-emit/notification pattern as the existing listing-messaging route; (9) no leftover git conflict markers anywhere in rentals/; (10) loading/empty/error/sign-out-gated states are all implemented on /roommates matching Browse's tone. No blocking defects found. The only material gap is the repo-wide, pre-existing lack of any compiler/CI verification (not something this feature introduced) — flagged as info rather than a blocker, matching how the same gap is already documented in ai/current-state.md for the rest of the codebase."
+}

@@ -9,6 +9,18 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // Real implementer/integration worktrees (created under .worktrees/ —
+    // see src/paths.ts getWorktreesRoot()) are full checkouts of this repo,
+    // including their own nested copy of orchestrator/tests/*.test.ts as of
+    // whatever commit they branched from. Without this exclude, Vitest's
+    // glob happily discovers and runs those nested, possibly-stale test
+    // files too — and since a worktree shares the same underlying git repo
+    // (refs/objects) as this checkout, two test runs creating worktrees with
+    // the same generated branch names race and fail with "branch already
+    // exists." Test worktrees already live outside the repo entirely (see
+    // ORCHESTRATOR_WORKTREES_DIR below), so this only ever excludes real
+    // task worktrees left on disk from actual --full runs.
+    exclude: ['**/node_modules/**', '**/dist/**', '.worktrees/**'],
     testTimeout: 20_000,
     hookTimeout: 20_000,
     // Orchestration tests must never write into the real ai/tasks/ or create
@@ -17,6 +29,11 @@ export default defineConfig({
     env: {
       ORCHESTRATOR_TASKS_DIR: path.join(scratch, 'ai-tasks'),
       ORCHESTRATOR_WORKTREES_DIR: path.join(scratch, 'worktrees'),
+      // Autonomy-layer tests must never touch the real .autonomy/state.db —
+      // see src/autonomy/db.ts. Each test file gets a fresh file (tests
+      // call closeDb() + delete/point elsewhere as needed for isolation
+      // within a file); globalSetup wipes the whole scratch root up front.
+      ORCHESTRATOR_AUTONOMY_DB: path.join(scratch, 'autonomy', 'state.db'),
     },
     globalSetup: ['tests/globalSetup.ts'],
   },

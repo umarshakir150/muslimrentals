@@ -24,6 +24,12 @@ export const AgentRole = z.enum([
   'trust_safety',
   'legal',
   'support',
+  'integrator',
+  // Orchestration-internal, like 'integrator' — the autonomous product/CTO
+  // layer above the Supervisor (src/autonomy/lead.ts). Never selectable via
+  // a SupervisorPlan; filtered out in planner.ts the same way 'supervisor'
+  // and 'integrator' are. See ai/autonomy-architecture.md.
+  'lead',
 ]);
 export type AgentRole = z.infer<typeof AgentRole>;
 
@@ -36,10 +42,22 @@ export const TaskState = z.enum([
   'SPECIALIST_REVIEW',
   'READY_FOR_IMPLEMENTATION',
   'IMPLEMENTING',
+  // Single-implementer review path (unchanged from before multi-worker
+  // integration existed — there is only ever one worktree to review, so
+  // there's nothing to cross-check against).
   'QA_REVIEW',
   'SECURITY_REVIEW',
-  'CORRECTION_REQUIRED',
   'RE_REVIEW',
+  // Multi-implementer path: entered only when 2+ implementer roles ran.
+  // See orchestrator/README.md "Integration" for why this replaces
+  // per-worktree review rather than running alongside it.
+  'CROSS_BRANCH_ANALYSIS',
+  'INTEGRATION',
+  'INTEGRATED_QA_REVIEW',
+  'INTEGRATED_SECURITY_REVIEW',
+  'RE_INTEGRATION',
+  // Shared by both paths.
+  'CORRECTION_REQUIRED',
   'READY_FOR_FOUNDER',
   'FOUNDER_APPROVAL_REQUIRED',
   'COMPLETE',
@@ -60,6 +78,19 @@ export const Finding = z.object({
 });
 export type Finding = z.infer<typeof Finding>;
 
+// ─── ImplementationScope ──────────────────────────────────────────────────────
+// Per-implementer file-path ownership, e.g. { agent: "frontend",
+// expectedPaths: ["rentals/frontend/**"], allowedSharedPaths: [] }. Always
+// computed deterministically per role (src/supervisor/crossBranchAnalysis.ts)
+// rather than left to model judgment — same reasoning as parallelGroups
+// scheduling: this is a safety-relevant boundary, not a creative decision.
+export const ImplementationScope = z.object({
+  agent: AgentRole,
+  expectedPaths: z.array(z.string()).min(1),
+  allowedSharedPaths: z.array(z.string()).default([]),
+});
+export type ImplementationScope = z.infer<typeof ImplementationScope>;
+
 // ─── SupervisorPlan ──────────────────────────────────────────────────────────
 export const SupervisorPlan = z.object({
   taskId: z.string(),
@@ -70,6 +101,8 @@ export const SupervisorPlan = z.object({
   // Ordered groups; agents within a group may run concurrently, groups run
   // in order. e.g. [["designer","trust_safety","legal"],["engineering"],["qa","security"]]
   parallelGroups: z.array(z.array(AgentRole)).min(1),
+  // Only populated for implementer roles; empty for a task with 0-1 implementers.
+  implementationScopes: z.array(ImplementationScope).default([]),
   approvalRequirements: z.object({
     founderApprovalRequired: z.boolean(),
     reasons: z.array(z.string()).default([]),
@@ -106,6 +139,89 @@ export const ImplementationResult = z.object({
   noChangesNeeded: z.boolean().default(false),
 });
 export type ImplementationResult = z.infer<typeof ImplementationResult>;
+
+// ─── WorkerChangeSet / ChangedFilesReport ─────────────────────────────────────
+// Ground truth for what one implementer's worktree actually changed relative
+// to the task's base commit — computed from git, never from a model's
+// self-report (see src/git/worktree.ts diffNameStatus()).
+export const WorkerChangeSet = z.object({
+  agent: AgentRole,
+  branch: z.string(),
+  added: z.array(z.string()).default([]),
+  modified: z.array(z.string()).default([]),
+  deleted: z.array(z.string()).default([]),
+  renamed: z.array(z.object({ from: z.string(), to: z.string() })).default([]),
+});
+export type WorkerChangeSet = z.infer<typeof WorkerChangeSet>;
+
+export const ChangedFilesReport = z.object({
+  taskId: z.string(),
+  baseCommit: z.string(),
+  workers: z.array(WorkerChangeSet),
+});
+export type ChangedFilesReport = z.infer<typeof ChangedFilesReport>;
+
+// ─── OverlapReport ─────────────────────────────────────────────────────────────
+// Deterministic cross-branch analysis output (src/supervisor/crossBranchAnalysis.ts) —
+// no model involved. This is what makes "two implementers silently diverged
+// on the same file" a detected condition instead of something only a human
+// (or an unlucky founder in production) discovers later.
+export const OverlapClassification = z.enum(['EXPECTED_SHARED', 'SUSPICIOUS', 'CONFLICTING']);
+export type OverlapClassification = z.infer<typeof OverlapClassification>;
+
+export const OverlapEntry = z.object({
+  path: z.string(),
+  agents: z.array(AgentRole).min(2),
+  classification: OverlapClassification,
+  reason: z.string(),
+});
+export type OverlapEntry = z.infer<typeof OverlapEntry>;
+
+export const OutOfScopeEntry = z.object({
+  agent: AgentRole,
+  path: z.string(),
+  classification: z.literal('OUT_OF_SCOPE_REVIEW_REQUIRED'),
+  reason: z.string(),
+});
+export type OutOfScopeEntry = z.infer<typeof OutOfScopeEntry>;
+
+export const OverlapReport = z.object({
+  taskId: z.string(),
+  overlaps: z.array(OverlapEntry).default([]),
+  outOfScope: z.array(OutOfScopeEntry).default([]),
+  // True if anything here requires the Integrator agent's judgment rather
+  // than a purely mechanical merge — any CONFLICTING overlap, or any
+  // out-of-scope entry at all.
+  hasBlockingIssues: z.boolean(),
+});
+export type OverlapReport = z.infer<typeof OverlapReport>;
+
+// ─── IntegrationResult ───────────────────────────────────────────────────────
+// The Integrator's structured output. Never a final approval — see
+// agents/integrator.md: the Integrator reconciles, it does not sign off.
+export const IntegrationDecision = z.object({
+  path: z.string(),
+  // e.g. "frontend", "backend", "combined", "kept-base" — free text because
+  // the set of implementer roles involved varies per task.
+  chosenSource: z.string(),
+  combined: z.boolean().default(false),
+  rationale: z.string(),
+  behaviorChanged: z.string().optional(),
+});
+export type IntegrationDecision = z.infer<typeof IntegrationDecision>;
+
+export const IntegrationResult = z.object({
+  role: z.literal('integrator'),
+  taskId: z.string(),
+  branch: z.string(),
+  decisions: z.array(IntegrationDecision).default([]),
+  filesChanged: z.array(z.string()).default([]),
+  summary: z.string(),
+  // Non-empty means integration FAILED to reach a clean, mergeable state —
+  // the orchestrator treats this as blocking, never as a partial success.
+  unresolvedConflicts: z.array(z.string()).default([]),
+});
+export type IntegrationResult = z.infer<typeof IntegrationResult>;
 
 // ─── ReviewResult ────────────────────────────────────────────────────────────
 // Used by qa and security. Verdict vocabulary matches agents/qa.md and
@@ -164,6 +280,7 @@ export const JsonSchemas = {
   SupervisorPlan: toJsonSchemaDocument(SupervisorPlan),
   AgentAnalysis: toJsonSchemaDocument(AgentAnalysis),
   ImplementationResult: toJsonSchemaDocument(ImplementationResult),
+  IntegrationResult: toJsonSchemaDocument(IntegrationResult),
   ReviewResult: toJsonSchemaDocument(ReviewResult),
   FinalTaskReport: toJsonSchemaDocument(FinalTaskReport),
 } as const;

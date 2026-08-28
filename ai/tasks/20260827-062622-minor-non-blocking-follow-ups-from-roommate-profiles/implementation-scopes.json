@@ -1,0 +1,16 @@
+[
+  {
+    "agent": "frontend",
+    "expectedPaths": [
+      "rentals/frontend/**"
+    ],
+    "allowedSharedPaths": []
+  },
+  {
+    "agent": "backend",
+    "expectedPaths": [
+      "rentals/backend/**"
+    ],
+    "allowedSharedPaths": []
+  }
+]

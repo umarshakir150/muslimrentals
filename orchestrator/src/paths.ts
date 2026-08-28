@@ -22,3 +22,11 @@ export function getAiTasksDir(): string {
 export function getWorktreesRoot(): string {
   return process.env.ORCHESTRATOR_WORKTREES_DIR ?? path.join(ORCHESTRATOR_ROOT, '.worktrees');
 }
+
+/** SQLite file backing the autonomy layer (backlog/signals/memory/cycles/
+ * approvals/events) — see ai/autonomy-architecture.md "Persistence model".
+ * Gitignored, same treatment as .worktrees/: durable across process
+ * restarts, not committed. Overridable so tests never touch real state. */
+export function getAutonomyDbPath(): string {
+  return process.env.ORCHESTRATOR_AUTONOMY_DB ?? path.join(ORCHESTRATOR_ROOT, '.autonomy', 'state.db');
+}

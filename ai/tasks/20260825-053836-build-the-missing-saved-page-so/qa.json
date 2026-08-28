@@ -1,0 +1,38 @@
+{
+  "role": "qa",
+  "taskId": "20260825-053836-build-the-missing-saved-page-so",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "/saved page auth gating matches the existing /post page pattern exactly (useIsAuthenticated + AuthModal + redirect to '/' on close if still unauthenticated), rather than inventing a new pattern.",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx lines 28-83 mirror rentals/frontend/src/app/post/page.tsx lines 13-50."
+    },
+    {
+      "severity": "info",
+      "finding": "GET /users/me/saved is correctly scoped to req.user!.id via the (userId, listingId) compound key on every query; no cross-user read/write path exists.",
+      "evidence": "rentals/backend/src/routes/users.ts:100 where: { userId: req.user!.id, ... }; POST /listings/:id/save at listings.ts:287-306 also scopes findUnique/delete/create to req.user!.id."
+    },
+    {
+      "severity": "info",
+      "finding": "Integrated GET /users/me/saved now filters out non-ACTIVE listings (stricter than a 'not REMOVED' check, matching GET /listings convention), flattens amenities to string[], sets isSaved:true, includes thumbnailUrl and the listing owner's safe user fields — response shape now matches GET /listings/GET /listings/:id exactly, so ListingCard and ListingDetail render identically regardless of source endpoint.",
+      "evidence": "rentals/backend/src/routes/users.ts:95-125 vs rentals/backend/src/routes/listings.ts:134-169"
+    },
+    {
+      "severity": "info",
+      "finding": "Duplicate-save race is backstopped by the @@unique([userId, listingId]) DB constraint on SavedListing; toggle logic (findUnique then create/delete) is correct and unchanged.",
+      "evidence": "rentals/backend/prisma/schema.prisma:134-144"
+    },
+    {
+      "severity": "info",
+      "finding": "Unsaving a listing from /saved correctly removes it from the visible list via the onSaveChange callback threaded through ListingCard (optional prop, non-breaking for other ListingCard call sites like /browse and /map).",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx:50-52 handleSaveChange; ListingCard.tsx:18,38 onSaveChange?.(listing, res.saved)"
+    },
+    {
+      "severity": "info",
+      "finding": "Loading (skeleton grid), empty (Heart icon + CTA to /browse), and error (retry button) states are all present and distinct, using the same grid layout/classes as /browse (grid sm:grid-cols-2 xl:grid-cols-3 gap-5).",
+      "evidence": "rentals/frontend/src/app/saved/page.tsx:103-143 vs rentals/frontend/src/app/browse/page.tsx:109,134-136"
+    }
+  ],
+  "notes": "Reviewed the integrated worktree directly (git log shows the merge/integration commits, working tree clean). Could not run tsc/dev server (Bash denied for build commands in this session) so this is a thorough code-level review, not a live browser test — recommend a quick manual smoke test of /saved (logged out → AuthModal → log in → save a listing from /browse → visit /saved → unsave from card → list updates) before merge, but nothing in the diff itself indicates a functional gap."
+}

@@ -1,0 +1,22 @@
+{
+  "taskId": "20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles",
+  "baseCommit": "079caa2c62aadd39ab85685294cab6dd4b30f97d",
+  "workers": [
+    {
+      "agent": "frontend",
+      "branch": "agents/20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles/frontend",
+      "added": [],
+      "modified": [],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "backend",
+      "branch": "agents/20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles/backend",
+      "added": [],
+      "modified": [],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
@@ -31,6 +32,7 @@ export default function BrowsePage() {
   const { filters } = useFilterStore();
   const { toast } = useToast();
   const isAuth = useIsAuthenticated();
+  const router = useRouter();
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -138,7 +140,7 @@ export default function BrowsePage() {
                   listing={listing}
                   index={i}
                   onView={setSelectedListing}
-                  onMap={() => {}}
+                  onMap={(l) => router.push(`/map?listingId=${l.id}`)}
                   onMessage={(l) => { if (!isAuth) setAuthOpen(true); else setMessageTarget(l); }}
                 />
               ))}

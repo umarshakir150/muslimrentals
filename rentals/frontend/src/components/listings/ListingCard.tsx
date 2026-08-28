@@ -27,6 +27,7 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
 
   const isNew = (Date.now() - new Date(listing.createdAt).getTime()) < 48 * 3600 * 1000;
   const imgSrc = listing.thumbnailUrl || listing.images?.[0]?.url;
+  const hasCoords = listing.lat != null && listing.lng != null;
 
   async function handleSave(e: React.MouseEvent) {
     e.stopPropagation();
@@ -124,8 +125,16 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
             <MessageSquare size={13} /> Message
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); onMap(listing); }}
-            className="flex items-center justify-center gap-1.5 px-4 text-xs font-semibold text-muted bg-gray-50 rounded-xl py-2.5 hover:bg-brand-50 hover:text-brand-700 transition-colors"
+            onClick={(e) => { e.stopPropagation(); if (hasCoords) onMap(listing); }}
+            disabled={!hasCoords}
+            aria-disabled={!hasCoords}
+            title={hasCoords ? undefined : 'Location not available for this listing'}
+            className={cn(
+              'flex items-center justify-center gap-1.5 px-4 text-xs font-semibold rounded-xl py-2.5 transition-colors',
+              hasCoords
+                ? 'text-muted bg-gray-50 hover:bg-brand-50 hover:text-brand-700'
+                : 'text-muted/40 bg-gray-50 cursor-not-allowed'
+            )}
           >
             <Map size={13} /> Map
           </button>

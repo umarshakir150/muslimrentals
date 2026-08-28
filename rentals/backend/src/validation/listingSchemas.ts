@@ -65,3 +65,22 @@ export const reportSchema = z.object({
   reason:      z.string().min(5).max(300).trim(),
   description: z.string().max(1000).trim().optional(),
 }).strict();
+
+// Pure so filter correctness (min/max gte/lte on bedrooms Float / bathrooms Int)
+// can be unit-tested without a live database.
+export function applyRangeFilters(
+  where: Record<string, any>,
+  q: Pick<
+    z.infer<typeof listingQuerySchema>,
+    'minBeds' | 'maxBeds' | 'minBaths' | 'maxBaths' | 'minPrice' | 'maxPrice'
+  >,
+): Record<string, any> {
+  const next = { ...where };
+  if (q.minBeds  != null) next.bedrooms  = { ...next.bedrooms,  gte: q.minBeds  };
+  if (q.maxBeds  != null) next.bedrooms  = { ...next.bedrooms,  lte: q.maxBeds  };
+  if (q.minBaths != null) next.bathrooms = { ...next.bathrooms, gte: q.minBaths };
+  if (q.maxBaths != null) next.bathrooms = { ...next.bathrooms, lte: q.maxBaths };
+  if (q.minPrice != null) next.price     = { ...next.price,     gte: q.minPrice };
+  if (q.maxPrice != null) next.price     = { ...next.price,     lte: q.maxPrice };
+  return next;
+}

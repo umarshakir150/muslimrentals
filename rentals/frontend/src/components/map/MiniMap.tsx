@@ -18,12 +18,21 @@ export default function MiniMap() {
     if (initialized.current || !mapRef.current) return;
     initialized.current = true;
 
+    // Captured so the async init below never touches a ref React may have
+    // already nulled out by the time it resolves (route-navigation race).
+    let cancelled = false;
+    const container = mapRef.current;
     let map: any;
+
     (async () => {
       const L = (await import('leaflet')).default;
       delete (L.Icon.Default.prototype as any)._getIconUrl;
 
-      map = L.map(mapRef.current!, {
+      // Component unmounted (e.g. user navigated away) while the dynamic
+      // import was still in flight — abort before touching the DOM.
+      if (cancelled) return;
+
+      map = L.map(container, {
         center: [43.6532, -79.3832],
         zoom: 8,
         zoomControl: false,
@@ -34,6 +43,15 @@ export default function MiniMap() {
         touchZoom: false,
         keyboard: false,
       });
+
+      // Unmounted between L.map() creation and here (unlikely, but cheap
+      // to guard) — tear the freshly created instance down immediately
+      // instead of leaving it orphaned with no registered cleanup.
+      if (cancelled) {
+        map.remove();
+        map = null;
+        return;
+      }
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
@@ -51,7 +69,14 @@ export default function MiniMap() {
 
     })();
 
-    return () => { if (map) { map.remove(); initialized.current = false; } };
+    return () => {
+      cancelled = true;
+      if (map) {
+        map.remove();
+        map = null;
+      }
+      initialized.current = false;
+    };
   }, []);
 
   return <div ref={mapRef} className="w-full h-full" />;

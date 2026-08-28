@@ -19,9 +19,16 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm } from '../utils/geo';
-import { listingCreateSchema, listingUpdateSchema, listingQuerySchema, reportSchema } from '../validation/listingSchemas';
+import {
+  listingCreateSchema,
+  listingUpdateSchema,
+  listingQuerySchema,
+  reportSchema,
+  applyRangeFilters,
+} from '../validation/listingSchemas';
 
 const router = Router();
+
 
 // ─── GET /listings ────────────────────────────────────────────────────────────
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -38,12 +45,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
       { neighbourhood: { contains: q.keyword, mode: 'insensitive' } },
       { city:          { contains: q.keyword, mode: 'insensitive' } },
     ];
-    if (q.minBeds  != null) where.bedrooms  = { ...where.bedrooms,  gte: q.minBeds  };
-    if (q.maxBeds  != null) where.bedrooms  = { ...where.bedrooms,  lte: q.maxBeds  };
-    if (q.minBaths != null) where.bathrooms = { ...where.bathrooms, gte: q.minBaths };
-    if (q.maxBaths != null) where.bathrooms = { ...where.bathrooms, lte: q.maxBaths };
-    if (q.minPrice != null) where.price     = { ...where.price,     gte: q.minPrice };
-    if (q.maxPrice != null) where.price     = { ...where.price,     lte: q.maxPrice };
+    Object.assign(where, applyRangeFilters(where, q));
 
     // Amenity filters — values are already constrained by query schema
     const amenityFilters: string[] = [];

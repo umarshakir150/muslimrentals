@@ -32,3 +32,14 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
 }
+
+// jsdom does not implement ResizeObserver; FullMap uses it to keep the
+// Leaflet map sized correctly when its container resizes.
+if (typeof globalThis !== 'undefined' && !(globalThis as any).ResizeObserver) {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as any).ResizeObserver = ResizeObserverStub;
+}

@@ -68,7 +68,9 @@ const listingQuerySchema = z.object({
   lng:       z.coerce.number().min(-180).max(180).optional(),
   radiusKm:  z.coerce.number().min(1).max(500).optional(),
   page:      z.coerce.number().int().min(1).max(1000).default(1),
-  limit:     z.coerce.number().int().min(1).max(50).default(20),
+  // Capped at 200, not 50 -- the map view (frontend src/app/map/page.tsx)
+  // legitimately requests limit=200 to plot every active listing at once.
+  limit:     z.coerce.number().int().min(1).max(200).default(20),
   sort:      z.enum(['newest', 'priceLow', 'priceHigh', 'beds']).default('newest'),
   keyword:   z.string().max(200).trim().optional(),
   amenities: z.string().max(500).optional(),  // comma-separated

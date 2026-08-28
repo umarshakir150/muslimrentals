@@ -795,3 +795,118 @@ standard promote-to-main flow for both, verify `/my-listings`,
 `DELETE /:id/permanent`, `/neighbourhoods`, and the map clustering/spiderfy
 behavior live, and flip the relevant regression-inventory rows once a
 real check (not just deployment) happens.
+
+## 2026-08-28 (later) — MCP access restored, migrations applied, promoted to production
+
+**Resolution of the blocker above.** Supabase MCP access came back mid-session
+(founder confirmed it was reconnected in Claude settings; a system notice then
+confirmed 104 deferred tools reconnected). Handled end-to-end without further
+founder involvement, per the standing "handle routine implementation, only
+escalate genuine blockers" instruction:
+
+- Applied both pending migrations directly to production Supabase (project
+  `mxpoenfnqrfwznquaibd`) via `apply_migration`: `add_neighbourhood` and
+  `conversation_listing_setnull`. Both succeeded. Verified via `list_tables`:
+  `Neighbourhood` exists with RLS enabled and the right columns;
+  `Conversation.listingId` is now nullable.
+- Seeded all 151 curated `Neighbourhood` rows (extracted from
+  `rentals/backend/src/data/neighbourhoods.ts`) via a generated
+  `INSERT ... ON CONFLICT DO NOTHING` statement. Verified count = 151 and
+  full coverage (a `LEFT JOIN` against `City` with no unmatched rows — every
+  city has at least one neighbourhood, honoring the "a required field must
+  never leave a city with zero choices" guarantee documented in that file).
+- Ran `get_advisors` (security): only the expected `rls_enabled_no_policy`
+  INFO lint, consistent with the rest of the schema — no new issues.
+- Merged one more scheduler-completed fix into the working branch first
+  (stale in-flight "Load more" request race, `requestIdRef` sequencing
+  guard) — verified (100/100 backend tests, 64/64 frontend tests) and
+  pushed to `claude/multi-agent-os-setup-y2wprj` (`11954fc`).
+- Promoted the working branch to `main` via a detached worktree merge
+  (`git merge --no-ff`). Hit a real conflict in
+  `rentals/frontend/src/app/browse/page.tsx` — `main`'s own prior pagination
+  commits were never an ancestor of the working branch (confirmed via
+  `git merge-base --is-ancestor`), even though the working branch had
+  functionally-equivalent/superset changes via separately-merged scheduler
+  branches. Resolved by hand, taking the working branch's version
+  throughout (request-id race guard, the dead-Map-button fix). The
+  automatic (non-conflicted) merge of the two versions also silently
+  produced a duplicate `const page = filters.page || 1;` declaration,
+  which would have broken the build — caught and removed during conflict
+  resolution, not left for CI to find.
+- Re-ran full verification in the merge worktree before pushing: backend
+  `tsc --noEmit` clean, 100/100 backend tests, frontend `tsc --noEmit`
+  clean, 64/64 frontend tests, and a full `next build` production build
+  (all 14 routes compiled, including the new `/my-listings` route) —
+  all green.
+- Scanned the full merge diff for secret-looking patterns before pushing
+  (API keys, private key headers, hardcoded passwords) — none found.
+- Pushed the merge to `main` (`7195be6` → `1b68860`).
+
+**Net result:** `main` now contains everything from this session's 4-feature
+batch (required-neighbourhood + real coordinate resolution + clustering/
+spiderfy, the map-cleanup-on-navigation fix, numeric Beds/Baths, and
+owner-only permanent Delete Listing with the corrected SetNull cascade
+behavior), plus the three scheduler-found fixes (dead Map button, bed/bath
+empty-string coercion, stale Load-more race), plus the original 3-bug batch.
+Both schema migrations are live in production Supabase with full
+151-neighbourhood coverage.
+
+**Verification gap, stated honestly:** Render (tracks the working branch
+directly, `autoDeploy: commit`) was confirmed still serving an old commit
+(`5a1458eb`, 10 commits behind) at last check — its auto-deploy did not
+appear to fire promptly on the working-branch pushes, for reasons not yet
+diagnosed. I was in the process of triggering a manual Render deploy when
+the Render/Netlify/Supabase/Railway MCP tools disconnected again (same
+class of transient environment failure as earlier this session). Direct
+HTTP verification (curl, WebFetch) against `muslim-rentals-backend.onrender.com`
+and the Netlify site is also currently blocked by this sandbox's egress
+proxy. So: **the code is merged, migrated, and pushed to `main`, but this
+session cannot currently confirm Render/Netlify have actually finished
+deploying it, or do a real live-browser check.** Do not mark any of the
+`FIXED_NOT_LIVE_SITE_VERIFIED` regression-inventory rows as
+`LIVE_SITE_VERIFIED` until a real check happens — deployment completion
+and live behavior are still unconfirmed, only the source-of-truth code
+state is.
+
+**Revisit when:** MCP tool access (Render/Netlify) returns, or the founder
+can confirm live behavior directly. Then: check Render's latest deploy
+commit against `origin/claude/multi-agent-os-setup-y2wprj` HEAD (currently
+`11954fc`) and trigger a manual deploy if it's still behind; confirm
+Netlify's latest deploy commit matches `main`'s new HEAD (`1b68860`); then
+do the real live checks (required-neighbourhood posting with resolved
+coordinates, clustering/spiderfy, Delete Listing end-to-end, `/my-listings`)
+before flipping any inventory rows.
+
+## 2026-08-28 (later still) — Discovered why the background scheduler keeps dying
+
+Root-caused the recurring "scheduler process silently disappears" issue from
+earlier this session (previously just noted and relaunched each time without
+a root cause). At this check-in, `uptime -s` on the container reported a
+boot time matching the wake-up time almost exactly — the container itself
+had been freshly (re)started, not just the scheduler process crashing.
+This matches this session's own environment docs: the container is reclaimed
+after a period of inactivity between turns. A `nohup`'d background process
+(the `scheduler-loop` used for persistent 60-min-cadence autonomy) cannot
+survive that by design — it's not restorable state, it's gone when the
+container is reclaimed, however it's relaunched.
+
+**Implication:** the "persistent background scheduler process" model
+(`ai/autonomy-architecture.md`, `orchestrator/README.md` "Running autonomy
+persistently") does not reliably hold up in *this* session type (an
+on-demand remote container, not an always-on host). It happens to make
+progress during the windows this session is actively awake and running
+commands, but goes silent the moment the container is reclaimed, with no
+self-recovery — matching exactly the multiple silent deaths observed this
+session.
+
+**Not a founder-authority decision** (no product/architecture rewrite, no
+security/auth change) — just correcting the mechanism used to keep
+autonomous work moving between turns. Going forward in this session, using
+the Claude Code Remote scheduling primitives (`send_later` / recurring
+triggers, which wake a *new turn* rather than relying on a persisting OS
+process) as the durable continuation mechanism instead of a bare `nohup`
+loop, matching how this session already re-verifies production deploys.
+Worth a founder-facing note if the always-on scheduler process is something
+they specifically want kept alive continuously (e.g. by running it outside
+this on-demand session type, or via a different hosting model) — flagging,
+not deciding, since that's an infra/architecture choice.

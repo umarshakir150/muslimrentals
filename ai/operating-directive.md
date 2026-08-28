@@ -128,6 +128,42 @@ its objective text) and whose branch was pushed:
 
 Full mechanism: `orchestrator/README.md` "Production deploy policy".
 
+### Mandatory clean-install verification before any promotion to `main`
+
+**Incident (2026-08-28):** a routine `npm install` (adding a devDependency)
+resolved the transitive dependency `fastq` to `1.20.2` — a version published
+to npm only hours earlier. This sandbox's own registry view already had it
+cached/available, so every `npm ci` run in this session (including the
+verification before the production-promotion merge) passed cleanly. Netlify's
+build environment did not yet see that freshly-published version and failed
+installation with `ETARGET` on the live production deploy. `npm ci` alone is
+not sufficient to catch this class of bug — it validates that the lockfile
+is internally self-consistent and fetchable *from wherever this session's
+requests resolve*, not that every pinned version is actually available
+*everywhere*, including the real production build environment.
+
+**Required going forward, before any merge into `main`:**
+- Run a genuinely clean install as part of verification — delete
+  `node_modules` **and** the lockfile-adjacent local npm cache
+  (`npm cache clean --force`), not just `node_modules`, then `npm install`
+  from `package.json` to confirm the dependency tree still resolves the way
+  the existing lockfile claims, followed by `npm ci` to confirm the
+  (possibly regenerated) lockfile installs cleanly and deterministically.
+  A fresh git worktree alone does not guarantee this — worktrees already
+  lack `node_modules`, but a warm local npm cache can still mask the same
+  registry-availability gap.
+- Treat any dependency (direct or transitive) whose lockfile-pinned version
+  was published to npm within roughly the last 48 hours as a promotion risk,
+  not just a passing `npm ci`. Check with `npm view <pkg> time --json` when
+  a lockfile was touched by an `npm install` (not `npm ci`) during the same
+  session. Prefer pinning such a dependency to a known-stable, longer-published
+  version via `package.json`'s `overrides` field rather than leaving it to
+  float to "whatever is newest right now" — this is what fixed the `fastq`
+  incident (`overrides: { "fastq": "1.20.1" }`), not a blind lockfile hand-edit.
+- This check applies specifically to the **frontend** lockfile promotion path
+  (Netlify builds directly from `main` via `npm install`/`npm ci` in its own
+  environment), but the same reasoning applies to the backend/Render path.
+
 ## Automatic correction
 
 Bugs, review pushback, security findings, UX findings, failing checks, or

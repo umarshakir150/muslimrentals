@@ -876,3 +876,37 @@ Netlify's latest deploy commit matches `main`'s new HEAD (`1b68860`); then
 do the real live checks (required-neighbourhood posting with resolved
 coordinates, clustering/spiderfy, Delete Listing end-to-end, `/my-listings`)
 before flipping any inventory rows.
+
+## 2026-08-28 (later still) — Discovered why the background scheduler keeps dying
+
+Root-caused the recurring "scheduler process silently disappears" issue from
+earlier this session (previously just noted and relaunched each time without
+a root cause). At this check-in, `uptime -s` on the container reported a
+boot time matching the wake-up time almost exactly — the container itself
+had been freshly (re)started, not just the scheduler process crashing.
+This matches this session's own environment docs: the container is reclaimed
+after a period of inactivity between turns. A `nohup`'d background process
+(the `scheduler-loop` used for persistent 60-min-cadence autonomy) cannot
+survive that by design — it's not restorable state, it's gone when the
+container is reclaimed, however it's relaunched.
+
+**Implication:** the "persistent background scheduler process" model
+(`ai/autonomy-architecture.md`, `orchestrator/README.md` "Running autonomy
+persistently") does not reliably hold up in *this* session type (an
+on-demand remote container, not an always-on host). It happens to make
+progress during the windows this session is actively awake and running
+commands, but goes silent the moment the container is reclaimed, with no
+self-recovery — matching exactly the multiple silent deaths observed this
+session.
+
+**Not a founder-authority decision** (no product/architecture rewrite, no
+security/auth change) — just correcting the mechanism used to keep
+autonomous work moving between turns. Going forward in this session, using
+the Claude Code Remote scheduling primitives (`send_later` / recurring
+triggers, which wake a *new turn* rather than relying on a persisting OS
+process) as the durable continuation mechanism instead of a bare `nohup`
+loop, matching how this session already re-verifies production deploys.
+Worth a founder-facing note if the always-on scheduler process is something
+they specifically want kept alive continuously (e.g. by running it outside
+this on-demand session type, or via a different hosting model) — flagging,
+not deciding, since that's an infra/architecture choice.

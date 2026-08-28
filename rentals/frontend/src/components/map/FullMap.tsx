@@ -4,6 +4,16 @@ import { useEffect, useRef } from 'react';
 import type { Map as LeafletMap } from 'leaflet';
 import { Listing } from '@/types';
 import { formatShortCAD } from '@/lib/utils';
+import {
+  CLUSTER_OPTIONS,
+  MARKER_ICON_SIZE,
+  MARKER_ICON_ANCHOR,
+  CLUSTER_ICON_SIZE,
+  CLUSTER_ICON_ANCHOR,
+  buildMarkerHtml,
+  buildClusterHtml,
+  formatMarkerLocationLabel,
+} from '@/lib/mapMarkers';
 
 interface FullMapProps {
   listings: Listing[];
@@ -73,18 +83,14 @@ export default function FullMap({
 
       // Cluster group
       const cluster = (L as any).markerClusterGroup({
-        showCoverageOnHover: false,
-        spiderfyOnMaxZoom: true,
-        disableClusteringAtZoom: 14,
-        maxClusterRadius: 50,
-        animate: true,
+        ...CLUSTER_OPTIONS,
         iconCreateFunction: (c: any) => {
           const n = c.getChildCount();
           return L.divIcon({
-            html: `<div class="rental-marker">${n} listings</div>`,
+            html: buildClusterHtml(n),
             className: '',
-            iconSize: [90, 30],
-            iconAnchor: [45, 15],
+            iconSize: CLUSTER_ICON_SIZE,
+            iconAnchor: CLUSTER_ICON_ANCHOR,
           });
         },
       });
@@ -168,17 +174,18 @@ export default function FullMap({
       if (!listing.lat || !listing.lng) return;
 
       const icon = L.divIcon({
-        html: `<div class="rental-marker">${formatShortCAD(listing.price)}</div>`,
+        html: buildMarkerHtml(formatShortCAD(listing.price)),
         className: '',
-        iconSize: [70, 26],
-        iconAnchor: [35, 13],
+        iconSize: MARKER_ICON_SIZE,
+        iconAnchor: MARKER_ICON_ANCHOR,
       });
 
       const marker = L.marker([listing.lat, listing.lng], { icon });
+      const locationLabel = formatMarkerLocationLabel(listing.city, listing.neighbourhood);
       marker.bindPopup(
         `<div style="min-width:190px;">
           <div style="font-weight:700;font-size:13px;margin-bottom:3px;">${listing.title}</div>
-          <div style="color:#5a6e63;font-size:11px;margin-bottom:6px;">${formatShortCAD(listing.price)}/mo &middot; ${listing.city}</div>
+          <div style="color:#5a6e63;font-size:11px;margin-bottom:6px;">${formatShortCAD(listing.price)}/mo &middot; ${locationLabel}</div>
           ${listing.thumbnailUrl ? `<img src="${listing.thumbnailUrl}" style="width:100%;height:90px;object-fit:cover;border-radius:6px;margin-bottom:6px;" loading="lazy" />` : ''}
           <button onclick="window.__mapListingClick('${listing.id}')" style="width:100%;background:#0a5c42;color:white;border-radius:999px;padding:7px;font-weight:700;font-size:11px;cursor:pointer;border:none;">View details</button>
         </div>`,

@@ -1,0 +1,38 @@
+{
+  "taskId": "20260828-084529-replace-the-bedroom-and-bathroom-dropdowns",
+  "baseCommit": "9fe3aac6c08809398994fd5d5ef10599879dcb57",
+  "workers": [
+    {
+      "agent": "frontend",
+      "branch": "agents/20260828-084529-replace-the-bedroom-and-bathroom-dropdowns/frontend",
+      "added": [
+        "rentals/frontend/src/lib/listingValidation.test.ts",
+        "rentals/frontend/src/lib/listingValidation.ts",
+        "rentals/frontend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/frontend/.gitignore",
+        "rentals/frontend/package-lock.json",
+        "rentals/frontend/package.json",
+        "rentals/frontend/src/components/listings/PostListingModal.tsx"
+      ],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "backend",
+      "branch": "agents/20260828-084529-replace-the-bedroom-and-bathroom-dropdowns/backend",
+      "added": [
+        "rentals/backend/src/validation/listingSchemas.ts",
+        "rentals/backend/tests/validation/listingSchemas.test.ts",
+        "rentals/backend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/backend/package.json",
+        "rentals/backend/src/routes/listings.ts"
+      ],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

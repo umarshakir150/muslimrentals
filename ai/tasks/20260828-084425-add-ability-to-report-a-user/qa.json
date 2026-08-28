@@ -1,0 +1,32 @@
+{
+  "role": "qa",
+  "taskId": "20260828-084425-add-ability-to-report-a-user",
+  "verdict": "CHANGES_REQUIRED",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "The task's core objective — 'add ability to report a user or a message directly' — is not actually deliverable to an end user. Backend routes POST /messages/:id/report and POST /users/:id/report were implemented correctly and type-check cleanly, but there is zero frontend wiring to invoke them: no usersApi.report()/messagesApi.report() client methods exist in rentals/frontend/src/lib/api.ts, no ReportModal usage anywhere except the pre-existing listing report flow, and Inbox.tsx (the designer's specified integration point) has no report affordance of any kind — no thread-header overflow menu, no per-message kebab/long-press action.",
+      "evidence": "Grep of rentals/frontend/src/lib/api.ts shows messagesApi has getConversations/getConversation/startConversation/sendMessage/getUnreadCount only, and usersApi has getProfile/updateProfile/changePassword/getSaved/getMyListings/getNotifications only — neither has a report method. Grep for 'ReportModal' across rentals/frontend/src returns only ListingDetail.tsx and the component definition itself. Inbox.tsx has zero matches for 'report'.",
+      "recommendedAction": "Route back to Frontend (and/or reconcile via Integrator) to add usersApi.report()/messagesApi.report() to api.ts and wire the ReportModal into Inbox.tsx per the designer's spec (thread-header overflow 'Report [name]' + per-message report action on the other participant's bubbles only) before this task can be considered complete."
+    },
+    {
+      "severity": "info",
+      "finding": "The apparent cause is a coordination gap between the parallel Frontend and Backend implementers: Frontend's self-check explicitly says it deferred report-a-user/report-a-message UI because it believed the backend routes/schema 'do not exist yet and are explicitly deferred,' but Backend in the same cycle went ahead and built exactly those routes. The Integrator merged both branches without reconciling this mismatch (its report notes zero conflicts, which is true at the file level but misses the functional gap).",
+      "evidence": "Frontend selfCheckNotes: 'Did not implement report-a-user or report-a-message UI, deliberately deferred pending Backend schema/route work per designer+trust_safety+legal consensus.' Backend filesChanged include working routes/messages.ts and routes/users.ts additions plus a hand-authored migration.",
+      "recommendedAction": "When re-running this task, sequence Frontend after Backend's actual output (not the pre-task consensus recommendation) or have Integrator explicitly flag cross-branch scope mismatches like this one."
+    },
+    {
+      "severity": "medium",
+      "finding": "Backend's hand-authored migration.sql has not been applied to a real database (prisma migrate dev/status/db push are denied in this sandbox) — schema/route code is type-correct but the actual DDL is unverified against live Postgres, same structural gap noted in the task brief (mem_480b2bf7).",
+      "evidence": "Backend's own report: 'This migration still needs to be applied out-of-band via Supabase's SQL execution... before these routes can be deployed.' Confirmed prisma generate/validate/tsc all pass in this review, but no live-DB verification was performed by anyone.",
+      "recommendedAction": "Before deploy: apply the migration out-of-band via Supabase SQL execution (per the repo's established precedent for its two prior hand-authored migrations) and reconcile with prisma migrate resolve --applied, then re-verify the new routes end-to-end against a real DB."
+    },
+    {
+      "severity": "low",
+      "finding": "ReportModal.tsx's fixed reason taxonomy includes 'Misleading or fraudulent listing' as an option even though the component is now designed to be reused for user- and message-target reports (per its generic title/contextLabel/onSubmit props) — that reason doesn't make sense in a user- or message-report context.",
+      "evidence": "rentals/frontend/src/components/reports/ReportModal.tsx:16-22 REPORT_REASONS array is shared/static across all report types, not parameterized per target type.",
+      "recommendedAction": "When user/message report UI is eventually wired up, parameterize REPORT_REASONS by target type (e.g. pass a reasons prop) so 'Misleading or fraudulent listing' doesn't show when reporting a person or a message."
+    }
+  ],
+  "notes": "Backend implementation (schema, migration, routes, admin triage extension) is well-scoped, additive, correctly typed (tsc --noEmit clean after npm install in this worktree), and matches the designer/trust_safety/legal consensus on minimizing migration risk. ListingModal's replacement of window.confirm() with ReportModal is a genuine, verified improvement (traced JSX structure, fragment wrapping, and prop wiring — all correct). However, the integrated result as a whole does not deliver the task's stated objective: an end user still has no way, anywhere in the UI, to report a user or a message. Only the listing-report flow got a UI upgrade. This is a functional completeness failure, not a code-quality one, and blocks the task from being called done. Verification level: TYPECHECKED (backend, after real npm install + tsc --noEmit in this worktree) and CODE_REVIEWED (all diffs read directly, migration SQL cross-checked against schema diff). Frontend build/dev-server was not run (no browser verification performed)."
+}

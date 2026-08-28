@@ -164,7 +164,7 @@ export default function BrowsePage() {
                   {loadMoreError ? (
                     <>
                       <p className="text-sm text-muted">Could not load more listings.</p>
-                      <button onClick={handleLoadMore} className="btn-ghost px-6 py-2.5 text-sm min-h-[44px]">
+                      <button onClick={fetchListings} className="btn-ghost px-6 py-2.5 text-sm min-h-[44px]">
                         Try again
                       </button>
                     </>

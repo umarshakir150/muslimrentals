@@ -3,24 +3,27 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
-import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink } from 'lucide-react';
+import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink, Trash2 } from 'lucide-react';
 import { Listing } from '@/types';
 import { formatCAD, audienceLabel, audienceColor, formatTimeAgo, cn } from '@/lib/utils';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
+import DeleteListingDialog from './DeleteListingDialog';
 
 interface ListingDetailProps {
   listing: Listing | null;
   onClose: () => void;
   onMessage: (listing: Listing) => void;
+  onDeleted?: (listingId: string) => void;
 }
 
-export default function ListingDetail({ listing, onClose, onMessage }: ListingDetailProps) {
+export default function ListingDetail({ listing, onClose, onMessage, onDeleted }: ListingDetailProps) {
   const [imgIdx, setImgIdx] = useState(0);
   const [saved, setSaved] = useState(listing?.isSaved || false);
   const [saving, setSaving] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const isAuth = useIsAuthenticated();
   const user = useUser();
   const { toast } = useToast();
@@ -160,7 +163,7 @@ export default function ListingDetail({ listing, onClose, onMessage }: ListingDe
           </div>
 
           {/* Footer actions */}
-          <div className="px-5 py-4 border-t border-ink/8 flex gap-3 shrink-0 bg-white">
+          <div className="px-5 py-4 border-t border-ink/8 flex items-center gap-3 shrink-0 bg-white">
             {!isOwner && (
               <button onClick={() => onMessage(listing)} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
                 <MessageSquare size={16} /> Message landlord
@@ -173,9 +176,25 @@ export default function ListingDetail({ listing, onClose, onMessage }: ListingDe
                 <Phone size={16} /> Contact
               </button>
             )}
+            {isOwner && (
+              <button
+                onClick={() => setDeleteOpen(true)}
+                className="ml-auto flex items-center gap-1.5 text-sm font-semibold text-red-600 hover:text-red-700 px-3 py-2"
+              >
+                <Trash2 size={15} /> Delete listing
+              </button>
+            )}
           </div>
         </motion.div>
       </motion.div>
+
+      <DeleteListingDialog
+        listingId={listing.id}
+        listingTitle={listing.title}
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={(id) => { setDeleteOpen(false); onDeleted?.(id); onClose(); }}
+      />
     </AnimatePresence>
   );
 }

@@ -1,0 +1,37 @@
+# Final task report
+
+- **Task ID:** 20260828-161349-bedroombathroom-filter-fields-silently-coerce-a
+- **Final state:** COMPLETE
+- **Agents involved:** frontend, qa, security
+- **Correction cycles used:** 0
+- **QA verdict:** PASS
+- **Security verdict:** APPROVED
+
+## Objective
+
+Bedroom/bathroom filter fields silently coerce a cleared input to 0 instead of showing the required-field error
+
+rentals/frontend's bedroomsSchema/bathroomsSchema use z.coerce.number(), and Number('') evaluates to 0 in JS (not NaN). If a user backspaces the pre-filled value in the Beds or Baths field on PostListingModal until it's empty, the field silently coerces to 0 and passes validation rather than showing the intended 'Enter a number of bedrooms/bathrooms' error the UX spec called for on empty input. 0 is itself a legitimate value server-side (studio listings), so this isn't a data-integrity bug, but it lets a user unintentionally post a listing with the wrong bedroom/bathroom count with no warning. Fix: preprocess the empty string as invalid before coercion (e.g. z.preprocess treating '' as undefined, paired with a required_error), or keep the field non-clearable via enforced defaultValue. Not covered by the current test suite (which tests non-numeric 'abc' but not the empty-string case) — add a regression test for it.
+
+Why this matters (backlog rationale): Directly evidenced by QA during the bedroom/bathroom dropdown-replacement task review (sig_50718353), with the exact file-level mechanism identified and confirmed against the actual coercion chain, not inferred. It's a real listing-data-correctness gap on the single most core creation flow (posting a listing), it's frontend-only with no schema/migration/backend dependency, and it's small enough (effort 1) to fix cleanly this cycle without touching anything currently blocked or approval-gated.
+
+Evidence:
+- ai/tasks/20260828-084529-replace-the-bedroom-and-bathroom-dropdowns/qa.json
+- rentals/frontend listingValidation.ts (bedroomsSchema/bathroomsSchema using z.coerce.number())
+
+## Founder approval gate
+
+Not required for this task.
+
+## Summary
+
+Task complete. Agents involved: frontend, qa, security. 0 correction cycle(s) used.
+
+## Files changed
+
+- rentals/frontend/src/lib/listingValidation.test.ts
+- rentals/frontend/src/lib/listingValidation.ts
+
+## Next steps
+
+- Implementer branch "agents/20260828-161349-bedroombathroom-filter-fields-silently-coerce-a/frontend" (frontend) at /home/user/muslimrentals/orchestrator/.worktrees/20260828-161349-bedroombathroom-filter-fields-silently-coerce-a-frontend — not auto-merged by the orchestrator.

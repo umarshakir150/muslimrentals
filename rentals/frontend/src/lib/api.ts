@@ -200,6 +200,9 @@ export const listingsApi = {
   create: (data: any) => api.post<{ data: any }>('/listings', data),
   update: (id: string, data: any) => api.patch<{ data: any }>(`/listings/${id}`, data),
   delete: (id: string) => api.delete(`/listings/${id}`),
+  // Permanent hard-delete -- distinct from `delete` above, which is the
+  // existing soft-remove (status=REMOVED, admin-reversible).
+  deletePermanent: (id: string) => api.delete<{ success: boolean; message: string }>(`/listings/${id}/permanent`),
   save: (id: string) => api.post<{ success: boolean; saved: boolean }>(`/listings/${id}/save`, {}),
   report: (id: string, reason: string, description?: string) =>
     api.post(`/listings/${id}/report`, { reason, description }),
@@ -219,6 +222,15 @@ export const messagesApi = {
 // ─── Cities API ───────────────────────────────────────────────────────────────
 export const citiesApi = {
   getAll: () => api.get<{ data: { name: string; province: string }[] }>('/cities/all'),
+};
+
+// ─── Neighbourhoods API ────────────────────────────────────────────────────────
+// Curated city+neighbourhood -> real lat/lng lookup (same pattern as
+// citiesApi.getAll, seeded server-side rather than geocoded live).
+export interface NeighbourhoodEntry { name: string; city: string; lat: number; lng: number; }
+export const neighbourhoodsApi = {
+  getAll: (city: string) =>
+    api.get<{ data: NeighbourhoodEntry[] }>(`/neighbourhoods/all?city=${encodeURIComponent(city)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

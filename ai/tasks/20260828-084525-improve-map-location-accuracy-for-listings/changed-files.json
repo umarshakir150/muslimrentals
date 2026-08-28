@@ -1,0 +1,57 @@
+{
+  "taskId": "20260828-084525-improve-map-location-accuracy-for-listings",
+  "baseCommit": "9fe3aac6c08809398994fd5d5ef10599879dcb57",
+  "workers": [
+    {
+      "agent": "frontend",
+      "branch": "agents/20260828-084525-improve-map-location-accuracy-for-listings/frontend",
+      "added": [
+        "rentals/frontend/next-env.d.ts",
+        "rentals/frontend/src/components/ui/NeighbourhoodAutocomplete.tsx",
+        "rentals/frontend/src/lib/__tests__/mapMarkers.test.ts",
+        "rentals/frontend/src/lib/__tests__/neighbourhood.test.ts",
+        "rentals/frontend/src/lib/__tests__/postListingSchema.test.ts",
+        "rentals/frontend/src/lib/mapMarkers.ts",
+        "rentals/frontend/src/lib/neighbourhood.ts",
+        "rentals/frontend/src/lib/postListingSchema.ts",
+        "rentals/frontend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/frontend/package-lock.json",
+        "rentals/frontend/package.json",
+        "rentals/frontend/src/app/globals.css",
+        "rentals/frontend/src/components/listings/PostListingModal.tsx",
+        "rentals/frontend/src/components/map/FullMap.tsx",
+        "rentals/frontend/src/lib/api.ts"
+      ],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "backend",
+      "branch": "agents/20260828-084525-improve-map-location-accuracy-for-listings/backend",
+      "added": [
+        "rentals/backend/prisma/migrations/20260828085539_add_neighbourhood/migration.sql",
+        "rentals/backend/scratch_check.js",
+        "rentals/backend/src/data/cities.ts",
+        "rentals/backend/src/data/neighbourhoods.ts",
+        "rentals/backend/src/routes/neighbourhoods.ts",
+        "rentals/backend/src/utils/geo.ts",
+        "rentals/backend/src/validation/listingSchemas.ts",
+        "rentals/backend/tests/data/neighbourhoods.test.ts",
+        "rentals/backend/tests/utils/geo.test.ts",
+        "rentals/backend/tests/validation/listingSchemas.test.ts",
+        "rentals/backend/vitest.config.ts"
+      ],
+      "modified": [
+        "rentals/backend/package.json",
+        "rentals/backend/prisma/schema.prisma",
+        "rentals/backend/prisma/seed.ts",
+        "rentals/backend/src/index.ts",
+        "rentals/backend/src/routes/listings.ts"
+      ],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

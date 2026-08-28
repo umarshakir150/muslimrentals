@@ -1,0 +1,52 @@
+# Final task report
+
+- **Task ID:** 20260828-084425-add-ability-to-report-a-user
+- **Final state:** FOUNDER_APPROVAL_REQUIRED
+- **Agents involved:** designer, trust_safety, legal, backend, frontend, qa, security, integrator
+- **Correction cycles used:** 2
+- **QA verdict:** CHANGES_REQUIRED
+- **Security verdict:** APPROVED
+
+## Objective
+
+Add ability to report a user or a message directly (not just listings)
+
+Report model/route today is scoped to listings only (no userId/messageId target field, no report UI outside a listing's page). This leaves no way for a user to report harassment or abuse happening inside a message thread — a real trust & safety gap on a messaging-heavy product. Will require a Prisma schema change (a nullable target type on Report, or a parallel model) plus new authenticated routes and frontend report affordances in the messaging UI. Recommend deferring actual implementation until the sandbox's DB-migration verification gap (mem_480b2bf7 — no reachable dev Postgres for `prisma migrate dev`) is resolved, or scoping the first cut narrowly enough to minimize migration risk, so this doesn't end up parked BLOCKED the way bl_368a454b has been for three cycles.
+
+Why this matters (backlog rationale): Directly evidenced as a real, not speculative, gap: company/architecture.md's own 'Known weaknesses' section states 'Only listings are reportable... which limits Trust & Safety's tooling for harassment-via-messaging today,' and company/product.md explicitly lists 'Reporting users or messages directly' as not implemented. It's also named in ai/roadmap.md's 'Next' section. This sits squarely in the standing objective's 'protect users' and trust/safety priority, but is schema-changing work that will hit the same DB-migration verification wall currently blocking bl_368a454b, so it should not be started until that structural gap is addressed or the item is scoped to avoid it.
+
+Evidence:
+- company/architecture.md: 'Only listings are reportable — no report path for a user or a message directly...'
+- company/product.md: 'Reporting users or messages directly. Only listings are reportable today'
+- ai/roadmap.md: 'Next — Add a report path for users/messages (not just listings)'
+- mem_480b2bf7-74fd-4ece-8ccf-18c4b14a6191 (DB-migration verification gap this item will run into)
+
+## Founder approval gate
+
+**FOUNDER_APPROVAL_REQUIRED**
+
+- Correction retry limit (2) exhausted — integration could not reach a clean, fully reconciled state (unresolved: The hand-authored migration (rentals/backend/prisma/migrations/20260828090000_report_user_message_targets/migration.sql) has still not been applied or verified against a live Postgres database from this integration worktree. This is not a merge/reconciliation issue — the deterministic overlap report shows no conflict here — it is an infrastructure access gap: no DATABASE_URL is configured anywhere in this worktree, and the sandbox's own permission layer explicitly denies attempts to set DATABASE_URL or run DB-connecting Prisma commands (confirmed directly this session, matching Backend's own finding and the pre-existing mem_480b2bf7 gap referenced in the task brief). This requires someone with real Supabase credentials, outside this sandbox, to apply the migration.sql via Supabase's SQL execution and reconcile it with `prisma migrate resolve --applied`, per the repo's established precedent for its two prior hand-authored migrations, before these routes can go live.; Full live browser/dev-server end-to-end verification of the Inbox report flow (submitting a real report against a running backend + DB and confirming it lands correctly in GET /admin/reports) was still not performed, for the same reason as above — no reachable database. This session did strengthen static verification beyond either implementer's own pass (clean `tsc --noEmit` for both frontend and backend in this integration worktree, plus a full successful `next build` production build covering the /messages route), but that is compile/build-time verification, not a substitute for a real end-to-end functional check, and should not be reported as equivalent to it.). Escalated to founder rather than looping indefinitely.
+
+## Summary
+
+Execution stopped for founder approval. Agents involved so far: designer, trust_safety, legal, backend, frontend, qa, security, integrator.
+
+## Files changed
+
+- rentals/frontend/src/components/reports/ReportModal.tsx
+- rentals/frontend/src/components/listings/ListingDetail.tsx
+- rentals/backend/prisma/migrations/20260828090000_report_user_message_targets/migration.sql
+- rentals/backend/package-lock.json
+- rentals/backend/prisma/schema.prisma
+- rentals/backend/src/routes/admin.ts
+- rentals/backend/src/routes/messages.ts
+- rentals/backend/src/routes/users.ts
+- rentals/frontend/src/components/messaging/Inbox.tsx
+- rentals/frontend/src/lib/api.ts
+
+## Next steps
+
+- Founder review required before this task can proceed — see approval gate reasons above.
+- Review/merge the INTEGRATED branch "agents/20260828-084425-add-ability-to-report-a-user/integration" at /home/user/muslimrentals/orchestrator/.worktrees/20260828-084425-add-ability-to-report-a-user-integration — this is the reviewed, mergeable result. The individual implementer branches below are its inputs, already folded in; they don't need separate merging.
+- Implementer branch "agents/20260828-084425-add-ability-to-report-a-user/backend" (backend) at /home/user/muslimrentals/orchestrator/.worktrees/20260828-084425-add-ability-to-report-a-user-backend — not auto-merged by the orchestrator.
+- Implementer branch "agents/20260828-084425-add-ability-to-report-a-user/frontend" (frontend) at /home/user/muslimrentals/orchestrator/.worktrees/20260828-084425-add-ability-to-report-a-user-frontend — not auto-merged by the orchestrator.

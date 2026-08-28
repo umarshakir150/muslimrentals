@@ -1,0 +1,56 @@
+{
+  "taskId": "20260828-084527-fix-a-live-production-bug-after",
+  "objective": "Fix a live production bug: after visiting the Map page, map content/overlay remains visible on top of other pages after navigating away (e.g. Map -> Login, Map -> Sign Up, Map -> a listing, Map -> Browse).\n\nThis is a real, founder-reproduced live bug, not hypothetical. Root-cause it, don't just patch symptoms. The map is Leaflet-based via react-leaflet (FullMap/MiniMap components per company/architecture.md) inside a Next.js 14 App Router app. Common real causes worth checking specifically: a Leaflet map instance (`L.map(...)`) not calling `.remove()` in a React `useEffect` cleanup function on unmount; Leaflet injecting DOM/CSS panes or controls that end up outside the React-managed subtree (e.g. via a portal or Leaflet's own internal DOM manipulation) so Next.js's route transition doesn't tear them down with the rest of the page; global window/document event listeners Leaflet or a related library adds that are never removed; z-index/stacking-context leftovers from a Leaflet pane or control staying in the DOM/CSS after the React component believes it's unmounted; or component state that assumes it's always mounted and throws/leaks on an interval or resize handler after navigation.\n\nReproduce it first (Product/QA) to confirm the exact repro path and what's actually left behind (a specific element, a specific control, tile layer remnants, etc. -- inspect the actual DOM/console, don't guess). Then have Frontend fix it so the map, its overlays, controls, markers, event listeners, portals, and any related component state completely clean up on route change away from /map. Test explicitly: Map -> Login, Map -> Sign Up, Map -> a listing detail page, Map -> Browse, and on a mobile viewport, plus normal back/forward navigation. Navigating anywhere else must show only the destination page, nothing left over from the map.\n\nRegression coverage: add an automated test (Vitest + React Testing Library is already set up in rentals/frontend) that mounts the map component, unmounts it, and asserts no leftover DOM nodes/listeners it owns remain attached -- or the closest practical equivalent if a full Leaflet-in-jsdom test isn't practical; if so, at minimum assert the cleanup function is actually registered and invoked, and document what a real browser QA pass must still catch that the automated test cannot.\n\nDesigner should sanity-check there isn't also a legitimate transition/animation being mistaken for the bug. Security review is not required for this one (pure UI cleanup bug, no auth/data surface). Report real verification levels honestly -- if you can only get LOCAL_RUNTIME_VERIFIED or BROWSER_VERIFIED (not LIVE_SITE_VERIFIED), say so.",
+  "requiredAgents": [
+    "frontend",
+    "qa",
+    "designer"
+  ],
+  "dependencies": {
+    "designer": [],
+    "frontend": [
+      "designer"
+    ],
+    "qa": [
+      "designer",
+      "frontend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer"
+    ],
+    [
+      "frontend"
+    ],
+    [
+      "qa"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "ai/tasks/map-unmount-cleanup-bug.md documenting exact repro (DOM element(s)/control(s)/listener(s) left behind, confirmed via real DOM/console inspection)",
+    "Code fix in rentals/frontend map components (FullMap/MiniMap and any shared Leaflet wrapper) ensuring L.map(...).remove() and all listener/portal cleanup runs on unmount",
+    "New Vitest + React Testing Library regression test asserting mount/unmount cleanup behavior (or documented closest practical equivalent), plus a note on what real-browser QA must still verify manually",
+    "QA manual verification report covering Map->Login, Map->Sign Up, Map->listing detail, Map->Browse, mobile viewport, and back/forward navigation, with honest verification level (LOCAL_RUNTIME_VERIFIED or BROWSER_VERIFIED, not claiming LIVE_SITE_VERIFIED unless actually tested live)",
+    "Designer note confirming no legitimate transition/animation was mistaken for the bug"
+  ],
+  "riskNotes": [
+    "This is a live-production-reproduced bug affecting real users' navigation experience, but the fix itself is a client-side UI cleanup change with no auth/data/security surface",
+    "Security review intentionally excluded per task scope (pure UI cleanup, no auth/authorization/user-data/upload/admin surface touched) consistent with ai/workflow.md's criteria for when Security review is required",
+    "No automated test suite/CI exists baseline in this repo (ai/current-state.md) -- the new Vitest test is incremental coverage, not a full regression net; real-browser manual QA remains required for full confidence",
+    "This task does not include deploying the fix to production -- founder approval will be needed separately before any deploy per CLAUDE.md, even after QA/Designer sign off"
+  ]
+}

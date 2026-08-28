@@ -1,0 +1,34 @@
+{
+  "role": "qa",
+  "taskId": "20260828-084529-replace-the-bedroom-and-bathroom-dropdowns",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Verified the integrated worktree directly (not implementer self-reports): read PostListingModal.tsx, listingValidation.ts/.test.ts (frontend), listingSchemas.ts/.test.ts (backend), listings.ts, and ListingFilters.tsx. Ran `npm install` + `npm run test` in both rentals/backend (29/29 pass) and rentals/frontend (13/13 pass), plus `npm run type-check` in frontend and `npx tsc --noEmit` in backend (both clean, zero errors). This contradicts both implementers' claims that test execution wasn't possible in this sandbox -- npm was in fact available here.",
+      "evidence": "backend: `vitest run` -> 'Test Files 1 passed (1), Tests 29 passed (29)'; frontend: `vitest run` -> 'Test Files 1 passed (1), Tests 13 passed (13)'; `npm run type-check` (frontend tsc --noEmit) and `npx tsc --noEmit` (backend) both exited clean with no output."
+    },
+    {
+      "severity": "info",
+      "finding": "Confirmed the actual diff scope between the merge-base (9fe3aac) and integration HEAD (a1c379b) is exactly the 12 files both implementers reported, with no stray/out-of-scope changes: PostListingModal.tsx, new listingValidation.ts/.test.ts, listingSchemas.ts (extracted, byte-for-byte-preserving per backend's own account and confirmed by reading it), the new backend test file, both vitest configs, and package.json/lockfile bumps for the new vitest devDependency.",
+      "evidence": "`git diff 9fe3aac a1c379b --stat` -> 12 files changed, matching both implementers' filesChanged lists exactly."
+    },
+    {
+      "severity": "info",
+      "finding": "Filter contract genuinely unchanged and verified end-to-end at the code level: ListingFilters.tsx (frontend, untouched) still sends minBeds/minBaths against listingQuerySchema (0-20 coerced bounds) and applyRangeFilters builds gte/lte on the same unchanged bedrooms(Float)/bathrooms(Int) Prisma columns, with a dedicated regression test (`includes 0 as a valid bound... not treated as unset`) guarding the != null vs truthiness distinction that would otherwise silently break a 'studio only' (bedrooms=0) filter query.",
+      "evidence": "rentals/frontend/src/components/listings/ListingFilters.tsx:150-166 (minBeds/minBaths dropdowns, unmodified); rentals/backend/src/validation/listingSchemas.ts:66-81 applyRangeFilters; rentals/backend/tests/validation/listingSchemas.test.ts:175-180."
+    },
+    {
+      "severity": "low",
+      "finding": "Client-side bedroomsSchema/bathroomsSchema use z.coerce.number(), and Number('') evaluates to 0 in JS, not NaN. If a user clears the Beds or Baths input entirely (e.g. backspaces the pre-filled '1' and leaves it blank) before clicking Continue/Submit, the field silently coerces to 0 and passes validation rather than showing the intended 'Enter a number of bedrooms/bathrooms' error the Designer's spec called for on empty input. Not a security or data-integrity issue (0 is itself a legitimately accepted server-side value for both fields), and the default pre-fill of 1 makes this a fairly narrow path to hit, but it is a real gap versus the documented UX spec and isn't covered by the current test suite (which tests non-numeric 'abc' but not the empty-string case).",
+      "evidence": "rentals/frontend/src/lib/listingValidation.ts:6-15 (z.coerce.number(), no explicit empty-string/required check); PostListingModal.tsx:56 sets defaultValues bedrooms:1, bathrooms:1, so this only surfaces if a user actively clears the field before submitting.",
+      "recommendedAction": "Frontend: add a light refinement (e.g. z.coerce.number({required_error / invalid_type_error}) combined with a preprocess step that treats '' as invalid rather than 0), or simplest fix, keep the field non-clearable to empty via required+defaultValue enforcement. Low priority follow-up, not a blocker for this task."
+    },
+    {
+      "severity": "info",
+      "finding": "Backend package-lock.json was not regenerated for the new `vitest` devDependency (package.json:63 has it, lockfile diff is empty between merge-base and HEAD for that file), so `npm ci` would fail until the lockfile is regenerated, though plain `npm install` (which I ran) self-heals it. Frontend's lockfile was correctly regenerated. No CI exists in this repo today that would be broken by this, per ai/current-state.md, so this is a documentation-only note rather than a functional blocker.",
+      "evidence": "rentals/backend/package.json:63 vitest present; `git diff 9fe3aac a1c379b -- rentals/backend/package-lock.json` produced no diff output despite package.json changing; confirmed `npm install` in rentals/backend succeeds and resolves vitest correctly regardless."
+    }
+  ],
+  "notes": "Scope matches the founder's ask precisely: both dropdowns replaced with type=number inputs (inputMode=numeric, step=1, min=0, max=20), studio/0 hint preserved, bedrooms kept Float/no-decimal-in-UI while bathrooms stays Int (rejects .5), and neither the Prisma schema nor the stored data shape changed -- confirmed no migration was added and applyRangeFilters/listingQuerySchema are unchanged in bound or type. Client (listingValidation.ts) and server (listingSchemas.ts) bounds are identical (0-20, bathrooms .int()), satisfying 'client-side validation is UX only, never the boundary.' Verification level actually achieved: TYPECHECKED + BUILD-clean (tsc --noEmit both sides) + full automated test suites executed and passing (29 backend / 13 frontend, run directly by me, not just claimed). No browser/UI click-through or live-site check was performed by me (no dev server driven, no phone-viewport inspection) -- consistent with Designer's own 'code-only' caveat and neither implementer's report claiming otherwise; do not treat this as BROWSER_VERIFIED or MOBILE_VERIFIED. This task has not shipped to production and touches no auth/messaging/listing-discovery contract, so no regression-inventory row needs updating and no mandatory core-journey live-site pass is triggered by ai/regression-inventory.md's rules. One low-severity UX gap found (empty-input silently coerces to 0 instead of showing a required-field error) -- does not block PASS given it's bounded to an already-valid value and covered by neither a data-integrity nor security concern, but flagged for a fast follow-up."
+}

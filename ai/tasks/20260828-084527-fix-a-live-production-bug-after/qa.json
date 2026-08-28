@@ -1,0 +1,28 @@
+{
+  "role": "qa",
+  "taskId": "20260828-084527-fix-a-live-production-bug-after",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Root cause and fix independently verified by reading the diff directly (not trusting the implementer's summary). FullMap.tsx and MiniMap.tsx previously created their Leaflet map instance inside an async IIFE nested in useEffect; if unmount happened before `await import('leaflet')` resolved, the effect's synchronous cleanup ran as a no-op (nothing to remove yet), and the async callback later completed after unmount, attaching a full Leaflet instance (tiles, marker cluster, click listener, global `window.__mapListingClick`, ResizeObserver) with no registered cleanup — exactly the mechanism described in the Designer's analysis. The fix introduces a `cancelled` boolean captured at effect start, checked immediately after each await (and, defensively, right after `L.map()` construction), and the cleanup closure sets `cancelled = true` first before tearing down whatever was actually created. It also captures the container DOM node into a local `container` variable at effect start so cleanup/ResizeObserver logic no longer depends on `containerRef.current`, which React nulls during the same unmount commit — correctly fixing the second race the Designer flagged.",
+      "evidence": "rentals/frontend/src/components/map/FullMap.tsx lines 47-155; rentals/frontend/src/components/map/MiniMap.tsx lines 21-79 (git diff HEAD~1 reviewed directly)."
+    },
+    {
+      "severity": "info",
+      "finding": "Ran `npm run test` (vitest) and `npm run type-check` (tsc --noEmit) directly in this worktree rather than trusting the implementer's report. Both pass cleanly: 2 test files / 5 tests passing, zero type errors. The two new regression tests (mapCleanup.test.tsx) correctly reproduce the exact race — mocking `leaflet` behind a controllable promise, unmounting before resolving it, then resolving and asserting `L.map`/`L.tileLayer`/`L.markerClusterGroup` were never called and `window.__mapListingClick` was never set — plus a normal-unmount test asserting `map.remove()`, ResizeObserver `disconnect()`, and the global click-bridge cleanup all fire. Test file correctly documents what it cannot catch (real DOM/CSS pane leftovers, visual overlap, browser back/forward bfcache) matching the honesty required by the task.",
+      "evidence": "Direct execution: `npm run test` -> \"Test Files 2 passed (2), Tests 5 passed (5)\"; `npm run type-check` -> clean, no errors printed."
+    },
+    {
+      "severity": "low",
+      "finding": "No real-browser verification (Map → Login/Sign Up/listing/Browse, back/forward, mobile viewport) was performed by Frontend or by this QA pass — WebFetch/browser tooling was not exercised against a running dev server or the live site in this review. This matches the task's own required manual-check list and the implementer's own honest disclosure; it is not yet closed out.",
+      "evidence": "No browser tool invoked in this review; implementer's report explicitly flags this gap as LOCAL_RUNTIME_VERIFIED only, which matches what could be independently confirmed here (tests + type-check only)."
+    },
+    {
+      "severity": "info",
+      "finding": "Diff is scoped correctly: only FullMap.tsx, MiniMap.tsx, new test files, vitest config/setup, package.json/package-lock (adding vitest/RTL devDependencies + a `test` script), and an auto-generated next-env.d.ts boilerplate file (5 lines, unedited Next.js scaffolding, harmless) were touched. No unrelated files changed. The leftover `dbg.test.tsx` filename is cosmetically odd but its content is a legitimate, harmless assertion (verifies the jsdom ResizeObserver stub exists) as the implementer disclosed, not dead/misleading code.",
+      "evidence": "git diff HEAD~1 --stat; read of dbg.test.tsx content."
+    }
+  ],
+  "notes": "Verification level for this QA pass: LOCAL_RUNTIME_VERIFIED (independently re-ran `npm run test` and `npm run type-check` against the actual worktree code, and read the full diff/source directly — did not rely on the implementer's self-report). No BROWSER_VERIFIED or LIVE_SITE_VERIFIED pass was performed; the task's required manual checks (Map → Login, Map → Sign Up, Map → listing detail, Map → Browse, back/forward navigation, mobile viewport, watching actual DOM/console) remain outstanding and should be scheduled as a follow-up browser pass before this is considered fully closed, consistent with what both Designer and Frontend already flagged. The fix itself is sound: it closes the exact async-init/unmount race identified, and the regression tests meaningfully exercise that race (not just a trivial cleanup-was-called check)."
+}

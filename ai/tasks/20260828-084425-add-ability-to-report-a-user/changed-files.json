@@ -1,0 +1,34 @@
+{
+  "taskId": "20260828-084425-add-ability-to-report-a-user",
+  "baseCommit": "9fe3aac6c08809398994fd5d5ef10599879dcb57",
+  "workers": [
+    {
+      "agent": "backend",
+      "branch": "agents/20260828-084425-add-ability-to-report-a-user/backend",
+      "added": [
+        "rentals/backend/prisma/migrations/20260828090000_report_user_message_targets/migration.sql"
+      ],
+      "modified": [
+        "rentals/backend/package-lock.json",
+        "rentals/backend/prisma/schema.prisma",
+        "rentals/backend/src/routes/admin.ts",
+        "rentals/backend/src/routes/messages.ts",
+        "rentals/backend/src/routes/users.ts"
+      ],
+      "deleted": [],
+      "renamed": []
+    },
+    {
+      "agent": "frontend",
+      "branch": "agents/20260828-084425-add-ability-to-report-a-user/frontend",
+      "added": [
+        "rentals/frontend/src/components/reports/ReportModal.tsx"
+      ],
+      "modified": [
+        "rentals/frontend/src/components/listings/ListingDetail.tsx"
+      ],
+      "deleted": [],
+      "renamed": []
+    }
+  ]
+}

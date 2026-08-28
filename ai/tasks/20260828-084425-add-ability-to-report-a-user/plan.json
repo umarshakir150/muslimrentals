@@ -1,0 +1,91 @@
+{
+  "taskId": "20260828-084425-add-ability-to-report-a-user",
+  "objective": "Add ability to report a user or a message directly (not just listings)\n\nReport model/route today is scoped to listings only (no userId/messageId target field, no report UI outside a listing's page). This leaves no way for a user to report harassment or abuse happening inside a message thread — a real trust & safety gap on a messaging-heavy product. Will require a Prisma schema change (a nullable target type on Report, or a parallel model) plus new authenticated routes and frontend report affordances in the messaging UI. Recommend deferring actual implementation until the sandbox's DB-migration verification gap (mem_480b2bf7 — no reachable dev Postgres for `prisma migrate dev`) is resolved, or scoping the first cut narrowly enough to minimize migration risk, so this doesn't end up parked BLOCKED the way bl_368a454b has been for three cycles.\n\nWhy this matters (backlog rationale): Directly evidenced as a real, not speculative, gap: company/architecture.md's own 'Known weaknesses' section states 'Only listings are reportable... which limits Trust & Safety's tooling for harassment-via-messaging today,' and company/product.md explicitly lists 'Reporting users or messages directly' as not implemented. It's also named in ai/roadmap.md's 'Next' section. This sits squarely in the standing objective's 'protect users' and trust/safety priority, but is schema-changing work that will hit the same DB-migration verification wall currently blocking bl_368a454b, so it should not be started until that structural gap is addressed or the item is scoped to avoid it.\n\nEvidence:\n- company/architecture.md: 'Only listings are reportable — no report path for a user or a message directly...'\n- company/product.md: 'Reporting users or messages directly. Only listings are reportable today'\n- ai/roadmap.md: 'Next — Add a report path for users/messages (not just listings)'\n- mem_480b2bf7-74fd-4ece-8ccf-18c4b14a6191 (DB-migration verification gap this item will run into)",
+  "requiredAgents": [
+    "backend",
+    "frontend",
+    "designer",
+    "qa",
+    "security",
+    "trust_safety",
+    "legal"
+  ],
+  "dependencies": {
+    "designer": [],
+    "trust_safety": [],
+    "legal": [],
+    "frontend": [
+      "designer",
+      "trust_safety",
+      "legal"
+    ],
+    "backend": [
+      "designer",
+      "trust_safety",
+      "legal"
+    ],
+    "qa": [
+      "designer",
+      "trust_safety",
+      "legal",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "designer",
+      "trust_safety",
+      "legal",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer",
+      "trust_safety",
+      "legal"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Prisma schema migration adding a nullable target type / target user / target message field on Report (or a documented decision to add a parallel model instead)",
+    "Backend routes: POST to report a user, POST to report a message, reusing existing rate-limit/auth/ownership patterns",
+    "Admin triage updates so user/message reports surface alongside listing reports",
+    "Frontend report affordance inside the messaging UI (per-message and per-conversation-participant)",
+    "Updated ai/tasks/<id>.md task file documenting the migration-risk scoping decision and manual test plan",
+    "Updated company/architecture.md and company/product.md 'known weaknesses' / 'not implemented' notes once shipped"
+  ],
+  "riskNotes": [
+    "This is schema-changing work (Prisma migration) and will hit the same DB-migration verification gap already blocking bl_368a454b (mem_480b2bf7 — no reachable dev Postgres for `prisma migrate dev` in this sandbox); do not start backend implementation until either that gap is resolved or the first cut is scoped narrowly enough (e.g. reusing existing Report columns with a nullable discriminator instead of a new model) to minimize untested migration risk.",
+    "Recommend Backend produce and get Engineering/Supervisor sign-off on the specific schema approach (extend Report vs. parallel model) before writing any migration, given the unverifiable-migration constraint.",
+    "Reporting a user or message stores allegations about another user; Trust & Safety and Legal should confirm retention/visibility rules (who can see a report, how long it's retained, protection against retaliatory/false reports) before this ships.",
+    "If this keeps stalling on the same migration-verification wall as bl_368a454b, escalate the underlying dev-DB-access gap to the founder rather than parking this item BLOCKED a second time."
+  ]
+}

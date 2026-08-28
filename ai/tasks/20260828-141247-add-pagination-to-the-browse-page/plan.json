@@ -1,0 +1,59 @@
+{
+  "taskId": "20260828-141247-add-pagination-to-the-browse-page",
+  "objective": "Add pagination to the Browse page — listings beyond the first 24 are permanently unreachable\n\nrentals/frontend/src/app/browse/page.tsx:39-53 fetches listings with a hardcoded `limit: 24` and never mutates `filters.page` away from its default anywhere in the codebase (confirmed via repo-wide grep for setPage|filters\\.page|page:|infinite|IntersectionObserver, and a glob for **/*agination*/ under src returns no files at all — no pagination component exists). The page does display the real total listing count (`${total} listings across Canada`, browse/page.tsx:98), so a user can see that more listings exist but has no UI path to reach them. The backend's GET /listings already accepts page/limit query params (confirmed working — this was fixed for the map page's limit=200 case per ai/decisions.md), so this is a frontend-only gap. Fix: add pagination controls (numbered pages or a 'Load more' / infinite-scroll pattern) wired to filters.page, reusing the total already returned by the API.\n\nWhy this matters (backlog rationale): This is a genuine, evidenced defect in the product's single most core journey — browsing listings — not a cosmetic issue: any city/search with more than 24 active listings has content that is completely unreachable through the UI today, while the page's own total count implies more exists. This sits in the standing operating directive's top priority tiers ('Broken core journeys' / 'Launch-blocking missing functionality'), ahead of any remaining polish or infra item currently in the backlog.\n\nEvidence:\n- sig_24716ca6-0d33-433d-8e84-1c0db1080f15\n- rentals/frontend/src/app/browse/page.tsx:39-53\n- rentals/frontend/src/app/browse/page.tsx:98",
+  "requiredAgents": [
+    "designer",
+    "frontend",
+    "qa",
+    "security"
+  ],
+  "dependencies": {
+    "designer": [],
+    "frontend": [
+      "designer"
+    ],
+    "qa": [
+      "designer",
+      "frontend"
+    ],
+    "security": [
+      "designer",
+      "frontend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer"
+    ],
+    [
+      "frontend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Pagination UI (numbered pages or load-more) on the Browse page",
+    "filters.page wired to trigger refetch with the correct offset",
+    "Manual test plan documented in the task file covering: first page, navigating to a later page, a filtered search with >24 results, and the last/partial page"
+  ],
+  "riskNotes": [
+    "Frontend-only change; backend GET /listings already supports page/limit params so no backend implementer is needed",
+    "No automated test suite exists in this repo, so QA verification must be manual per ai/current-state.md",
+    "Must confirm the chosen pagination pattern (numbered vs load-more) doesn't regress the existing total-count display or filter/sort interactions"
+  ]
+}

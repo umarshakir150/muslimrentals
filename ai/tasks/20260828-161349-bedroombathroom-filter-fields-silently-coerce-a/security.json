@@ -1,0 +1,7 @@
+{
+  "role": "security",
+  "taskId": "20260828-161349-bedroombathroom-filter-fields-silently-coerce-a",
+  "verdict": "APPROVED",
+  "findings": [],
+  "notes": "Reviewed the actual diff (dbe83d6) in this worktree: rentals/frontend/src/lib/listingValidation.ts wraps bedroomsSchema/bathroomsSchema in z.preprocess mapping '' to undefined before z.coerce.number(), with required_error/invalid_type_error messages, plus new regression tests in listingValidation.test.ts covering the empty-string case for both schemas. This is a client-side-only Zod schema change confined to postListingSchema.ts/PostListingModal's form validation UX — no route, auth, ownership, or Prisma query touched. The file's own comment correctly notes the backend Zod schema remains the real validation boundary; this frontend change doesn't weaken or bypass that boundary (0 as a legitimate studio value is still accepted; only the empty-string coercion-to-0 bug is closed). No authN/authZ, IDOR, data-exposure, XSS, CSRF, injection, upload, rate-limit, or logging surface is touched by this change. Could not execute `npx vitest run` in this sandbox (Bash denied for non-trivial commands, same constraint the implementer hit) — verified correctness by reading the code/zod semantics instead of by execution; recommend CI/QA execute the test file to confirm pass, but this has no security bearing.</notes>\n</invoke>\n"
+}

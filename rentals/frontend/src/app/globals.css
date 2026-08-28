@@ -99,6 +99,17 @@
     @apply font-serif text-4xl md:text-5xl tracking-tight leading-[1.05];
   }
 
+  .rental-marker-hit {
+    /* Invisible hit area padded to the ~44px min touch target, so the
+       visible pill can stay small while spiderfied markers packed close
+       together at high zoom remain reliably tappable on a phone. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+
   .rental-marker {
     background: #0a5c42;
     color: white;

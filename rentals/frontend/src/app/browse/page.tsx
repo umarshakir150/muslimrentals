@@ -1,7 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
@@ -33,10 +34,17 @@ export default function BrowsePage() {
   const { filters } = useFilterStore();
   const { toast } = useToast();
   const isAuth = useIsAuthenticated();
+  const router = useRouter();
 
   const page = filters.page || 1;
 
+  // Guards against a slower, earlier request (e.g. a page-2+ "Load more" fetch)
+  // resolving after a newer one (e.g. a filter change back to page 1) and
+  // overwriting/appending onto its results.
+  const requestIdRef = useRef(0);
+
   const fetchListings = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     const isFirstPage = page === 1;
     if (isFirstPage) {
       setLoading(true);
@@ -62,14 +70,18 @@ export default function BrowsePage() {
         ...(filters.lat && { lat: filters.lat, lng: filters.lng, radiusKm: filters.radiusKm }),
       };
       const res = await listingsApi.getAll(params);
+      if (requestIdRef.current !== requestId) return; // superseded by a newer request
       setListings(prev => (isFirstPage ? res.data : [...prev, ...res.data]));
       setTotal(res.pagination?.total ?? res.data.length);
     } catch {
+      if (requestIdRef.current !== requestId) return;
       if (isFirstPage) setHasError(true);
       else setLoadMoreError(true);
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestIdRef.current === requestId) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [filters, page]);
 
@@ -153,7 +165,7 @@ export default function BrowsePage() {
                     listing={listing}
                     index={i}
                     onView={setSelectedListing}
-                    onMap={() => {}}
+                    onMap={(l) => router.push(`/map?listingId=${l.id}`)}
                     onMessage={(l) => { if (!isAuth) setAuthOpen(true); else setMessageTarget(l); }}
                   />
                 ))}

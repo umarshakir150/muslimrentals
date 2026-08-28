@@ -1,0 +1,33 @@
+{
+  "role": "security",
+  "taskId": "20260828-084529-replace-the-bedroom-and-bathroom-dropdowns",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "No new auth surface, no schema/migration change, no data-exposure change. Numeric bounds (bedrooms Float min 0/max 20, bathrooms Int min 0/max 20) are identical before and after, enforced server-side via Zod .strict() schemas which remain the security boundary — client-side listingValidation.ts mirrors but does not replace them.",
+      "evidence": "rentals/backend/src/validation/listingSchemas.ts:15-16 unchanged from pre-existing inline schema; rentals/frontend/src/lib/listingValidation.ts:6-15"
+    },
+    {
+      "severity": "info",
+      "finding": "React renders the new numeric input's error messages and values as JSX text (auto-escaped), and the input is type=number/inputMode=numeric — no injection or XSS surface introduced.",
+      "evidence": "rentals/frontend/src/components/listings/PostListingModal.tsx (diff): {errors.bedrooms && <p>{errors.bedrooms.message}</p>}"
+    },
+    {
+      "severity": "info",
+      "finding": "Ownership checks, rate limiting (writeRateLimiter), and authenticate/optionalAuth gates on POST/PATCH/DELETE /listings are unchanged; the listingSchemas.ts extraction is a behavior-preserving refactor (confirmed by reading the full route file and diffing against the pre-task commit).",
+      "evidence": "rentals/backend/src/routes/listings.ts:152-225"
+    },
+    {
+      "severity": "info",
+      "finding": "applyRangeFilters correctly preserves the pre-existing != null (not truthiness) check so a literal 0 filter value still applies — no filter-bypass regression for studio (0-bedroom) listings.",
+      "evidence": "rentals/backend/src/validation/listingSchemas.ts:74-79; covered by tests/validation/listingSchemas.test.ts:175-180"
+    },
+    {
+      "severity": "info",
+      "finding": "Could not execute the new Vitest suites in this sandbox (npm commands are denied by the environment's permission policy, matching what Backend/Frontend engineers reported). Verified correctness by manual code reading instead: schemas, bounds, and applyRangeFilters logic all trace correctly against Prisma types (bedrooms Float, bathrooms Int) and the pre-task behavior.",
+      "recommendedAction": "Run `npm test` in both rentals/backend and rentals/frontend in an environment with npm access before considering this fully verified; not a blocker for security sign-off since no security-relevant logic changed."
+    }
+  ],
+  "notes": "Verification level: LOCAL code review only, no live-site check performed (this is an unshipped UI change). Confirmed no schema.prisma diff, no ListingFilters.tsx diff, and that the task-relevant diff (against the actual pre-task commit 9fe3aac, not stale main) is scoped to: listingValidation.ts/test.ts (frontend), listingSchemas.ts/test.ts (backend extraction), PostListingModal.tsx dropdown→input swap, and vitest config/package.json additions. No authentication, authorization, data-exposure, injection, or rate-limiting concerns identified."
+}

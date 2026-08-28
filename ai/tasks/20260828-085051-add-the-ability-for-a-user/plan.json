@@ -1,0 +1,83 @@
+{
+  "taskId": "20260828-085051-add-the-ability-for-a-user",
+  "objective": "Add the ability for a user to permanently delete a listing they own.\n\nBackground: rentals/backend/prisma/schema.prisma already defines the right cascade behavior for this -- Listing's related rows (ListingImage, ListingAmenity, SavedListing, Conversation -> ConversationParticipant/Message) are all `onDelete: Cascade`, and Report.listingId is `onDelete: SetNull` (so reports about a deleted listing survive with a null listingId rather than vanishing, which is correct -- do not change this). This means a straightforward `prisma.listing.delete()` already does the right thing at the DB level; you should NOT need a schema/migration change for this feature. One thing the DB cascade does NOT handle: ListingImage.key stores each image's S3 object key -- deleting the DB rows does not delete the actual S3 objects, so the delete flow must also remove the real S3 objects (see rentals/backend/src/routes/uploads.ts's existing S3 delete pattern) or you will leak orphaned storage.\n\nAdd an \"obvious but appropriately placed\" delete option to the owner's listing-management UI (their listing detail/edit view and/or \"My Listings\" list -- follow this app's existing patterns for owner-only actions, e.g. how edit/remove-style actions are already surfaced elsewhere). Require authentication (`authenticate` middleware) and enforce ownership authorization strictly server-side: the backend must verify the listing belongs to `req.user.id` (never trust a client-supplied user id) before deleting -- follow agents/backend.md's \"Object-level authorization checklist\" exactly and write the answers into the task file. A user must never be able to delete another user's listing by manipulating the frontend request (wrong listing id in the URL/body, tampered auth token, etc.) -- Security must specifically verify this, including testing what happens when a non-owner (or an unauthenticated request) attempts the delete endpoint directly.\n\nShow a clear, unambiguous confirmation dialog before deletion (this cannot be undone from the user's perspective) so it can't happen by accident -- match this app's existing dialog/modal conventions if one already exists for a comparable destructive action.\n\nAfter a successful delete, the listing must cleanly disappear everywhere it could still appear: the owner's \"My Listings\", browse/search results, map results, any other user's saved-listings list/references, and anywhere else a listing reference is rendered or cached client-side (check for any client-side cache/store that might hold a stale copy, e.g. Zustand state, and invalidate/update it appropriately rather than requiring a full page reload to see the listing gone).\n\nRegression coverage: add automated tests (Vitest is set up in both rentals/backend and rentals/frontend) covering: an owner successfully deleting their own listing (and its related rows/S3 objects being cleaned up), a non-owner being rejected (403/404 as appropriate -- follow existing convention for \"not yours\" vs \"doesn't exist\" responses in this codebase), an unauthenticated request being rejected, and the deleted listing actually disappearing from the relevant list/search/map queries afterward.\n\nHave Product/QA confirm the exact current \"My Listings\"/listing-management UI and existing destructive-action confirmation patterns first, Frontend and Backend work concurrently on the UI and the DELETE endpoint + S3 cleanup, Designer review the confirmation flow and placement (obvious enough to find, not so prominent it invites accidental clicks), and Security do a focused, explicit review of the delete authorization and related-data cleanup specifically (this is the highest-risk item of this batch -- do not skip or soften this review). Integrate, and report real verification levels honestly per agents/qa.md's vocabulary.",
+  "requiredAgents": [
+    "qa",
+    "frontend",
+    "backend",
+    "security",
+    "designer"
+  ],
+  "dependencies": {
+    "designer": [],
+    "frontend": [
+      "designer"
+    ],
+    "backend": [
+      "designer"
+    ],
+    "qa": [
+      "designer",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "designer",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "DELETE /listings/:id backend route with authenticate middleware and strict server-side ownership check (never trusting client-supplied user id)",
+    "S3 object cleanup for all ListingImage.key values belonging to the deleted listing, using the existing uploads.ts S3 delete pattern",
+    "Confirmation dialog component/flow gating the delete action, matching existing destructive-action modal conventions",
+    "Delete entry point in owner's listing management UI (My Listings and/or listing detail/edit view), owner-only",
+    "Client-side store/cache invalidation so the deleted listing disappears from My Listings, browse, map, and saved-listings views without a full reload",
+    "Backend tests: owner delete success (row + cascade + S3 cleanup), non-owner rejected, unauthenticated rejected, deleted listing absent from subsequent list/search/map queries",
+    "Task file at ai/tasks/20260828-listing-owner-delete.md with backend.md's Object-level authorization checklist answers filled in",
+    "Security review report specifically covering delete authorization bypass attempts (tampered id, tampered/foreign auth token, unauthenticated) and related-data cleanup completeness",
+    "Designer review note on confirmation dialog placement/wording (discoverable but not accidental-click-prone)",
+    "QA verification report using agents/qa.md's honesty vocabulary for what was actually run/verified"
+  ],
+  "riskNotes": [
+    "Highest risk item: broken object-level authorization would let any authenticated user delete another user's listing by supplying a foreign listing id -- Security must explicitly test unauthenticated and non-owner attempts against the real endpoint, not just review code",
+    "Permanent, irreversible deletion (unlike existing soft-remove/REMOVED-status pattern) -- must not be confused with or replace the existing moderation soft-remove flow used by admins/moderators",
+    "S3 object deletion is a real external side effect; a bug here could either leak orphaned storage (if skipped) or delete objects still referenced elsewhere (if key matching is wrong) -- verify keys are scoped to the deleted listing's own images only",
+    "Client-side state (Zustand store, any SWR/API cache) must be invalidated on delete or stale UI could imply a listing still exists after removal",
+    "Report.listingId uses onDelete: SetNull by design so reports survive listing deletion -- do not alter this schema behavior",
+    "This task builds the capability only; it does not itself deploy to production or delete real production data, so no founder approval is required for this task's own objective -- founder approval remains required separately before deploying this change or if it is ever used to delete real production listings"
+  ]
+}

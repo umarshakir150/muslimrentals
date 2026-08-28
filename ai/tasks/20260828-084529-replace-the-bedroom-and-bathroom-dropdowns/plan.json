@@ -1,0 +1,77 @@
+{
+  "taskId": "20260828-084529-replace-the-bedroom-and-bathroom-dropdowns",
+  "objective": "Replace the Bedroom and Bathroom dropdowns on the Post Listing form with plain numeric inputs.\n\nBackground: rentals/backend/prisma/schema.prisma's Listing model has `bedrooms Float` and `bathrooms Int`. The Post Listing form (PostListingModal.tsx) currently uses dropdown selects for these; the same values are also used as filter criteria on the browse/map pages (check ListingFilters and the corresponding backend query params in rentals/backend/src/routes/listings.ts for the exact filter contract -- min/max range params, exact-match params, whatever the existing pattern is).\n\nReplace both dropdowns with simple numeric `<input type=\"number\">`-style fields (matching this app's existing `input-field` styling convention). Add sensible client-side validation: no negative values, a reasonable sane upper bound (e.g. reject absurd values like 500 bedrooms), and correct handling of the fact bedrooms is a Float in this schema (studio/0.5 conventions may exist -- check how bedrooms is currently used/rendered elsewhere, e.g. listing cards or detail pages, e.g. \"Studio\" for 0, before deciding whether to allow decimals or restrict to sensible increments) while bathrooms is an Int (whole numbers, or standard real-estate half-bath convention if that's how it's used today -- verify against the actual schema type, don't assume). Mirror the same validation server-side in the Zod create/update-listing schema -- client-side validation is UX only, never the security/correctness boundary.\n\nMake sure the browse/map filters continue to work correctly against these fields after the input method changes -- the stored data shape/type must not change in a way that breaks existing filter queries or existing listings' stored values. If any type adjustment turns out to be genuinely necessary, treat it with the same care as any schema change (additive/reversible, documented, not applied to production without it being called out clearly).\n\nTest posting listings with a range of realistic bed/bath values (including edge cases like 0 bedrooms/studio, and whatever the top of your sane validation range is) and verify browse/map filtering by bed/bath count returns the correct listings both before and after this change, so existing filter behavior isn't regressed.\n\nRegression coverage: add automated tests (Vitest is set up in both rentals/backend and rentals/frontend) covering the numeric input's validation rules and the backend schema's validation, plus a filter-correctness test if practical against the existing filter query logic.\n\nHave QA/Product confirm current dropdown behavior and the exact filter contract first, Frontend and Backend can work concurrently once that contract is confirmed, Designer review whether plain numeric inputs are actually the friendliest UI here (e.g. should there be +/- stepper affordances, is a bare number input awkward on mobile) while keeping the founder's explicit ask (numeric inputs, not dropdowns) as the baseline. Security review is low-priority here (no new auth surface) but Security should still glance at the schema change for basic input-bounds sanity. Report real verification levels honestly.",
+  "requiredAgents": [
+    "qa",
+    "frontend",
+    "backend",
+    "security",
+    "designer"
+  ],
+  "dependencies": {
+    "designer": [],
+    "frontend": [
+      "designer"
+    ],
+    "backend": [
+      "designer"
+    ],
+    "qa": [
+      "designer",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "designer",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "rentals/frontend/src/components/listings/PostListingModal.tsx numeric bedroom/bathroom inputs replacing dropdowns",
+    "Updated/added Zod validation in backend create/update-listing schema mirroring client bounds (float bedrooms, int bathrooms, min 0, sane max)",
+    "Vitest tests: frontend input validation, backend schema validation, filter-correctness test against listings.ts bed/bath filter params",
+    "QA report confirming current dropdown behavior, exact filter contract (min/max vs exact-match params), and post-change manual verification of posting + browse/map filtering across edge cases (0/studio, top of range)",
+    "Designer review note on numeric input UX (steppers, mobile friendliness) vs the founder's explicit numeric-input baseline",
+    "Security note on schema input-bounds sanity"
+  ],
+  "riskNotes": [
+    "Filter contract (min/max range vs exact-match query params for bedrooms/bathrooms) must be confirmed by QA before Frontend/Backend implement, to avoid breaking browse/map filtering",
+    "bedrooms is Float and bathrooms is Int in Prisma schema — client and server validation must respect this distinction (studio=0 convention, possible half-bath convention) without changing the stored data type/shape",
+    "No automated test suite exists yet beyond Vitest setup mentioned in task — new tests are additive, should not be treated as full regression coverage replacement for manual verification",
+    "Task explicitly should not touch production; all verification is local/manual plus new automated tests"
+  ]
+}

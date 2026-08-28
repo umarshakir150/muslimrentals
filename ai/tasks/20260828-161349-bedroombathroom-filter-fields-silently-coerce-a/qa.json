@@ -1,0 +1,34 @@
+{
+  "role": "qa",
+  "taskId": "20260828-161349-bedroombathroom-filter-fields-silently-coerce-a",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Fix correctly closes the reported gap: bedroomsSchema/bathroomsSchema now wrap z.coerce.number() in z.preprocess(value => value === '' ? undefined : value, ...), so an emptied Beds/Baths input in PostListingModal.tsx (register('bedrooms')/register('bathrooms') produce '' on clear, not null/0) now produces Number(undefined) = NaN -> zod's 'nan' parsedType -> invalid_type issue -> the custom errorMap resolves to the invalid_type_error message (since ctx.data is NaN, not undefined, per zod 3.22.4's processCreateParams logic, required_error technically never fires here) -- but required_error and invalid_type_error are set to the identical string ('Enter a number of bedrooms'/bathrooms'), so the user-visible outcome matches the intended UX spec regardless of which branch triggers. 0 (studio/no-bathroom-count) still passes as before since 0 !== ''.",
+      "evidence": "rentals/frontend/src/lib/listingValidation.ts (commit dbe83d6); consumed unchanged by src/lib/postListingSchema.ts -> src/components/listings/PostListingModal.tsx:177-184 where register('bedrooms')/register('bathrooms') are plain HTML number inputs (no valueAsNumber), so clearing the field yields the empty-string case this fix targets."
+    },
+    {
+      "severity": "info",
+      "finding": "New regression tests in listingValidation.test.ts assert safeParse('') fails with the exact expected message for both schemas, alongside all pre-existing valid/invalid cases (0, typical, max, negative, oversized, non-numeric 'abc', fractional bathrooms) which remain unchanged and unaffected by the preprocess wrapper.",
+      "evidence": "rentals/frontend/src/lib/listingValidation.test.ts lines 31-37, 69-75"
+    },
+    {
+      "severity": "info",
+      "finding": "Could not execute `npx vitest run` or any node/npm command in this sandbox (Bash tool denies non-trivial commands here, same restriction the implementer hit), so verification is by code/logic review and tracing zod 3.22.4's actual coercion/errorMap source semantics against package.json's pinned zod ^3.22.4, not by running the suite.",
+      "recommendedAction": "CI or a session with Bash execution access should run `cd rentals/frontend && npx vitest run src/lib/listingValidation.test.ts` to convert this from CODE_REVIEWED to an executed pass, though the reasoning here is not speculative -- it traces the actual library version's known internals."
+    },
+    {
+      "severity": "low",
+      "finding": "The code comment says the preprocess maps '' (and null/undefined) to undefined, but the function `emptyStringToUndefined` only special-cases `value === ''`; a literal `null` input would pass through unchanged and still coerce to 0 (Number(null) === 0), reproducing the original bug for that input shape.",
+      "evidence": "rentals/frontend/src/lib/listingValidation.ts lines 6-9",
+      "recommendedAction": "Not blocking: bedrooms/bathrooms are never set to null anywhere in PostListingModal.tsx (only setValue calls target city/lat/lng/neighbourhood, and defaultValues seeds bedrooms/bathrooms to 1), and a native number input's cleared value is always '' via RHF register, never null, so this is unreachable in the actual UI today. Worth a one-line comment fix or `value === '' || value == null` guard if this schema is ever reused somewhere null could occur, but not a functional bug given current callers."
+    },
+    {
+      "severity": "info",
+      "finding": "Confirmed the task title's 'filter fields' phrasing does not correspond to a separate browse/search filter component -- bedroomsSchema/bathroomsSchema have exactly one consumer (postListingSchema.ts -> PostListingModal.tsz), matching the task body's actual description of the Beds/Baths field on PostListingModal and the implementer's own self-check note.",
+      "evidence": "Grep for bedrooms|bathrooms across rentals/frontend/src returned only listingValidation.ts/.test.ts, postListingSchema.ts and its test, PostListingModal.tsx, ListingCard.tsx, ListingDetail.tsx, and types/index.ts -- no separate SearchFilters/FilterBar component exists."
+    }
+  ],
+  "notes": "Verification level: CODE_REVIEWED (diff inspected directly, zod 3.22.4 coercion/errorMap semantics traced against the pinned version to confirm the new tests' expected messages are correct) -- not TYPECHECKED or BUILD_VERIFIED, since node_modules is absent in this worktree and the Bash tool denies npm/npx/tsc/vitest execution here (same blocker the frontend implementer reported). Scope is minimal and correctly targeted: only listingValidation.ts and its test file changed, no unrelated files touched, no schema/migration/backend dependency as expected for this effort-1 fix."
+}

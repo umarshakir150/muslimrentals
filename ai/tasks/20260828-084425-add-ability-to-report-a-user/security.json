@@ -1,0 +1,45 @@
+{
+  "role": "security",
+  "taskId": "20260828-084425-add-ability-to-report-a-user",
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "POST /messages/:id/report correctly enforces both IDOR protection (conversation-participant check) and a self-report block, in that order, before creating the Report row.",
+      "evidence": "rentals/backend/src/routes/messages.ts:200-203 — isParticipant checked via message.conversation.participants server-side lookup, then message.senderId === req.user!.id blocked with 400."
+    },
+    {
+      "severity": "info",
+      "finding": "POST /users/:id/report correctly blocks self-reporting and verifies target existence server-side before writing the Report row; response body leaks no information about existing reports against the target (generic {success, message} only).",
+      "evidence": "rentals/backend/src/routes/users.ts:64-84."
+    },
+    {
+      "severity": "info",
+      "finding": "Report model extension is additive/nullable (targetType default LISTING, reportedUserId/messageId/messageSnapshot nullable, SetNull FKs) — no existing column altered or made non-nullable, matching the existing listingId nullable-FK pattern. Hand-authored migration.sql matches the schema.prisma diff.",
+      "evidence": "rentals/backend/prisma/schema.prisma:212-253; rentals/backend/prisma/migrations/20260828090000_report_user_message_targets/migration.sql."
+    },
+    {
+      "severity": "info",
+      "finding": "GET /admin/reports's new reportedUser/message includes (email, isBanned, banReason, sender email) are gated behind the router-level requireRole(ADMIN, MODERATOR) already applied to the whole /admin router — same exposure tier as existing GET /admin/users, no new privilege escalation.",
+      "evidence": "rentals/backend/src/routes/admin.ts:25, 157-189."
+    },
+    {
+      "severity": "low",
+      "finding": "POST /users/:id/report has no prior-interaction requirement (any authenticated user can report any other existing user), which trust_safety explicitly flagged as an open policy question rather than resolving before implementation. This is a moderation-policy gap, not an authz/IDOR bug — writeRateLimiter (30/15min) still bounds volume from a single account.",
+      "evidence": "rentals/backend/src/routes/users.ts:64-71 — no check that reporter has a shared conversation/listing with target.",
+      "recommendedAction": "Non-blocking for this pass; revisit with founder/trust_safety whether to require prior interaction or add stricter per-target-report rate limiting before this ships to production traffic."
+    },
+    {
+      "severity": "low",
+      "finding": "Admin dashboard's Reports panel was not updated to branch on targetType — for USER/MESSAGE reports it will render 'Listing: undefined' and the 'Remove listing' button is a no-op guarded by `if (!r.listing) return`, so no crash and no unintended action, but moderators reviewing a message/user report get no useful context (sender, reported user, message snapshot) in the UI even though the API now returns it.",
+      "evidence": "rentals/frontend/src/app/admin/page.tsx:70-98 — only renders r.reason/r.description/r.reporter/r.listing, ignores r.reportedUser and r.message added by the backend."
+    },
+    {
+      "severity": "info",
+      "finding": "Migration has not been applied to any live/dev database (prisma migrate dev/status/db push denied in this sandbox) — this is explicitly flagged by the backend implementer as a pre-deploy blocker requiring out-of-band Supabase SQL execution, consistent with this repo's precedent for its two prior migrations.",
+      "evidence": "Backend implementer's testPlan; migration.sql present but unapplied.",
+      "recommendedAction": "Do not deploy/merge to the production-tracking branch until the migration is applied out-of-band and reconciled with `prisma migrate resolve --applied`, per the implementer's own note."
+    }
+  ],
+  "notes": "No authentication bypass, authorization flaw, IDOR, privilege escalation, data exposure, XSS, CSRF, injection, or credential-leakage issue found in the integrated diff. Authorization/ownership checks (conversation-participant verification, self-report blocks, admin-only report review) are all server-side and consistent with existing codebase patterns. The two low-severity items (no prior-interaction requirement for user reports; admin UI not yet branching on targetType) are moderation/UX gaps already surfaced by trust_safety and are appropriately non-blocking for this narrowly-scoped pass, matching the deferral plan all four prerequisite reviewers agreed on. The unapplied-migration item is an operational deploy gate, not a code defect, and is already explicitly flagged by the backend implementer as must-fix-before-deploy."
+}

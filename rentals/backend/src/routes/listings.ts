@@ -12,6 +12,7 @@
  */
 import { Router, Response, NextFunction } from 'express';
 import { ListingStatus } from '@prisma/client';
+import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 import { prisma } from '../prisma/client';
 import { authenticate, optionalAuth, AuthRequest } from '../middleware/auth';
@@ -19,6 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm } from '../utils/geo';
+import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
   listingUpdateSchema,
@@ -26,6 +28,23 @@ import {
   reportSchema,
   applyRangeFilters,
 } from '../validation/listingSchemas';
+
+// S3 is optional-with-warning, same guard as uploads.ts — this route must
+// still work (DB rows are the source of truth) even if AWS isn't configured,
+// it just skips the best-effort object cleanup in that case.
+const AWS_CONFIGURED = Boolean(
+  process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_S3_BUCKET
+);
+const s3 = AWS_CONFIGURED
+  ? new S3Client({
+      region: process.env.AWS_REGION || 'us-east-1',
+      credentials: {
+        accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
+    })
+  : null;
 
 const router = Router();
 
@@ -214,6 +233,59 @@ router.delete('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, a
     });
 
     res.json({ success: true, message: 'Listing removed.' });
+  } catch (err) { next(err); }
+});
+
+// ─── DELETE /listings/:id/permanent ───────────────────────────────────────────
+// Distinct from the soft-remove DELETE /:id above (which sets
+// status=REMOVED and remains admin-reversible). This is a hard delete: the
+// row and its Prisma-cascaded children (images, amenities, saved-listing
+// references) are gone for good, and the S3 objects backing each image are
+// also removed here since the DB cascade can't reach into object storage.
+// Conversations/messages about this listing are deliberately NOT deleted —
+// Conversation.listingId is SetNull, not Cascade (see schema.prisma) —
+// because the other participant has no say in this listing's deletion and
+// must not lose their own message history as a side effect of it.
+// Owner-only by design (not admin/moderator) — admins already have the
+// reversible soft-remove path for moderation.
+router.delete('/:id/permanent', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const listing = await prisma.listing.findUnique({
+      where: { id: req.params.id },
+      include: { images: { select: { id: true, key: true } } },
+    });
+    if (!listing) throw new AppError('Listing not found.', 404);
+
+    // Strict server-side ownership check — never trust a client-supplied
+    // user id; req.user.id comes only from the verified JWT.
+    if (listing.userId !== req.user!.id) {
+      throw new AppError('Not authorized.', 403);
+    }
+
+    // Best-effort S3 cleanup: attempt every object, log failures, but never
+    // let a storage hiccup block the user from deleting their own data.
+    // Listings created via raw imageUrls (not the S3 upload flow) store the
+    // URL itself as `key`, which isn't a real S3 object key — deletes for
+    // those simply no-op against S3 and are safely ignored.
+    if (s3 && listing.images.length > 0) {
+      const results = await Promise.allSettled(
+        listing.images.map(img =>
+          s3!.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET!, Key: img.key }))
+        )
+      );
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          logger.warn(`Failed to delete S3 object for listing image ${listing.images[i].id}: ${r.reason}`);
+        }
+      });
+    }
+
+    // Prisma cascade (see schema.prisma) removes images, amenities, and
+    // saved references. Report.listingId and Conversation.listingId are
+    // both SetNull -- reports and conversations survive.
+    await prisma.listing.delete({ where: { id: req.params.id } });
+
+    res.json({ success: true, message: 'Listing permanently deleted.' });
   } catch (err) { next(err); }
 });
 

@@ -33,6 +33,14 @@ Prisma, PostgreSQL, JWT auth, Socket.IO server).
   public-profile route as the model: only safe fields, never email/phone/
   passwordHash)
 
+## Standing ownership
+
+Beyond whatever a given task is, Backend continuously owns API and
+database reliability across the whole product — request validation, error
+responses, query correctness, and production data integrity, not just the
+endpoint a task touches. See `ai/operating-directive.md`'s "Standing role
+ownership."
+
 ## Object-level authorization checklist
 
 For every user-owned or user-generated object (listings, messages,

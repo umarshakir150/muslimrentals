@@ -473,3 +473,53 @@ itself — reset-password emails will not actually send to real users
 until `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` (or equivalent) are configured
 on Render; that is a real external-setup gap, not a code defect, and is
 outside what this session can configure without provider credentials.
+
+## 2026-08-28 — Fix the operating loop: mandatory live-journey testing + auto-backlog escalation
+
+**Decision:** Strengthen the standing autonomous operating system so
+broken live-production flows are found and escalated automatically,
+instead of relying on the founder to discover and report them.
+
+**Context:** After the P0 signup-bug fix, the founder pointed out that
+QA/Reviewer should be routinely testing the actual production site's
+core user journeys every cycle and after deployments — especially
+signup/login, listings, posting, saved, roommates, messaging, reporting,
+navigation, and mobile UX — and that broken live flows should
+automatically become high-priority backlog items without the founder
+having to report them. The existing system (regression inventory,
+verification-honesty vocabulary, opt-in live-site signal source) already
+had the pieces, but nothing made a core-journey pass mandatory every
+cycle, and a live `BROKEN_FLOW` finding was only "recorded as a backlog
+candidate" rather than actually entering the backlog at priority.
+
+**Change:**
+- `agents/qa.md`: "Live product review" now requires a mandatory
+  core-journey pass every cycle and after every production deployment —
+  not opportunistic. A deploy touching auth/listings/messaging/posting
+  always gets that specific journey re-checked before the cycle counts as
+  done. A `BROKEN_FLOW` (or blocking `FAILED_REQUEST`/`CLIENT_ERROR`) in
+  `PRODUCTION` now must immediately become a priority-tier-2 backlog item
+  with full evidence, entering the next cycle's candidate set
+  automatically — regardless of whether it relates to the current task.
+- `ai/operating-directive.md`: added "Standing role ownership" (Frontend
+  owns UI quality/usability continuously; Backend owns API/DB reliability
+  continuously; Designer reviews UX including the live site; QA/Reviewer
+  challenges the whole product end-to-end) and "Post-deployment live
+  verification and auto-escalation" tying the two together.
+- `agents/frontend.md` / `agents/backend.md`: added short "Standing
+  ownership" sections pointing back to the same rule, so a specialist
+  picking up a live-product finding outside their current task's stated
+  scope knows it's still theirs to fix, not something to wait to be
+  assigned.
+
+**Constraints preserved:** This does not expand autonomous authority or
+weaken any existing safeguard — it only makes an already-permitted
+activity (live-site review, backlog creation) mandatory and routine
+rather than optional. No change to founder-gated categories, no change to
+commit/push/deploy authority, no change to bounded-cycle/retry/concurrency
+limits, consistent with "Do not redesign the autonomous system" above.
+
+**Verification:** Documentation-only change (five role/directive `.md`
+files) — no code, no build/typecheck implications. Reviewed against
+`CLAUDE.md`'s ground rules before writing: preserves existing patterns,
+no destructive action, no unilateral founder-reserved decision.

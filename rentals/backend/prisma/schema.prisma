@@ -200,6 +200,23 @@ model City {
   @@index([name])
 }
 
+// ─── Neighbourhoods ───────────────────────────────────────────────────────────
+// Curated, real-coordinate neighbourhood/district reference data per city --
+// mirrors the City table's pattern (prisma/seed.ts). Used to resolve a
+// listing's coordinates to something more precise than the city's single
+// center point, the same way City already resolves a city to its center.
+model Neighbourhood {
+  id       String @id @default(uuid())
+  name     String
+  city     String
+  province String
+  lat      Float
+  lng      Float
+
+  @@unique([city, province, name])
+  @@index([city, province])
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 model Report {
   id          String       @id @default(uuid())

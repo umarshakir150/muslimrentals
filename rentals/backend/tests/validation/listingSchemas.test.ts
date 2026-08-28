@@ -15,6 +15,7 @@ const validListing = {
   bathrooms: 1,
   audience: 'FAMILIES',
   city: 'Toronto',
+  neighbourhood: 'Financial District',
   lat: 43.6532,
   lng: -79.3832,
   contactInfo: 'call 555-555-5555',
@@ -90,6 +91,7 @@ const baseListing = {
   bathrooms: 1,
   audience: ListingAudience.BROTHERS,
   city: 'Toronto',
+  neighbourhood: 'Kensington Market',
   lat: 43.6532,
   lng: -79.3832,
   contactInfo: 'email me at test@example.com',
@@ -177,6 +179,42 @@ describe('listingCreateSchema — bathrooms (Int, min 0, max 20)', () => {
   it('rejects non-numeric bathrooms', () => {
     const result = listingCreateSchema.safeParse({ ...baseListing, bathrooms: 'one' });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('listingCreateSchema — neighbourhood requirement', () => {
+  it('accepts a valid payload including neighbourhood', () => {
+    const result = listingCreateSchema.safeParse(baseListing);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a payload with neighbourhood omitted entirely', () => {
+    const { neighbourhood, ...rest } = baseListing;
+    const result = listingCreateSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a payload with neighbourhood as an empty string', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a payload with neighbourhood as only whitespace', () => {
+    // Regression guard: .trim() must run BEFORE .min(1) so a whitespace-only
+    // value is rejected outright, not accepted pre-trim and then silently
+    // reduced to "" -- "required" must actually mean required.
+    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects neighbourhood over 100 characters', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: 'a'.repeat(101) });
+    expect(result.success).toBe(false);
+  });
+
+  it('listingUpdateSchema (PATCH) does not require neighbourhood', () => {
+    const result = listingUpdateSchema.safeParse({ title: 'Updated title for this listing' });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -307,5 +345,12 @@ describe('applyRangeFilters — Prisma where-clause construction (filter correct
     expect(where.status).toBe('ACTIVE');
     expect(where.city).toEqual({ contains: 'Toronto' });
     expect(where.bathrooms).toEqual({ gte: 1 });
+  });
+});
+
+describe('listingCreateSchema — lat/lng ranges (neighbourhood-resolved coordinates)', () => {
+  it('rejects lat/lng outside valid ranges', () => {
+    expect(listingCreateSchema.safeParse({ ...baseListing, lat: 200 }).success).toBe(false);
+    expect(listingCreateSchema.safeParse({ ...baseListing, lng: -200 }).success).toBe(false);
   });
 });

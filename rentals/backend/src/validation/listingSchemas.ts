@@ -13,6 +13,18 @@ export const ALLOWED_AMENITIES = [
   'Private entrance', 'Basement unit', 'Balcony', 'Backyard access',
 ] as const;
 
+// `neighbourhood` is required on NEW listings (the Listing.neighbourhood DB
+// column itself stays nullable -- pre-existing production rows already have
+// it null and there is no real data to backfill them with, so a hard
+// NOT NULL migration would either crash on those rows or require fabricating
+// data; enforcing "required" at this API layer instead affects only new
+// writes, matching this codebase's usual DB-nullable/API-required pattern).
+// This is safe to make unconditional (not per-city) because every city in
+// prisma/seed.ts's CANADIAN_CITIES now has at least one seeded
+// src/data/neighbourhoods.ts entry to select -- see that file's coverage
+// comment. If a new city is ever added to CANADIAN_CITIES without a
+// matching neighbourhood, posting from that city would hit a dead end;
+// keep the two lists in sync.
 export const listingCreateSchema = z.object({
   title:         z.string().min(5).max(200).trim(),
   description:   z.string().min(20).max(5000).trim(),
@@ -23,7 +35,10 @@ export const listingCreateSchema = z.object({
   city:          z.string().min(1).max(100).trim(),
   town:          z.string().max(100).trim().optional(),
   province:      z.string().max(50).trim().optional(),
-  neighbourhood: z.string().max(100).trim().optional(),
+  // .trim() before .min(1) (not after) so a whitespace-only value is
+  // actually rejected rather than passing the length check pre-trim and
+  // silently becoming "" -- required must mean required.
+  neighbourhood: z.string().trim().min(1).max(100),
   address:       z.string().max(200).trim().optional(),
   lat:           z.number().min(-90).max(90),
   lng:           z.number().min(-180).max(180),
@@ -34,6 +49,8 @@ export const listingCreateSchema = z.object({
   imageUrls:     z.array(z.string().url().max(2048)).max(10).optional(),
 }).strict();
 
+// Updates may omit neighbourhood (partial edit of an existing listing that
+// predates this requirement); PATCH does not re-require it.
 export const listingUpdateSchema = listingCreateSchema.partial();
 
 // Query param schema for GET /listings — typed, bounded, no injection surface

@@ -4,16 +4,16 @@ import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { X, Upload, Loader2, ImageIcon } from 'lucide-react';
+import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
+import NeighbourhoodAutocomplete from '@/components/ui/NeighbourhoodAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
-import { bedroomsSchema, bathroomsSchema } from '@/lib/listingValidation';
+import { postListingSchema, PostListingFormData as FormData } from '@/lib/postListingSchema';
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
 
@@ -22,23 +22,6 @@ const AMENITIES = [
   'Internet included', 'Air conditioning', 'Dishwasher', 'Pet-friendly',
   'Private entrance', 'Basement unit', 'Balcony', 'Backyard access',
 ];
-
-const schema = z.object({
-  title: z.string().min(5, 'Title must be at least 5 characters').max(200),
-  description: z.string().min(20, 'Description too short').max(5000),
-  price: z.coerce.number().positive('Enter a valid price').max(50000),
-  bedrooms: bedroomsSchema,
-  bathrooms: bathroomsSchema,
-  audience: z.enum(['BROTHERS', 'SISTERS', 'COUPLES', 'FAMILIES', 'ALL']),
-  city: z.string().min(1, 'Select a city'),
-  town: z.string().optional(),
-  neighbourhood: z.string().optional(),
-  contactInfo: z.string().min(5, 'Add contact info').max(300),
-  lat: z.coerce.number(),
-  lng: z.coerce.number(),
-});
-
-type FormData = z.infer<typeof schema>;
 
 export default function PostListingModal({ open, onClose }: PostListingModalProps) {
   const isAuth = useIsAuthenticated();
@@ -52,7 +35,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   const { toast } = useToast();
 
   const { register, handleSubmit, formState: { errors }, setValue, watch, trigger, reset } = useForm<FormData>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(postListingSchema),
     defaultValues: { audience: 'ALL', bedrooms: 1, bathrooms: 1, lat: 43.65, lng: -79.38 },
   });
 
@@ -102,7 +85,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   async function nextStep() {
     const fieldsToValidate: (keyof FormData)[] = step === 1
       ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
-      : ['city', 'contactInfo'];
+      : ['city', 'neighbourhood', 'contactInfo'];
     const valid = await trigger(fieldsToValidate);
     if (valid) setStep(s => s + 1);
   }
@@ -234,20 +217,31 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                           onChange={(city, coords) => {
                             setValue('city', city);
                             if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
+                            // A neighbourhood picked for the previous city no longer
+                            // applies -- and its coordinates would silently mislabel
+                            // this listing's location if left in place.
+                            setValue('neighbourhood', '');
                           }}
                           placeholder="Search city..."
                         />
                         {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Neighbourhood</label>
-                          <input {...register('neighbourhood')} placeholder="e.g. North York" className="input-field" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Town / Area</label>
-                          <input {...register('town')} placeholder="e.g. Mississauga" className="input-field" />
-                        </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Neighbourhood *</label>
+                        <NeighbourhoodAutocomplete
+                          value={watch('neighbourhood') || ''}
+                          city={city || ''}
+                          onChange={(neighbourhood, coords) => {
+                            setValue('neighbourhood', neighbourhood, { shouldValidate: true });
+                            if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
+                          }}
+                        />
+                        <p className="text-xs text-muted mt-1.5">Helps renters find listings near them — pick the closest match.</p>
+                        {errors.neighbourhood && <p className="text-red-500 text-xs mt-1">{errors.neighbourhood.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Town / Area</label>
+                        <input {...register('town')} placeholder="e.g. Mississauga" className="input-field" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Contact info *</label>

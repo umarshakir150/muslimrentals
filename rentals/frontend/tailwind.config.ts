@@ -6,6 +6,16 @@ const config: Config = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    // Non-JSX files under src/lib (e.g. mapMarkers.ts) build HTML strings
+    // containing class names for Leaflet's L.divIcon -- without this glob,
+    // Tailwind's JIT content scanner never sees those literals and silently
+    // drops any @layer rule targeting them from the production build (see
+    // globals.css's "Leaflet / marker overrides" section for the incident
+    // this caused). Defense in depth alongside keeping those specific rules
+    // unlayered -- this doesn't help classes Leaflet itself assigns at
+    // runtime (never a literal string in this codebase at all), which is
+    // why the vendor overrides also stay outside @layer regardless.
+    './src/lib/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
     extend: {

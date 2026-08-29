@@ -78,15 +78,25 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
         try {
           await listingsApi.uploadImages(listing.id, images);
         } catch (uploadErr: any) {
-          // The listing itself was created successfully -- don't lose that
-          // or block the success flow over an images-specific failure.
-          // Surface it separately so the founder/user knows to retry adding
-          // photos rather than assuming nothing happened.
+          // A listing the poster explicitly attached photos to must not end
+          // up live without them -- that's a silently incomplete listing,
+          // not a successful post. Roll the listing back rather than leaving
+          // it orphaned (photo-less) behind a "Listing posted!" toast, and
+          // keep the form open with the entered data + selected images
+          // intact so the poster can just retry, instead of starting over.
+          try {
+            await listingsApi.deletePermanent(listing.id);
+          } catch {
+            // Best-effort rollback -- if it fails there's nothing more the
+            // client can do here; the listing may need manual cleanup, but
+            // we still must not tell the poster this succeeded.
+          }
           toast({
             variant: 'destructive',
-            title: 'Listing posted, but photo upload failed',
-            description: uploadErr.message || 'You can add photos later by editing the listing.',
+            title: 'Could not post your listing',
+            description: uploadErr.message || 'Uploading your photo failed, so nothing was posted. Please try again.',
           });
+          return;
         }
       }
       setSuccess(true);

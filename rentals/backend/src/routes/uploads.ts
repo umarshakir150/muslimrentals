@@ -79,6 +79,26 @@ function imageFileFilter(_req: any, file: Express.Multer.File, cb: multer.FileFi
 // bucket policy, so only omit it when a custom endpoint is configured.
 const USING_S3_COMPATIBLE_PROVIDER = Boolean(process.env.S3_ENDPOINT);
 
+// multer-s3's `file.location` is computed by the AWS SDK directly from
+// whatever host the upload request was actually sent to -- for real AWS
+// S3 that's already the public, browsable URL, but for R2 (and most other
+// S3-compatible providers) the upload/API endpoint (`S3_ENDPOINT`) is a
+// DIFFERENT host from the one that serves public GETs. R2 only serves
+// public reads from its own r2.dev subdomain or a custom domain attached
+// to the bucket -- never from the `<account-id>.r2.cloudflarestorage.com`
+// API endpoint itself, which requires signed requests. Storing
+// `file.location` as-is for a custom-endpoint provider would silently
+// save an unusable/private URL: the upload would succeed but the image
+// would never load. `S3_PUBLIC_URL_BASE` is the fix -- the actual
+// public base URL for the bucket (its r2.dev URL or custom domain),
+// used to build the stored URL instead of trusting the API endpoint's
+// own response. Real AWS S3 is unaffected: this only applies when set.
+const PUBLIC_URL_BASE = process.env.S3_PUBLIC_URL_BASE?.replace(/\/+$/, '');
+
+function publicUrlFor(file: Express.MulterS3.File): string {
+  return PUBLIC_URL_BASE ? `${PUBLIC_URL_BASE}/${file.key}` : file.location;
+}
+
 // ─── S3 storage factory ────────────────────────────────────────────────────────
 function makeS3Storage(prefix: string) {
   return multerS3({
@@ -124,7 +144,17 @@ if (s3) {
         bucket: process.env.AWS_S3_BUCKET,
         region: process.env.AWS_REGION || 'us-east-1',
         usingCustomEndpoint: USING_S3_COMPATIBLE_PROVIDER,
+        publicUrlBaseConfigured: Boolean(PUBLIC_URL_BASE),
       });
+      // A custom endpoint with credentials valid enough to pass HeadBucket
+      // but no S3_PUBLIC_URL_BASE would still silently produce unusable
+      // image URLs (see publicUrlFor's comment) -- warn loudly rather than
+      // let that surface later as "upload succeeded but image never loads."
+      if (USING_S3_COMPATIBLE_PROVIDER && !PUBLIC_URL_BASE) {
+        logger.warn({
+          message: 'S3_ENDPOINT is set but S3_PUBLIC_URL_BASE is not -- uploaded image URLs will likely point at a private API endpoint and fail to load. See .env.example.',
+        });
+      }
     })
     .catch((err: any) => {
       logger.error({
@@ -132,6 +162,7 @@ if (s3) {
         bucket: process.env.AWS_S3_BUCKET,
         region: process.env.AWS_REGION || 'us-east-1',
         usingCustomEndpoint: USING_S3_COMPATIBLE_PROVIDER,
+        publicUrlBaseConfigured: Boolean(PUBLIC_URL_BASE),
         awsErrorName: err.name,
         awsHttpStatus: err.$metadata?.httpStatusCode,
       });
@@ -174,7 +205,7 @@ router.post(
       const images = await prisma.$transaction(
         files.map((file, i) =>
           prisma.listingImage.create({
-            data: { listingId: listing.id, url: file.location, key: file.key, order: existing + i },
+            data: { listingId: listing.id, url: publicUrlFor(file), key: file.key, order: existing + i },
           })
         )
       );
@@ -195,8 +226,9 @@ router.post(
       const file = req.file as Express.MulterS3.File;
       if (!file) throw new AppError('No file uploaded.', 400);
 
-      await prisma.user.update({ where: { id: req.user!.id }, data: { avatarUrl: file.location } });
-      res.json({ success: true, data: { url: file.location } });
+      const url = publicUrlFor(file);
+      await prisma.user.update({ where: { id: req.user!.id }, data: { avatarUrl: url } });
+      res.json({ success: true, data: { url } });
     } catch (err) { next(err); }
   }
 );
@@ -224,4 +256,5 @@ router.delete(
   }
 );
 
+export { publicUrlFor };
 export default router;

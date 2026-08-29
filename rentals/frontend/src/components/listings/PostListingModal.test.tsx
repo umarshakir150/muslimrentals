@@ -3,13 +3,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PostListingModal from './PostListingModal';
 
-const { createMock, uploadImagesMock } = vi.hoisted(() => ({
+const { createMock, uploadImagesMock, deletePermanentMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   uploadImagesMock: vi.fn(),
+  deletePermanentMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
-  listingsApi: { create: createMock, uploadImages: uploadImagesMock },
+  listingsApi: { create: createMock, uploadImages: uploadImagesMock, deletePermanent: deletePermanentMock },
 }));
 
 vi.mock('@/store/authStore', () => ({
@@ -46,9 +47,11 @@ describe('PostListingModal', () => {
   beforeEach(() => {
     createMock.mockReset();
     uploadImagesMock.mockReset();
+    deletePermanentMock.mockReset();
     toastMock.mockReset();
     createMock.mockResolvedValue({ data: { id: 'listing-1', title: 'Test' } });
     uploadImagesMock.mockResolvedValue({ success: true, data: [] });
+    deletePermanentMock.mockResolvedValue({ success: true, message: 'Listing permanently deleted.' });
   });
 
   async function fillStep1(user: ReturnType<typeof userEvent.setup>) {
@@ -138,5 +141,48 @@ describe('PostListingModal', () => {
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     expect(uploadImagesMock).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the listing and does not show a success state when photo upload fails', async () => {
+    uploadImagesMock.mockRejectedValue(new Error('Upload failed: storage rejected the request'));
+    const user = userEvent.setup();
+    render(<PostListingModal open onClose={vi.fn()} />);
+
+    await goToStep3(user);
+    const file = new File(['fake-image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, file);
+    await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+    await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
+    await waitFor(() => expect(deletePermanentMock).toHaveBeenCalledWith('listing-1'));
+
+    // Must not show the success state for a listing that was just rolled back.
+    expect(screen.queryByText('Listing posted!')).not.toBeInTheDocument();
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: 'destructive', title: 'Could not post your listing' })
+    );
+    // The form (with the entered data) should still be there for a retry,
+    // not reset/closed as if this were a normal successful submit.
+    expect(screen.getByText('Post rental listing')).toBeInTheDocument();
+  });
+
+  it('still shows a destructive error if the rollback delete itself fails, rather than a success state', async () => {
+    uploadImagesMock.mockRejectedValue(new Error('Upload failed'));
+    deletePermanentMock.mockRejectedValue(new Error('Delete failed'));
+    const user = userEvent.setup();
+    render(<PostListingModal open onClose={vi.fn()} />);
+
+    await goToStep3(user);
+    const file = new File(['fake-image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, file);
+    await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+    await waitFor(() => expect(deletePermanentMock).toHaveBeenCalledWith('listing-1'));
+    expect(screen.queryByText('Listing posted!')).not.toBeInTheDocument();
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: 'destructive', title: 'Could not post your listing' })
+    );
   });
 });

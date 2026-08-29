@@ -65,12 +65,25 @@ function imageFileFilter(_req: any, file: Express.Multer.File, cb: multer.FileFi
   }
 }
 
+// A custom S3_ENDPOINT means a non-AWS S3-compatible provider (the
+// .env.example explicitly anticipates Cloudflare R2). R2's S3-compatible API
+// does not support per-object ACLs at all -- public access is configured at
+// the bucket level (R2's "Public Access" setting or a custom domain), not
+// via an `x-amz-acl` header on PutObject. Sending `acl: 'public-read'`
+// against R2 makes every upload fail with a raw, unclassified SDK error
+// (surfaced to the founder as the generic "An unexpected error occurred"
+// message from errorHandler.ts's unknown-error branch) -- confirmed as the
+// live production cause of "listing posted, but photo upload failed".
+// Real AWS S3 buckets still need the ACL to serve images publicly without a
+// bucket policy, so only omit it when a custom endpoint is configured.
+const USING_S3_COMPATIBLE_PROVIDER = Boolean(process.env.S3_ENDPOINT);
+
 // ─── S3 storage factory ────────────────────────────────────────────────────────
 function makeS3Storage(prefix: string) {
   return multerS3({
     s3: s3!,
     bucket: process.env.AWS_S3_BUCKET!,
-    acl: 'public-read',
+    ...(USING_S3_COMPATIBLE_PROVIDER ? {} : { acl: 'public-read' as const }),
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: (_req, file, cb) => {
       // Use UUID key — never trust the original filename (path traversal prevention)

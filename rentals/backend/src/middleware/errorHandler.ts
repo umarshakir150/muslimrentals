@@ -31,6 +31,23 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ) {
+  // AWS SDK v3 errors carry their own diagnostic shape ($metadata, a Code /
+  // name identifying the specific failure e.g. InvalidAccessKeyId,
+  // AccessDenied, NoSuchBucket) that is distinct from -- and more useful
+  // than -- err.message alone for telling apart credential, permission,
+  // endpoint, and bucket-config failures. None of this is secret (it never
+  // includes the credential values themselves), so it's safe to log even
+  // in production, where the *client* still only ever sees the generic
+  // message below.
+  const awsMeta = (err as any).$metadata
+    ? {
+        awsErrorName: err.name,
+        awsErrorCode: (err as any).Code,
+        awsHttpStatus: (err as any).$metadata?.httpStatusCode,
+        awsRequestId: (err as any).$metadata?.requestId,
+      }
+    : undefined;
+
   // Always log with context for security monitoring
   logger.error({
     message: err.message,
@@ -38,6 +55,7 @@ export function errorHandler(
     method: req.method,
     ip: req.ip,
     stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,
+    ...awsMeta,
   });
 
   // ── Prisma known errors ────────────────────────────────────────────────────

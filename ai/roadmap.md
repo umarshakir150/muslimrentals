@@ -25,6 +25,14 @@ living document, not a commitment.
 
 ## Next
 
+- Map: overlapping same-neighborhood/nearby price bubbles need a real
+  presentation solution (spiderfy or similar) once that work resumes —
+  founder-confirmed backlog item from the 2026-08-29 live retest. The
+  green price-bubble styling itself is confirmed working correctly in
+  production; this is purely about markers that sit close enough together
+  to visually overlap. Spiderfy/neighbourhood clustering is explicitly
+  paused for now (see `ai/decisions.md`) — do not start this until the
+  founder resumes that work.
 - Stand up a minimal automated test setup (even smoke-level: auth flow,
   listing CRUD ownership checks, message-participant authorization) so QA
   has something repeatable to run, and so this operating system's "run

@@ -85,6 +85,25 @@ function MapPageInner() {
             overflow: 'hidden',
             position: 'relative',
             minHeight: '400px',
+            // This wrapper has position:relative but no z-index, so on its
+            // own it never becomes a stacking context -- its children's
+            // z-index values (the loading overlay below is z-index:1000,
+            // and Leaflet's own internal panes go up to ~700) paint directly
+            // in whatever stacking context contains this whole card, i.e.
+            // the same one AuthModal/PostListingModal/ListingDetail's
+            // z-[100] backdrops live in. 1000 > 100, so while `loading` is
+            // true (a real, not-rare window -- e.g. a slow/cold-started
+            // backend, see the initial-load performance work) the loading
+            // overlay physically painted above any modal opened during
+            // that window, confirmed with document.elementFromPoint() hit
+            // testing against a real production build. isolation: isolate
+            // contains everything inside this card (map, tiles, popups,
+            // the loading overlay) to its own local stacking order,
+            // regardless of how high any of their z-index values are, so
+            // none of it can ever compete with page-level UI like a modal
+            // again -- the same fix already applied to .leaflet-container
+            // itself, just at the level that actually needed it.
+            isolation: 'isolate',
           }}
         >
           {/* Loading overlay - sits on top of map, doesn't hide it */}

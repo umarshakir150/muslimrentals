@@ -14,7 +14,7 @@
 import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
-import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, DeleteObjectCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
 import { v4 as uuid } from 'uuid';
 import path from 'path';
 
@@ -23,6 +23,7 @@ import { uploadRateLimiter } from '../middleware/rateLimiter';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { prisma } from '../prisma/client';
 import { AppError } from '../middleware/errorHandler';
+import { logger } from '../utils/logger';
 
 const router = Router();
 
@@ -100,6 +101,42 @@ const listingUpload = AWS_CONFIGURED
 const avatarUpload = AWS_CONFIGURED
   ? multer({ storage: makeS3Storage('avatars'), limits: { fileSize: MAX_AVATAR_SIZE, files: 1 }, fileFilter: imageFileFilter })
   : null;
+
+// ─── Startup self-check ─────────────────────────────────────────────────────
+// A misconfigured/invalid credential (wrong key, revoked key, key issued
+// for the wrong provider) previously stayed invisible until a real user
+// picked a photo and hit the generic "unexpected error" -- the first
+// concrete signal ever showed up in the request logs, not at deploy time.
+// HeadBucket exercises the exact same auth path a real upload does (same
+// credentials, same endpoint, same bucket) but is a single cheap read, so
+// this fires once at boot and reports loudly, in the deploy/startup logs,
+// well before any user is affected. Fire-and-forget: never blocks or
+// delays server startup, and a check failure never crashes the process --
+// uploads simply keep failing per-request exactly as before, just with a
+// clear standing signal already on record. Logs only non-secret metadata
+// (bucket name, region, whether a custom endpoint is configured, and the
+// AWS SDK's own error name/code) -- never the credential values.
+if (s3) {
+  s3.send(new HeadBucketCommand({ Bucket: process.env.AWS_S3_BUCKET! }))
+    .then(() => {
+      logger.info({
+        message: 'S3 upload storage verified at startup.',
+        bucket: process.env.AWS_S3_BUCKET,
+        region: process.env.AWS_REGION || 'us-east-1',
+        usingCustomEndpoint: USING_S3_COMPATIBLE_PROVIDER,
+      });
+    })
+    .catch((err: any) => {
+      logger.error({
+        message: `S3 upload storage FAILED startup verification -- uploads will not work until this is fixed. ${err.message}`,
+        bucket: process.env.AWS_S3_BUCKET,
+        region: process.env.AWS_REGION || 'us-east-1',
+        usingCustomEndpoint: USING_S3_COMPATIBLE_PROVIDER,
+        awsErrorName: err.name,
+        awsHttpStatus: err.$metadata?.httpStatusCode,
+      });
+    });
+}
 
 // Runs before the underlying multer middleware so an unconfigured server
 // returns a clear 503 instead of multer-s3 crashing the process at import

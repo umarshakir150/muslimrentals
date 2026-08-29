@@ -22,8 +22,9 @@ vi.mock('@aws-sdk/client-s3', () => ({
 
 const loggerInfoMock  = vi.hoisted(() => vi.fn());
 const loggerErrorMock = vi.hoisted(() => vi.fn());
+const loggerWarnMock  = vi.hoisted(() => vi.fn());
 vi.mock('../../src/utils/logger', () => ({
-  logger: { info: loggerInfoMock, error: loggerErrorMock, warn: vi.fn(), debug: vi.fn() },
+  logger: { info: loggerInfoMock, error: loggerErrorMock, warn: loggerWarnMock, debug: vi.fn() },
 }));
 
 const ORIGINAL_ENV = { ...process.env };
@@ -35,6 +36,7 @@ describe('uploads.ts S3 storage config', () => {
     s3SendMock.mockReset();
     loggerInfoMock.mockClear();
     loggerErrorMock.mockClear();
+    loggerWarnMock.mockClear();
     process.env = { ...ORIGINAL_ENV };
     process.env.AWS_ACCESS_KEY_ID = 'test-access-key';
     process.env.AWS_SECRET_ACCESS_KEY = 'test-secret-key';
@@ -124,5 +126,62 @@ describe('uploads.ts S3 storage config', () => {
     await new Promise(process.nextTick);
 
     expect(s3SendMock).not.toHaveBeenCalled();
+  });
+
+  it('warns at startup if a custom endpoint is configured but S3_PUBLIC_URL_BASE is not', async () => {
+    // A custom endpoint (R2, etc.) with valid credentials would still
+    // silently store an unusable image URL without this -- see
+    // publicUrlFor's comment in uploads.ts. This should be caught loudly
+    // at boot, not discovered later as "upload succeeded, image 404s."
+    process.env.S3_ENDPOINT = 'https://example-account-id.r2.cloudflarestorage.com';
+    delete process.env.S3_PUBLIC_URL_BASE;
+    s3SendMock.mockResolvedValue({});
+
+    await import('../../src/routes/uploads');
+    await new Promise(process.nextTick);
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('S3_PUBLIC_URL_BASE is not') })
+    );
+  });
+
+  it('does not warn when a custom endpoint has S3_PUBLIC_URL_BASE configured', async () => {
+    process.env.S3_ENDPOINT = 'https://example-account-id.r2.cloudflarestorage.com';
+    process.env.S3_PUBLIC_URL_BASE = 'https://pub-example.r2.dev';
+    s3SendMock.mockResolvedValue({});
+
+    await import('../../src/routes/uploads');
+    await new Promise(process.nextTick);
+
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it('does not warn for real AWS S3 (no custom endpoint) even without S3_PUBLIC_URL_BASE', async () => {
+    delete process.env.S3_ENDPOINT;
+    delete process.env.S3_PUBLIC_URL_BASE;
+    s3SendMock.mockResolvedValue({});
+
+    await import('../../src/routes/uploads');
+    await new Promise(process.nextTick);
+
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  describe('publicUrlFor', () => {
+    it('builds the URL from S3_PUBLIC_URL_BASE + the file key when configured', async () => {
+      process.env.S3_PUBLIC_URL_BASE = 'https://pub-example.r2.dev/';
+      const { publicUrlFor } = await import('../../src/routes/uploads');
+
+      expect(publicUrlFor({ key: 'listings/abc.jpg', location: 'https://private-endpoint/whatever' } as any))
+        .toBe('https://pub-example.r2.dev/listings/abc.jpg');
+    });
+
+    it('falls back to file.location (the AWS SDK-computed URL) when S3_PUBLIC_URL_BASE is not set', async () => {
+      delete process.env.S3_PUBLIC_URL_BASE;
+      const { publicUrlFor } = await import('../../src/routes/uploads');
+
+      expect(publicUrlFor({ key: 'listings/abc.jpg', location: 'https://real-aws-bucket.s3.amazonaws.com/listings/abc.jpg' } as any))
+        .toBe('https://real-aws-bucket.s3.amazonaws.com/listings/abc.jpg');
+    });
   });
 });

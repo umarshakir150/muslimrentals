@@ -213,7 +213,7 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
 
               <p className="text-xs text-muted text-center mt-4 leading-relaxed">
                 By continuing, you agree to our{' '}
-                <a href="/terms" className="text-brand-600 hover:underline">Terms of Use</a> and{' '}
+                <a href="/terms" className="text-brand-600 hover:underline">Terms of Service</a> and{' '}
                 <a href="/privacy" className="text-brand-600 hover:underline">Privacy Policy</a>.
               </p>
             </div>

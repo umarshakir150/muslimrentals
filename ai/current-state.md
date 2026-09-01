@@ -22,7 +22,10 @@ let it drift into fiction.
   forgot/reset password.
 - Admin panel: stats, user search, ban/unban, role change, listing removal,
   report triage.
-- Static policy pages: Safety, Terms, Privacy, Contact.
+- Static policy pages: Safety, Terms, Privacy, Content & Community
+  Guidelines, Contact.
+- User-initiated account deletion (Settings), anonymizing rather than
+  hard-deleting to preserve other users' shared conversation history.
 - Seeded reference data: mosques and Canadian cities.
 
 ## Incomplete / not-yet-built features
@@ -32,7 +35,6 @@ let it drift into fiction.
   routes, no UI). See `company/product.md`.
 - **Reporting a user or a message directly** — only listings can be
   reported today.
-- **User-initiated account/data deletion.**
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 

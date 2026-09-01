@@ -36,7 +36,12 @@ handlers — not aspirational:
   message count), user search, ban/unban, role change (ADMIN only), listing
   removal, report review (resolve/dismiss with a resolution note).
 - **Static/policy pages.** Home, Browse, Map, Post, Contact, Messages,
-  Safety, Terms, Privacy — all present in `rentals/frontend/src/app`.
+  Safety, Terms, Privacy, Content & Community Guidelines — all present in
+  `rentals/frontend/src/app`.
+- **User-initiated account deletion.** Available from Settings
+  (`/settings`) — anonymizes rather than hard-deletes to avoid corrupting
+  other users' shared conversation history; see `ai/decisions.md`'s
+  2026-09-01 Settings-milestone entry for the full design.
 - **Mosques and cities data.** Seeded reference data (52 mosques, 80+ cities)
   used for autocomplete and listing-mosque proximity features.
 
@@ -72,6 +77,4 @@ Inferred from what's built and what's clearly unfinished, not guessed:
 - **Payments/monetization.** Not built; not currently a priority.
 - **Push notifications / email digests.** Only transactional emails
   (welcome, password reset) exist.
-- **User-initiated account/data deletion.** Not implemented — see
-  `company/architecture.md` and `agents/legal.md`.
 - **Automated test suite / CI.** Not present — see `ai/current-state.md`.

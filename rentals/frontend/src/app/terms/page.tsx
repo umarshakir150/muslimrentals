@@ -1,38 +1,222 @@
 import { Metadata } from 'next';
-import Navbar from '@/components/layout/Navbar';
+import Link from 'next/link';
+import PolicyLayout, { PolicySection } from '@/components/legal/PolicyLayout';
 
 export const metadata: Metadata = { title: 'Terms of Service' };
 
+const sections: PolicySection[] = [
+  {
+    id: 'acceptance',
+    heading: 'Acceptance of these Terms',
+    body: (
+      <>
+        <p>
+          These Terms of Service ("Terms") govern your use of Muslim Rentals (the "Platform"), accessible at
+          muslimrentals.ca. By creating an account or otherwise using the Platform, you agree to these Terms. If
+          you do not agree, do not use the Platform.
+        </p>
+        <p>
+          We may update these Terms from time to time; see the{' '}
+          <a href="#changes" className="text-brand-700 hover:underline">Changes section</a> below. Continued use
+          of the Platform after an update means you accept the revised Terms.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'platform-role',
+    heading: 'What the Platform is — and is not',
+    body: (
+      <>
+        <p>
+          Muslim Rentals is a listing and messaging platform that helps people in Canada's Muslim community find
+          and post rental housing that fits their community and lifestyle preferences. We are a technology
+          intermediary only.
+        </p>
+        <p>
+          We are <strong>not</strong> a landlord, tenant, broker, or party to any lease or rental agreement made
+          between users. We do not inspect properties, verify a poster's identity or ownership of a property, run
+          background or credit checks, or hold funds or deposits on anyone's behalf. Any agreement you enter into
+          with another user is solely between you and that user, and is governed by the landlord-tenant laws of
+          your province.
+        </p>
+        <p>The Platform is currently free to use — we do not charge listing fees or subscription fees.</p>
+      </>
+    ),
+  },
+  {
+    id: 'accounts',
+    heading: 'Accounts and eligibility',
+    body: (
+      <>
+        <p>You must be at least 18 years old to create an account. You may sign up with an email and password or with Google sign-in.</p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>You're responsible for the accuracy of the information on your account and for keeping your login credentials secure.</li>
+          <li>One account per person. Don't create multiple accounts to evade a ban, a report, or a rate limit.</li>
+          <li>You're responsible for activity that happens under your account, whether or not you personally performed it.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: 'listings',
+    heading: 'Posting a listing',
+    body: (
+      <>
+        <p>
+          Listings must be for a real, currently available property that you have the right to rent or sublet.
+          You're responsible for the accuracy of your listing's details (price, location, availability, amenities,
+          photos, and any contact information you choose to include).
+        </p>
+        <p>
+          Some listings let you note a preferred audience for the unit (for example, sisters-only, brothers-only,
+          couples, or families). This is meant as a self-identified community-fit preference to help people find a
+          living situation that suits them — not as a blanket exclusion. You're responsible for making sure your
+          own listing and how you apply that preference comply with the human rights and tenancy laws of your
+          province; we don't provide legal advice on how those laws apply to your specific listing.
+        </p>
+        <p>
+          We may remove a listing that violates these Terms or our{' '}
+          <Link href="/community-guidelines" className="text-brand-700 hover:underline">Content &amp; Community Guidelines</Link>,
+          or that we reasonably believe is fraudulent, without prior notice.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'conduct',
+    heading: 'Prohibited conduct',
+    body: (
+      <>
+        <p>You agree not to, and not to help anyone else:</p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>Post a fraudulent, misleading, or deceptive listing, or a listing for a property you don't have the right to rent.</li>
+          <li>Ask for a deposit, e-transfer, or other payment before a genuine viewing or lease agreement, or otherwise attempt to defraud another user.</li>
+          <li>Harass, threaten, or discriminate against another user in violation of applicable human rights law.</li>
+          <li>Impersonate another person, landlord, or agent.</li>
+          <li>Post spam, unsolicited advertising, or content unrelated to renting housing.</li>
+          <li>Scrape, systematically collect, or resell data from the Platform, or attempt to bypass rate limits, bans, or other access controls.</li>
+          <li>Upload content that's unlawful, hateful, or that infringes someone else's rights (including copyright).</li>
+        </ul>
+        <p>See our <Link href="/community-guidelines" className="text-brand-700 hover:underline">Content &amp; Community Guidelines</Link> for more detail on what's and isn't allowed, and how to report a problem.</p>
+      </>
+    ),
+  },
+  {
+    id: 'messaging',
+    heading: 'Messaging',
+    body: (
+      <>
+        <p>
+          The in-app messaging feature is provided to help you communicate about a specific listing. Don't share
+          sensitive financial information (banking details, full ID numbers, etc.) through it or any other channel
+          before you've verified who you're dealing with — see our{' '}
+          <Link href="/safety" className="text-brand-700 hover:underline">Safety Guidelines</Link>.
+        </p>
+        <p>
+          Messages are stored so your conversation history is available to you and the other participant. We don't
+          currently offer a dedicated tool for reviewing message content, but as with any data stored on the
+          Platform, we may access it where necessary to investigate a report, enforce these Terms, or comply with
+          a legal obligation. See our <Link href="/privacy" className="text-brand-700 hover:underline">Privacy Policy</Link> for more.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'moderation',
+    heading: 'Moderation, suspension, and termination',
+    body: (
+      <>
+        <p>
+          We may remove content, or suspend or ban an account, that we reasonably believe violates these Terms or
+          our Content &amp; Community Guidelines. Where practical we'll try to be proportionate, but some
+          violations (fraud, harassment, clearly illegal content) may result in an immediate ban without warning.
+        </p>
+        <p>
+          You may delete your own account at any time from your account settings. When you do, your listings are
+          taken down and your profile is deactivated and anonymized; see our{' '}
+          <Link href="/privacy" className="text-brand-700 hover:underline">Privacy Policy</Link> for exactly what
+          that means. Account deletion is irreversible.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'ip',
+    heading: 'Intellectual property',
+    body: (
+      <>
+        <p>
+          The Platform's design, code, and branding belong to us or our licensors. You keep ownership of the
+          content you post (listing descriptions, photos, messages), but by posting it you give us a
+          non-exclusive, royalty-free license to host, display, and distribute it as part of operating the
+          Platform — for example, showing your listing photos to other users.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'disclaimers',
+    heading: 'Disclaimers and limitation of liability',
+    body: (
+      <>
+        <p>
+          The Platform is provided "as is." We don't guarantee that any listing is accurate, available, or posted
+          by a legitimate landlord, and we don't verify user identities or property ownership. You're responsible
+          for exercising your own judgment and due diligence — see our{' '}
+          <Link href="/safety" className="text-brand-700 hover:underline">Safety Guidelines</Link> — including
+          before sending any money or signing any agreement.
+        </p>
+        <p>
+          To the fullest extent permitted by law, we are not liable for losses arising from your use of the
+          Platform, including losses from a scam, a misleading listing, or a dispute with another user. Nothing in
+          these Terms limits any liability that can't be limited under applicable Canadian consumer-protection law.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: 'changes',
+    heading: 'Changes to the Platform or these Terms',
+    body: (
+      <p>
+        We may change or discontinue features of the Platform, and may update these Terms, at any time. We'll
+        update the "Effective" date above when we do. If a change is significant, we'll try to give you reasonable
+        notice, for example through the Platform or by email.
+      </p>
+    ),
+  },
+  {
+    id: 'contact-governing',
+    heading: 'Contact and governing law',
+    body: (
+      <>
+        <p>
+          Questions about these Terms can be sent to{' '}
+          <a href="mailto:support@muslimrentals.ca" className="text-brand-700 hover:underline">support@muslimrentals.ca</a>{' '}
+          or via our <Link href="/contact" className="text-brand-700 hover:underline">Contact page</Link>.
+        </p>
+        <p className="text-muted italic">
+          Governing law and venue for disputes will be specified here once finalized. This is a placeholder pending
+          a decision by the Platform operator, not a gap you should assume is resolved in your favor or ours.
+        </p>
+      </>
+    ),
+  },
+];
+
 export default function TermsPage() {
   return (
-    <div className="min-h-dvh">
-      <Navbar />
-      <main className="pt-[72px]">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-16 prose prose-sm max-w-none">
-          <h1 className="font-serif text-4xl mb-2">Terms of Service</h1>
-          <p className="text-muted">Last updated: January 1, 2025</p>
-
-          <div className="space-y-8 mt-8">
-            {[
-              { h: '1. Acceptance of Terms', p: 'By accessing or using Muslim Rentals ("Platform"), you agree to be bound by these Terms of Service and all applicable laws and regulations in Canada. If you do not agree, you may not use the Platform.' },
-              { h: '2. Platform Purpose', p: 'Muslim Rentals is a listing platform that connects landlords and tenants within the Muslim community in Canada. We do not act as a landlord, tenant, or party to any rental agreement. We are a technology intermediary only.' },
-              { h: '3. User Accounts', p: 'You must be at least 18 years old to create an account. You are responsible for maintaining the security of your account credentials. You must provide accurate information when creating an account. One person may not maintain multiple accounts.' },
-              { h: '4. Listing Rules', p: 'Listings must be for real, available properties in Canada. Listing fees (if applicable) are non-refundable once a listing goes live. We reserve the right to remove any listing that violates our Community Guidelines. Landlords are responsible for the accuracy of their listings.' },
-              { h: '5. Prohibited Content', p: 'You may not post: fraudulent, misleading, or deceptive listings; content that discriminates on protected grounds under the Canadian Human Rights Act; content promoting illegal activities; spam or commercial solicitations unrelated to rental listings; content that is hateful, abusive, or violates our community standards.' },
-              { h: '6. Messaging', p: 'Our messaging system is provided as a convenience. We may review messages for safety and compliance purposes. Do not share sensitive financial information through our platform. We are not responsible for communications that occur outside our platform.' },
-              { h: '7. Limitation of Liability', p: 'Muslim Rentals is not liable for: the accuracy of any listing; the conduct of landlords or tenants; any rental agreements made; financial loss resulting from rental scams (though we work hard to prevent them). Use the Platform at your own risk and exercise due diligence.' },
-              { h: '8. Intellectual Property', p: 'All Platform content, branding, and code remains the property of Muslim Rentals Inc. You grant us a non-exclusive license to display content you post on the Platform.' },
-              { h: '9. Termination', p: 'We may suspend or terminate accounts that violate these Terms. You may delete your account at any time. Upon termination, your listings will be removed and your data handled per our Privacy Policy.' },
-              { h: '10. Governing Law', p: 'These Terms are governed by the laws of the Province of Ontario and the federal laws of Canada. Any disputes shall be resolved in the courts of Ontario.' },
-            ].map(s => (
-              <section key={s.h} className="bg-white border border-ink/8 rounded-2xl p-6">
-                <h2 className="font-semibold text-base mb-3">{s.h}</h2>
-                <p className="text-sm text-muted leading-relaxed">{s.p}</p>
-              </section>
-            ))}
-          </div>
-        </div>
-      </main>
-    </div>
+    <PolicyLayout
+      title="Terms of Service"
+      effectiveDate="September 1, 2026"
+      intro={
+        <p>
+          Please read these Terms carefully. They explain what Muslim Rentals is (and isn't), what you can and
+          can't do here, and how disputes and account issues are handled.
+        </p>
+      }
+      sections={sections}
+    />
   );
 }

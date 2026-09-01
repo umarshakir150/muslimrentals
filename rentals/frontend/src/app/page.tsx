@@ -115,7 +115,7 @@ export default function Home() {
             <div>
               <h4 className="font-semibold text-sm mb-4 text-white/80">Legal</h4>
               <ul className="space-y-2">
-                {[['Terms of Service', '/terms'], ['Privacy Policy', '/privacy'], ['Safety Guidelines', '/safety'], ['Contact Us', '/contact']].map(([label, href]) => (
+                {[['Terms of Service', '/terms'], ['Privacy Policy', '/privacy'], ['Content & Community Guidelines', '/community-guidelines'], ['Safety Guidelines', '/safety'], ['Contact Us', '/contact']].map(([label, href]) => (
                   <li key={label}><Link href={href} className="text-white/50 hover:text-white text-sm transition-colors">{label}</Link></li>
                 ))}
               </ul>

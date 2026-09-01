@@ -38,7 +38,9 @@ independently, each with its own `package.json` and `node_modules`.
 - **Maps:** Leaflet + `leaflet.markercluster` (`FullMap`, `MiniMap`).
 - **Forms:** `react-hook-form` + `zod` via `@hookform/resolvers`.
 - **Routes (App Router pages):** `/`, `/browse`, `/map`, `/post`,
-  `/messages`, `/contact`, `/admin`, `/safety`, `/terms`, `/privacy`.
+  `/messages`, `/contact`, `/admin`, `/safety`, `/terms`, `/privacy`,
+  `/community-guidelines`, `/settings`, `/confirm-email`,
+  `/reset-password`, `/saved`, `/my-listings`.
 - **Deployment config present:** `rentals/frontend/netlify.toml` (Netlify,
   via `@netlify/plugin-nextjs`). The README's own recommendation is Vercel.
   **These two are inconsistent** — treat "which platform is actually used
@@ -162,8 +164,6 @@ No `RoommateProfile` (or similar) model exists.
   in-memory-only token would be. The backend's CSP (`script-src 'self'`)
   and global input sanitization mitigate but don't eliminate this class of
   risk.
-- **No user-initiated account/data deletion** endpoint exists — relevant to
-  privacy/legal review of any account-management feature.
 - **Only listings are reportable** — no report path for a user or a message
   directly, which limits Trust & Safety's tooling for harassment-via-
   messaging today.

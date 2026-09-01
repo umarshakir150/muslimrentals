@@ -164,6 +164,57 @@ requests resolve*, not that every pinned version is actually available
   (Netlify builds directly from `main` via `npm install`/`npm ci` in its own
   environment), but the same reasoning applies to the backend/Render path.
 
+### Preview-before-promote (2026-09-01 update — supersedes blanket auto-merge for the frontend/Netlify path)
+
+**Founder instruction, standing as of this date:** for the Netlify-deployed
+frontend, do **not** merge a completed task's branch into `main` (and
+therefore do not touch production) as an automatic consequence of reaching
+`COMPLETE` anymore. This directly narrows the 2026-08-27 auto-merge policy
+above for anything Netlify builds from `main` — that policy's schema/
+migration carve-out and merge-conflict/reporting rules are unchanged and
+still apply once a merge is actually attempted, but the trigger for
+attempting one is no longer "task reached COMPLETE."
+
+**New default workflow, required for every future task that touches
+`rentals/frontend`:**
+
+1. Implement the task on its working branch as before.
+2. Run the full local verification pass first (`tsc --noEmit`, the full
+   `vitest` suite, `next build`), same bar as before — do not skip to a
+   preview deploy on a build that hasn't already passed locally.
+3. Push the branch, then produce a **Netlify Deploy Preview** (a real,
+   separately-hosted, non-production URL building the pushed branch — see
+   `ai/decisions.md`'s entry for this date for which mechanism this
+   repo's Netlify+GitHub setup actually supports and why) and hand the
+   founder that URL. Do not merge or push to `main` at this step.
+4. Use Playwright against the **preview URL** (not `localhost`, not a
+   mock harness) wherever the change is browser-testable, same rigor as
+   any other QA pass — **when this environment's network egress actually
+   allows reaching `*.netlify.app`.** Confirmed blocked (org-wide proxy
+   policy, `curl` and real Playwright `page.goto()` both fail identically)
+   as of 2026-09-01 — see `ai/decisions.md`'s entry for that date. Re-test
+   this at the start of each task rather than assuming either way, since
+   this environment's tool/network access has changed between sessions
+   before. If still blocked: say so plainly, hand the founder the preview
+   URL for their own manual testing, and do not claim a browser check that
+   didn't happen.
+5. Wait for the founder's **explicit approval of the preview** before
+   doing anything further. A preview existing is not itself approval —
+   an actual "looks good" (or equivalent) from the founder is required.
+6. Only after that approval: merge the exact tested commit into `main`
+   and push (same mechanism as the prior auto-merge policy — worktree
+   merge, `--no-ff`, non-force push), then do the existing post-merge
+   live-site check.
+
+Production stays untouched for the entire preview/testing window — no
+branch pointed at Netlify's production context changes, no push to `main`,
+until step 6. This applies going forward as the default; it does not
+retroactively undo anything already promoted under the prior policy.
+
+The backend/Render path is **not** changed by this update (Render has no
+equivalent PR-preview mechanism on its current plan/config) — flag to the
+founder if an analogous gate is wanted there too, rather than assuming it.
+
 ## Automatic correction
 
 Bugs, review pushback, security findings, UX findings, failing checks, or

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import Image from 'next/image';
 import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink, Trash2 } from 'lucide-react';
 import { Listing } from '@/types';
@@ -10,6 +10,9 @@ import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
 import DeleteListingDialog from './DeleteListingDialog';
+import ListingImageLightbox from './ListingImageLightbox';
+
+const SWIPE_THRESHOLD = 50;
 
 interface ListingDetailProps {
   listing: Listing | null;
@@ -20,6 +23,7 @@ interface ListingDetailProps {
 
 export default function ListingDetail({ listing, onClose, onMessage, onDeleted }: ListingDetailProps) {
   const [imgIdx, setImgIdx] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [saved, setSaved] = useState(listing?.isSaved || false);
   const [saving, setSaving] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -27,10 +31,23 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
   const isAuth = useIsAuthenticated();
   const user = useUser();
   const { toast } = useToast();
+  const dragDistance = useRef(0);
+
+  // Guard against a stale index/open lightbox carrying over if the `listing`
+  // prop swaps to a different listing without this component unmounting
+  // (parents don't key ListingDetail by listing id).
+  useEffect(() => {
+    setImgIdx(0);
+    setLightboxOpen(false);
+  }, [listing?.id]);
 
   if (!listing) return null;
   const imgs = listing.images || [];
   const hasImgs = imgs.length > 0;
+  const hasMultipleImgs = imgs.length > 1;
+
+  function goPrevImg() { setImgIdx(i => (i - 1 + imgs.length) % imgs.length); }
+  function goNextImg() { setImgIdx(i => (i + 1) % imgs.length); }
 
   async function handleSave() {
     if (!isAuth) { toast({ title: 'Sign in required' }); return; }
@@ -86,23 +103,36 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
           <div className="flex-1 overflow-y-auto">
             {/* Images */}
             {hasImgs ? (
-              <div className="relative h-64 sm:h-72 bg-brand-100">
-                <Image src={imgs[imgIdx].url} alt={imgs[imgIdx].alt || listing.title} fill className="object-cover" sizes="672px" />
-                {imgs.length > 1 && (
+              <div className="relative h-64 sm:h-72 bg-brand-100 overflow-hidden">
+                <motion.div
+                  key={imgIdx}
+                  drag={hasMultipleImgs ? 'x' : false}
+                  dragConstraints={{ left: 0, right: 0 }}
+                  dragElastic={0.7}
+                  dragMomentum={false}
+                  onDrag={(_, info: PanInfo) => { dragDistance.current = info.offset.x; }}
+                  onDragEnd={() => {
+                    if (dragDistance.current < -SWIPE_THRESHOLD) goNextImg();
+                    else if (dragDistance.current > SWIPE_THRESHOLD) goPrevImg();
+                    dragDistance.current = 0;
+                  }}
+                  onTap={() => setLightboxOpen(true)}
+                  className="relative w-full h-full cursor-zoom-in touch-pan-y"
+                >
+                  <Image src={imgs[imgIdx].url} alt={imgs[imgIdx].alt || listing.title} fill className="object-cover pointer-events-none" sizes="672px" priority />
+                </motion.div>
+                {hasMultipleImgs && (
                   <>
-                    <button onClick={() => setImgIdx(i => (i - 1 + imgs.length) % imgs.length)}
+                    <button onClick={goPrevImg} aria-label="Previous photo"
                       className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 shadow flex items-center justify-center hover:bg-white">
                       <ChevronLeft size={18} />
                     </button>
-                    <button onClick={() => setImgIdx(i => (i + 1) % imgs.length)}
+                    <button onClick={goNextImg} aria-label="Next photo"
                       className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 shadow flex items-center justify-center hover:bg-white">
                       <ChevronRight size={18} />
                     </button>
-                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-                      {imgs.map((_, i) => (
-                        <button key={i} onClick={() => setImgIdx(i)}
-                          className={cn('w-2 h-2 rounded-full transition-all', i === imgIdx ? 'bg-white w-4' : 'bg-white/60')} />
-                      ))}
+                    <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-ink/60 text-white text-xs font-semibold">
+                      {imgIdx + 1} / {imgs.length}
                     </div>
                   </>
                 )}
@@ -195,6 +225,16 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
         onClose={() => setDeleteOpen(false)}
         onDeleted={(id) => { setDeleteOpen(false); onDeleted?.(id); onClose(); }}
       />
+
+      {lightboxOpen && hasImgs && (
+        <ListingImageLightbox
+          images={imgs}
+          index={imgIdx}
+          onIndexChange={setImgIdx}
+          onClose={() => setLightboxOpen(false)}
+          title={listing.title}
+        />
+      )}
     </AnimatePresence>
   );
 }

@@ -19,7 +19,7 @@ import crypto from 'crypto';
 
 import { prisma } from '../prisma/client';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
-import { sendEmail, passwordResetEmail, welcomeEmail } from '../utils/email';
+import { sendEmail, passwordResetEmail, passwordResetEmailText, welcomeEmail, welcomeEmailText } from '../utils/email';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
@@ -58,7 +58,7 @@ router.post('/register', authRateLimiter, async (req: Request, res: Response, ne
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    sendEmail({ to: email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(name) }).catch(() => {});
+    sendEmail({ to: email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(name), text: welcomeEmailText(name) }).catch(() => {});
 
     // hasPassword lets the frontend (Settings) know upfront whether to offer
     // password-based re-authentication or the Google-only confirm-by-email
@@ -132,7 +132,7 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
       });
       user = { ...created, passwordHash: null };
       hasPassword = false;
-      sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name) }).catch(() => {});
+      sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name), text: welcomeEmailText(user.name) }).catch(() => {});
     } else {
       // OWASP A07: matches the same guard /login and /refresh already apply
       // -- without this, a deleted (isActive: false) or banned account could
@@ -231,14 +231,16 @@ router.post('/forgot-password', authRateLimiter, async (req: Request, res: Respo
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
     // Fire-and-forget, matching /register's welcome email: a real user's
     // reset token is already saved above regardless of email delivery, so
-    // an SMTP failure (e.g. not configured yet) must never 500 this request
-    // -- that would leak "this email has an account" via a different status
-    // code, defeating SAFE_RESPONSE's anti-enumeration purpose, and would
-    // break the flow for every real user until SMTP is configured.
+    // a delivery failure (e.g. Resend not configured yet) must never 500
+    // this request -- that would leak "this email has an account" via a
+    // different status code, defeating SAFE_RESPONSE's anti-enumeration
+    // purpose, and would break the flow for every real user until email is
+    // configured.
     sendEmail({
       to: email,
       subject: 'Reset your Muslim Rentals password',
       html: passwordResetEmail(user.name, resetUrl),
+      text: passwordResetEmailText(user.name, resetUrl),
     }).catch(() => {});
 
     res.json(SAFE_RESPONSE);

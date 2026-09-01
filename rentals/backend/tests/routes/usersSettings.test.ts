@@ -55,9 +55,12 @@ vi.mock('@aws-sdk/client-s3', () => ({
 const sendEmailMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../src/utils/email', () => ({
   sendEmail: (...args: any[]) => sendEmailMock(...args),
-  emailChangeVerificationEmail: vi.fn(() => '<html></html>'),
-  passwordResetEmail: vi.fn(() => '<html></html>'),
-  welcomeEmail: vi.fn(() => '<html></html>'),
+  emailChangeVerificationEmail:     vi.fn(() => '<html></html>'),
+  emailChangeVerificationEmailText: vi.fn(() => 'text'),
+  passwordResetEmail:     vi.fn(() => '<html></html>'),
+  passwordResetEmailText: vi.fn(() => 'text'),
+  welcomeEmail:     vi.fn(() => '<html></html>'),
+  welcomeEmailText: vi.fn(() => 'text'),
 }));
 
 vi.mock('../../src/utils/logger', () => ({
@@ -226,41 +229,68 @@ describe('POST /users/me/email-change-request', () => {
 });
 
 describe('POST /users/me/email-change-confirm', () => {
-  it('rejects an unauthenticated request', async () => {
-    const app = await buildApp();
-    const res = await request(app).post('/api/v1/users/me/email-change-confirm').send({ token: 'x'.repeat(64) });
-    expect(res.status).toBe(401);
-  });
+  // Deliberately NOT behind authenticate -- the confirmation link is opened
+  // from an email client, very often on a different browser/device (or the
+  // same one after the access token has since expired) than the one that
+  // requested the change. These tests send no Authorization header at all,
+  // matching a real cross-device click, and rely on the token alone (same
+  // pattern already covered for /auth/reset-password).
 
-  it('rejects an invalid or expired token', async () => {
-    userFindUniqueMock.mockResolvedValueOnce(activeUser());
+  it('rejects an invalid or expired token, with no session required', async () => {
     userFindFirstMock.mockResolvedValue(null);
 
     const app = await buildApp();
     const res = await request(app)
       .post('/api/v1/users/me/email-change-confirm')
-      .set('Authorization', `Bearer ${signToken(USER_ID)}`)
       .send({ token: 'x'.repeat(64) });
 
     expect(res.status).toBe(400);
     expect(userUpdateMock).not.toHaveBeenCalled();
+    // authenticate() would call findUnique -- confirming it never ran.
+    expect(userFindUniqueMock).not.toHaveBeenCalled();
   });
 
-  it('commits the pending email on a valid token', async () => {
-    userFindUniqueMock.mockResolvedValueOnce(activeUser());
-    userFindFirstMock.mockResolvedValue({ pendingEmail: 'new@example.com' });
+  it('commits the pending email on a valid token, with no session/Authorization header at all', async () => {
+    userFindFirstMock.mockResolvedValue({ id: USER_ID, pendingEmail: 'new@example.com' });
     userUpdateMock.mockResolvedValue({ id: USER_ID, email: 'new@example.com' });
 
     const app = await buildApp();
     const res = await request(app)
       .post('/api/v1/users/me/email-change-confirm')
-      .set('Authorization', `Bearer ${signToken(USER_ID)}`)
       .send({ token: 'x'.repeat(64) });
 
     expect(res.status).toBe(200);
+    expect(userFindUniqueMock).not.toHaveBeenCalled();
     expect(userUpdateMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: USER_ID },
       data: expect.objectContaining({ email: 'new@example.com', pendingEmail: null }),
     }));
+  });
+
+  it('looks up purely by token -- never scopes to a caller identity, even when a Bearer token for a different user is sent', async () => {
+    userFindFirstMock.mockResolvedValue({ id: USER_ID, pendingEmail: 'new@example.com' });
+    userUpdateMock.mockResolvedValue({ id: USER_ID, email: 'new@example.com' });
+
+    const app = await buildApp();
+    const res = await request(app)
+      .post('/api/v1/users/me/email-change-confirm')
+      .set('Authorization', `Bearer ${signToken('22222222-2222-4222-8222-222222222222')}`)
+      .send({ token: 'x'.repeat(64) });
+
+    // The confirmation resolves the pending change for the token's owner
+    // (USER_ID), not whoever happens to be logged in on this device.
+    expect(res.status).toBe(200);
+    expect(userUpdateMock).toHaveBeenCalledWith(expect.objectContaining({ where: { id: USER_ID } }));
+  });
+
+  it('rejects a malformed token before any DB lookup', async () => {
+    const app = await buildApp();
+    const res = await request(app)
+      .post('/api/v1/users/me/email-change-confirm')
+      .send({ token: 'too-short' });
+
+    expect(res.status).toBe(422); // Zod validation failure
+    expect(userFindFirstMock).not.toHaveBeenCalled();
   });
 });
 

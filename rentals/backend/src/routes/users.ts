@@ -9,7 +9,7 @@
  *  - .strict() schemas reject extra fields
  *  - writeRateLimiter on mutations
  */
-import { Router, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -21,7 +21,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { logger } from '../utils/logger';
-import { sendEmail, emailChangeVerificationEmail } from '../utils/email';
+import { sendEmail, emailChangeVerificationEmail, emailChangeVerificationEmailText } from '../utils/email';
 
 const router = Router();
 
@@ -281,6 +281,7 @@ router.post('/me/email-change-request', authenticate, writeRateLimiter, async (r
       to: newEmail,
       subject: 'Confirm your new email — Muslim Rentals',
       html: emailChangeVerificationEmail(req.user!.name, newEmail, confirmUrl),
+      text: emailChangeVerificationEmailText(req.user!.name, newEmail, confirmUrl),
     }).catch(() => {});
 
     res.json({ success: true, message: `A confirmation link was sent to ${newEmail}.` });
@@ -288,22 +289,29 @@ router.post('/me/email-change-request', authenticate, writeRateLimiter, async (r
 });
 
 // ─── POST /users/me/email-change-confirm ───────────────────────────────────────
-router.post('/me/email-change-confirm', authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+// Deliberately NOT behind `authenticate`, unlike every other /me route: the
+// confirmation link is opened from an email client, which is very often a
+// different browser/device (or the same browser after the access token has
+// since expired) than the one that requested the change. The token itself
+// (32 random bytes, single-use, 1-hour expiry) is the credential here, same
+// as /auth/reset-password's token-only lookup -- requiring a valid session
+// on top of it would turn a normal cross-device click into a confusing
+// "Session expired" error instead of a clean confirm-or-reject outcome.
+router.post('/me/email-change-confirm', writeRateLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token } = emailChangeConfirmSchema.parse(req.body);
 
     const user = await prisma.user.findFirst({
       where: {
-        id:                      req.user!.id,
         pendingEmailToken:       token,
         pendingEmailTokenExpiry: { gt: new Date() },
       },
-      select: { pendingEmail: true },
+      select: { id: true, pendingEmail: true },
     });
     if (!user?.pendingEmail) throw new AppError('Invalid or expired confirmation link.', 400);
 
     const updated = await prisma.user.update({
-      where: { id: req.user!.id },
+      where: { id: user.id },
       data: {
         email:                   user.pendingEmail,
         pendingEmail:            null,

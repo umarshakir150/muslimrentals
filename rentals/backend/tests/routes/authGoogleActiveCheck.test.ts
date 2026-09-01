@@ -38,9 +38,12 @@ vi.mock('google-auth-library', () => ({
 
 vi.mock('../../src/utils/email', () => ({
   sendEmail: vi.fn().mockResolvedValue(undefined),
-  welcomeEmail: vi.fn(() => '<html></html>'),
-  passwordResetEmail: vi.fn(() => '<html></html>'),
-  emailChangeVerificationEmail: vi.fn(() => '<html></html>'),
+  welcomeEmail:     vi.fn(() => '<html></html>'),
+  welcomeEmailText: vi.fn(() => 'text'),
+  passwordResetEmail:     vi.fn(() => '<html></html>'),
+  passwordResetEmailText: vi.fn(() => 'text'),
+  emailChangeVerificationEmail:     vi.fn(() => '<html></html>'),
+  emailChangeVerificationEmailText: vi.fn(() => 'text'),
 }));
 
 async function buildApp() {

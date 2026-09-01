@@ -7,44 +7,41 @@ export const metadata: Metadata = { title: 'Safety Guidelines' };
 const sections: PolicySection[] = [
   {
     id: 'verify',
-    heading: 'Verify before you commit',
+    heading: 'Verification',
     body: (
       <ul className="list-disc pl-5 space-y-1.5">
-        <li>View a property in person, or by video call, before sending any money or signing anything.</li>
-        <li>Search the address online to confirm it matches what's advertised.</li>
-        <li>A legitimate landlord won't pressure you to transfer money immediately or skip a viewing.</li>
-        <li>If a price or a deal seems too good to be true for the area, treat it as a warning sign, not luck.</li>
+        <li>View a property in person, or by video call, before providing payment or signing an agreement.</li>
+        <li>Confirm that the listed address matches the advertised property.</li>
+        <li>Be cautious of listings priced substantially below comparable rentals in the area.</li>
+        <li>A legitimate landlord will not require immediate payment or waive a viewing.</li>
       </ul>
     ),
   },
   {
     id: 'financial',
-    heading: 'Financial safety',
+    heading: 'Financial precautions',
     body: (
       <>
         <ul className="list-disc pl-5 space-y-1.5">
-          <li>Never send an e-transfer, gift cards, or a wire transfer before you've viewed the unit and signed a lease.</li>
-          <li>Keep a written lease agreement signed by both parties — don't rely on a verbal or messaged agreement alone.</li>
-          <li>Use the Platform's messaging to keep a record of your conversation with the landlord.</li>
+          <li>Do not send an e-transfer, gift card, or wire transfer before viewing a property and signing a lease.</li>
+          <li>Obtain a written lease agreement signed by both parties.</li>
+          <li>Use the Platform's messaging feature to maintain a record of communication with the landlord.</li>
         </ul>
         <p>
-          Rules on how much a landlord can ask for as a deposit vary by province — for example, Ontario limits a
-          rent deposit to one rental period's rent (commonly one month), while other provinces have different
-          rules. Check your province's tenancy legislation or tenant board for the rule that applies to you; this
-          isn't legal advice.
+          Deposit limits vary by province. Ontario limits a rent deposit to one rental period, commonly one
+          month. Users should consult their provincial tenancy legislation or tenant board for applicable rules.
         </p>
       </>
     ),
   },
   {
     id: 'meeting',
-    heading: 'Meeting safely',
+    heading: 'In-person meetings',
     body: (
       <ul className="list-disc pl-5 space-y-1.5">
-        <li>Bring a trusted friend or family member to in-person viewings, especially the first one.</li>
-        <li>Meet during daylight hours where possible.</li>
-        <li>Tell someone where you're going and when you expect to be back.</li>
-        <li>Trust your instincts — if something feels wrong, you can leave.</li>
+        <li>Bring another person to in-person viewings where possible, particularly an initial viewing.</li>
+        <li>Schedule viewings during daylight hours where possible.</li>
+        <li>Inform another person of the viewing location and expected return time.</li>
       </ul>
     ),
   },
@@ -53,20 +50,21 @@ const sections: PolicySection[] = [
     heading: 'Online safety',
     body: (
       <ul className="list-disc pl-5 space-y-1.5">
-        <li>Don't share your home address, SIN, or banking information with someone you haven't verified.</li>
-        <li>Use the Platform's built-in messaging rather than sharing your personal phone number immediately.</li>
-        <li>If a listing looks suspicious, report it using the flag icon on the listing.</li>
+        <li>Do not share a home address, Social Insurance Number, or banking information with an unverified party.</li>
+        <li>Use the Platform's messaging feature rather than sharing a personal phone number.</li>
+        <li>Report suspicious listings using the flag icon on the listing.</li>
       </ul>
     ),
   },
   {
     id: 'community',
-    heading: 'Community expectations',
+    heading: 'Community standards',
     body: (
       <p>
-        Muslim Rentals is built around community and lifestyle fit — listings may note a preferred audience (for
-        example, sisters-only or family-friendly). Respect the preference a landlord has listed, and expect the
-        same in return. See our <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link> for the full standard we hold listings and messages to, and how to report one that falls short.
+        Listings may indicate a preferred audience, such as sisters-only or family-friendly households. Users are
+        expected to respect stated preferences. See the{' '}
+        <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link>{' '}
+        for applicable standards and reporting procedures.
       </p>
     ),
   },
@@ -79,9 +77,8 @@ export default function SafetyPage() {
       effectiveDate="September 1, 2026"
       intro={
         <p>
-          The overwhelming majority of listings and users here are genuine, but rental scams are common across
-          every platform — not specific to us. These guidelines cover the patterns to watch for and how to protect
-          yourself.
+          The following guidelines are intended to help users identify and avoid common rental scams and protect
+          their personal safety when using the Platform.
         </p>
       }
       sections={sections}

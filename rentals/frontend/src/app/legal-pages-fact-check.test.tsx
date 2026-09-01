@@ -78,7 +78,7 @@ describe('Legal pages do not reintroduce known fabricated claims', () => {
 
   it('Privacy page accurately reflects that account deletion now exists (Settings), not the old "not implemented" gap', () => {
     const { container } = render(<PrivacyPage />);
-    expect(container.textContent || '').toMatch(/delete your account/i);
+    expect(container.textContent || '').toMatch(/delete (your|their) account/i);
   });
 });
 
@@ -91,12 +91,8 @@ describe('Legal pages do not reintroduce known fabricated claims', () => {
  * a future edit can't silently drop them back to one-line coverage.
  */
 describe('Legal pages cover the topics from the founder\'s content-completeness audit', () => {
-  it('Terms flags the operator\'s legal identity as unresolved rather than inventing one', () => {
+  it('Terms states the operator\'s legal identity plainly, as fact, without inventing one', () => {
     const text = render(<TermsPage />).container.textContent || '';
-    // Shorter, more durable anchors than a full sentence match -- the goal
-    // is to catch this fact being dropped entirely, not to lock in exact
-    // wording that would make a legitimate future rewording fail for no
-    // reason.
     expect(text).toMatch(/registered corporate legal/i);
     expect(text).toMatch(/\boperator\b/i);
     expect(text).not.toMatch(/Muslim Rentals Inc/i); // still not inventing one
@@ -104,31 +100,30 @@ describe('Legal pages cover the topics from the founder\'s content-completeness 
 
   it('Terms explicitly states Muslim Rentals is not a payment processor', () => {
     const text = render(<TermsPage />).container.textContent || '';
-    expect(text).toMatch(/not.*a payment processor/i);
+    expect(text).toMatch(/not\b[\s\S]{0,120}payment processor/i);
   });
 
   it('Terms covers unauthorized account access', () => {
     const text = render(<TermsPage />).container.textContent || '';
-    expect(text).toMatch(/without your permission/i);
+    expect(text).toMatch(/unauthorized access/i);
   });
 
   it('Terms has a dedicated user-content license section describing what it does and does not grant', () => {
     const text = render(<TermsPage />).container.textContent || '';
     expect(text).toMatch(/non-exclusive/i);
-    expect(text).toMatch(/sell your content/i);
+    expect(text).toMatch(/sale of user content/i);
   });
 
   it('Terms has a dedicated fees/payments section that does not invent current payment or refund rules', () => {
     const text = render(<TermsPage />).container.textContent || '';
     expect(text).toMatch(/free to use/i);
     expect(text).toMatch(/additional terms/i);
-    expect(text).toMatch(/refunds/i);
+    expect(text).toMatch(/refund/i);
   });
 
-  it('Terms honestly states there is no formal appeals process today', () => {
+  it('Terms covers what happens when a user disputes a moderation decision', () => {
     const text = render(<TermsPage />).container.textContent || '';
-    expect(text).toMatch(/appeal/i);
-    expect(text).toMatch(/not.{0,40}(structured|guaranteed)/i);
+    expect(text).toMatch(/disputes a moderation decision/i);
   });
 
   it('Privacy discloses that data may be processed and stored outside Canada, including the US -- not Canada-only storage', () => {
@@ -138,20 +133,53 @@ describe('Legal pages cover the topics from the founder\'s content-completeness 
     expect(text).not.toMatch(/stored (only |exclusively )?in Canada/i);
   });
 
-  it('Privacy explicitly says messages are not end-to-end encrypted and describes when staff can technically access them', () => {
+  it('Privacy explicitly says messages are not end-to-end encrypted and states the circumstances access may occur', () => {
     const text = render(<PrivacyPage />).container.textContent || '';
-    expect(text).toMatch(/not.*end-to-end encrypted/i);
-    expect(text).toMatch(/database access/i);
+    expect(text).toMatch(/not end-to-end encrypted/i);
+    expect(text).toMatch(/investigating a report/i);
   });
 
-  it('Privacy has a dedicated Security section describing conservative, non-absolute safeguards', () => {
+  it('Privacy has a dedicated Security section describing conservative, non-absolute safeguards at a policy level (no implementation detail)', () => {
     const text = render(<PrivacyPage />).container.textContent || '';
-    expect(text).toMatch(/hashed with bcrypt/i);
-    expect(text).toMatch(/No online service can guarantee complete security/i);
+    expect(text).toMatch(/guarantee complete security/i);
+    // Policy-level disclosure, not an engineering walkthrough.
+    expect(text).not.toMatch(/bcrypt/i);
+    expect(text).not.toMatch(/JWT|JSON Web Token/i);
+    expect(text).not.toMatch(/content security policy|CSP/i);
+    expect(text).not.toMatch(/local ?storage/i);
   });
 
-  it('Privacy flags the operator\'s identity as unresolved, same as Terms', () => {
+  it('Privacy states the operator\'s legal identity plainly, same as Terms', () => {
     const text = render(<PrivacyPage />).container.textContent || '';
-    expect(text).toMatch(/without a separately registered corporate legal\s*entity/i);
+    expect(text).toMatch(/registered corporate legal/i);
+  });
+});
+
+/**
+ * The founder's second review round flagged AI-style meta-commentary
+ * throughout the first expansion: sentences explaining *why* something was
+ * written a certain way, narrating drafting decisions, or editorializing
+ * about the document's own honesty, rather than just stating the rule or
+ * fact. These guard against that pattern coming back.
+ */
+describe('Legal pages use a neutral policy voice, not drafting/meta-commentary', () => {
+  const metaPhrases = [
+    /stating (that |it )?plainly/i,
+    /rather than invent/i,
+    /we'd rather (say|tell)/i,
+    /want to be honest/i,
+    /not going to claim/i,
+    /can't resolve (this|it) on its own/i,
+    /this is a placeholder/i,
+    /worth being aware of/i,
+    /make (this|it) (document )?look more finished/i,
+    /we're aware that/i,
+  ];
+
+  it.each(pages)('%s page contains no drafting/meta-commentary phrases', (_name, Page) => {
+    const text = render(<Page />).container.textContent || '';
+    for (const phrase of metaPhrases) {
+      expect(text).not.toMatch(phrase);
+    }
   });
 });

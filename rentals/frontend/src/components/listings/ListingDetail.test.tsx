@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ListingDetail from './ListingDetail';
-import { Listing } from '@/types';
+import { Listing, ListingImage } from '@/types';
+
+const { getByIdMock } = vi.hoisted(() => ({ getByIdMock: vi.fn() }));
 
 vi.mock('@/lib/api', () => ({
-  listingsApi: { save: vi.fn(), report: vi.fn(), deletePermanent: vi.fn() },
+  listingsApi: { save: vi.fn(), report: vi.fn(), deletePermanent: vi.fn(), getById: getByIdMock },
 }));
 
 vi.mock('@/store/authStore', () => ({
@@ -17,39 +19,66 @@ vi.mock('@/components/ui/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
-function makeListing(imageCount: number): Listing {
+// Real image rows pulled directly from production (Supabase project
+// mxpoenfnqrfwznquaibd, listing af96127c-2b38-4d53-9367-f63870bfdb72,
+// "testing photos") on 2026-09-01, while diagnosing why the gallery never
+// showed arrows in production despite this exact listing having 4 real
+// uploaded photos. Used verbatim (not a hand-rolled shape) so this test
+// actually exercises the real response shape, real R2 host, and real key
+// format -- not an approximation of it.
+const REAL_PROD_IMAGES: ListingImage[] = [
+  { id: '6396895d-8ea0-49c1-8199-4fdff63d6f90', alt: null, order: 0,
+    url: 'https://pub-960f6265cad24490a2783e6d4836656e.r2.dev/listings/b75a51b6-c4b1-471a-8615-8a2f8bf992eb.png' },
+  { id: '781c44b5-797a-4951-9d88-e0dbda29f5a8', alt: null, order: 1,
+    url: 'https://pub-960f6265cad24490a2783e6d4836656e.r2.dev/listings/2bc55f69-b8f6-42fb-b71a-ca321de91635.png' },
+  { id: 'fb7827c8-0f36-4ad6-980e-20cc9f2cc2a4', alt: null, order: 2,
+    url: 'https://pub-960f6265cad24490a2783e6d4836656e.r2.dev/listings/85a81118-c58d-4973-b170-cb9aa2c119cc.png' },
+  { id: 'a6e65a79-049f-4626-953b-e8398c07ad93', alt: null, order: 3,
+    url: 'https://pub-960f6265cad24490a2783e6d4836656e.r2.dev/listings/3fba781a-9e21-4fca-ad69-71e1eacf3c0a.png' },
+];
+
+function makeListing(images: ListingImage[]): Listing {
   return {
     id: 'listing-1',
-    title: 'Cozy room near mosque',
-    description: 'A lovely room.',
-    price: 1200,
+    title: 'testing photos',
+    description: 'testing multiple photos',
+    price: 3,
     currency: 'CAD',
-    bedrooms: 1,
-    bathrooms: 1,
-    audience: 'BROTHERS',
-    city: 'Toronto',
-    town: null,
-    province: 'ON',
-    neighbourhood: 'Downtown',
+    bedrooms: 2,
+    bathrooms: 4,
+    audience: 'COUPLES',
+    city: 'Mississauga',
+    town: '',
+    province: null,
+    neighbourhood: 'City Centre',
     address: null,
-    lat: 43.6,
-    lng: -79.4,
-    contactInfo: '555-0100',
+    lat: 43.5932,
+    lng: -79.6421,
+    contactInfo: 'test info',
     status: 'ACTIVE',
     isActive: true,
     isFeatured: false,
     viewCount: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    images: Array.from({ length: imageCount }, (_, i) => ({
-      id: `img-${i}`,
-      url: `https://example.com/${i}.jpg`,
-      alt: null,
-      order: i,
-    })),
-    amenities: [],
-    user: { id: 'owner-1', name: 'Owner', avatarUrl: null },
+    images,
+    amenities: ['Laundry in-unit', 'Air conditioning', 'Backyard access'],
+    user: { id: 'owner-1', name: 'Umar Admin', avatarUrl: null },
   };
+}
+
+/**
+ * GET /listings (the list endpoint every browse/map/saved/my-listings page
+ * actually calls) caps `images` to 1 via Prisma's `take: 1` -- it is NOT the
+ * shape ListingDetail should render from. Only GET /listings/:id (what
+ * listingsApi.getById hits) returns the full array. This mocks that real
+ * split: `propImages` is what the list endpoint would have handed the
+ * `listing` prop, `detailImages` is what getById resolves with.
+ */
+function mockDetailFetch(detailImages: ListingImage[], listing = makeListing(detailImages)) {
+  getByIdMock.mockImplementation((id: string) =>
+    Promise.resolve({ data: { ...listing, id, images: detailImages } })
+  );
 }
 
 describe('ListingDetail image gallery', () => {
@@ -57,27 +86,52 @@ describe('ListingDetail image gallery', () => {
     vi.clearAllMocks();
   });
 
-  it('shows the placeholder and no arrows/counter when there are no images', () => {
-    render(<ListingDetail listing={makeListing(0)} onClose={vi.fn()} onMessage={vi.fn()} />);
+  it('always fetches the full listing detail (GET /listings/:id) on open, never relying on the list-shape prop alone', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES);
+    const propListing = makeListing([REAL_PROD_IMAGES[0]]); // list endpoint's take:1-truncated shape
+    render(<ListingDetail listing={propListing} onClose={vi.fn()} onMessage={vi.fn()} />);
 
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalledWith('listing-1'));
+  });
+
+  it('REGRESSION: a list-truncated prop (1 image) still shows all real photos, arrows, and a counter once the detail fetch resolves', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES);
+    const propListing = makeListing([REAL_PROD_IMAGES[0]]); // what GET /listings actually hands the modal
+    render(<ListingDetail listing={propListing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    // This is the exact production bug: without the getById fetch, imgs.length
+    // stays 1 forever and no arrows/counter ever appear.
+    await waitFor(() => expect(screen.getByText('1 / 4')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Next photo' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous photo' })).toBeInTheDocument();
+  });
+
+  it('shows the placeholder and no arrows/counter when the real detail response has no images', async () => {
+    mockDetailFetch([]);
+    render(<ListingDetail listing={makeListing([])} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.getByText('🏠')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next photo' })).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument();
   });
 
-  it('shows a single image with no arrows/counter', () => {
-    render(<ListingDetail listing={makeListing(1)} onClose={vi.fn()} onMessage={vi.fn()} />);
+  it('shows a single real image with no arrows/counter when the detail response genuinely has only one', async () => {
+    mockDetailFetch([REAL_PROD_IMAGES[0]]);
+    render(<ListingDetail listing={makeListing([REAL_PROD_IMAGES[0]])} onClose={vi.fn()} onMessage={vi.fn()} />);
 
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: 'Next photo' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Previous photo' })).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument();
   });
 
-  it('shows arrows and a 1/N counter for multiple images, and arrows navigate', async () => {
+  it('shows arrows and a 1/N counter for multiple real images, and arrows navigate (with wraparound)', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES);
     const user = userEvent.setup();
-    render(<ListingDetail listing={makeListing(4)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    render(<ListingDetail listing={makeListing(REAL_PROD_IMAGES)} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    expect(screen.getByText('1 / 4')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('1 / 4')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: 'Next photo' }));
     expect(screen.getByText('2 / 4')).toBeInTheDocument();
@@ -90,24 +144,34 @@ describe('ListingDetail image gallery', () => {
     expect(screen.getByText('4 / 4')).toBeInTheDocument();
   });
 
-  it('resets the selected image when switching to a different listing', async () => {
+  it('resets the selected image and re-fetches when switching to a different listing', async () => {
+    const listingA = makeListing(REAL_PROD_IMAGES);
+    const listingB = { ...makeListing(REAL_PROD_IMAGES.slice(0, 2)), id: 'listing-2' };
+    getByIdMock.mockImplementation((id: string) =>
+      Promise.resolve({
+        data: { ...(id === 'listing-2' ? listingB : listingA), images: id === 'listing-2' ? REAL_PROD_IMAGES.slice(0, 2) : REAL_PROD_IMAGES },
+      })
+    );
     const user = userEvent.setup();
-    const { rerender } = render(<ListingDetail listing={makeListing(4)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    const { rerender } = render(<ListingDetail listing={listingA} onClose={vi.fn()} onMessage={vi.fn()} />);
 
+    await waitFor(() => expect(screen.getByText('1 / 4')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Next photo' }));
     expect(screen.getByText('2 / 4')).toBeInTheDocument();
 
-    const other = { ...makeListing(2), id: 'listing-2' };
-    rerender(<ListingDetail listing={other} onClose={vi.fn()} onMessage={vi.fn()} />);
+    rerender(<ListingDetail listing={listingB} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('1 / 2')).toBeInTheDocument());
   });
 
   it('opens the lightbox on clicking the main photo, with working arrows, counter, and Escape-to-close', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES.slice(0, 3));
     const user = userEvent.setup();
-    render(<ListingDetail listing={makeListing(3)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    render(<ListingDetail listing={makeListing(REAL_PROD_IMAGES.slice(0, 3))} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    const mainPhoto = screen.getAllByAltText('Cozy room near mosque')[0];
+    await waitFor(() => expect(screen.getByText('1 / 3')).toBeInTheDocument());
+
+    const mainPhoto = screen.getAllByAltText('testing photos')[0];
     await user.click(mainPhoto);
 
     await waitFor(() => expect(screen.getByLabelText('Close')).toBeInTheDocument());
@@ -125,10 +189,12 @@ describe('ListingDetail image gallery', () => {
   });
 
   it('closes the lightbox via the X button', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES.slice(0, 2));
     const user = userEvent.setup();
-    render(<ListingDetail listing={makeListing(2)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    render(<ListingDetail listing={makeListing(REAL_PROD_IMAGES.slice(0, 2))} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    const mainPhoto = screen.getAllByAltText('Cozy room near mosque')[0];
+    await waitFor(() => expect(screen.getByText('1 / 2')).toBeInTheDocument());
+    const mainPhoto = screen.getAllByAltText('testing photos')[0];
     await user.click(mainPhoto);
     await waitFor(() => expect(screen.getByLabelText('Close')).toBeInTheDocument());
 
@@ -138,10 +204,12 @@ describe('ListingDetail image gallery', () => {
   });
 
   it('closes the lightbox when clicking the backdrop outside the image', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES.slice(0, 2));
     const user = userEvent.setup();
-    render(<ListingDetail listing={makeListing(2)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    render(<ListingDetail listing={makeListing(REAL_PROD_IMAGES.slice(0, 2))} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    const mainPhoto = screen.getAllByAltText('Cozy room near mosque')[0];
+    await waitFor(() => expect(screen.getByText('1 / 2')).toBeInTheDocument());
+    const mainPhoto = screen.getAllByAltText('testing photos')[0];
     await user.click(mainPhoto);
     const closeButton = await screen.findByLabelText('Close');
 
@@ -154,21 +222,34 @@ describe('ListingDetail image gallery', () => {
   });
 
   it('does not close the lightbox when clicking the enlarged image itself', async () => {
+    mockDetailFetch(REAL_PROD_IMAGES.slice(0, 2));
     const user = userEvent.setup();
-    render(<ListingDetail listing={makeListing(2)} onClose={vi.fn()} onMessage={vi.fn()} />);
+    render(<ListingDetail listing={makeListing(REAL_PROD_IMAGES.slice(0, 2))} onClose={vi.fn()} onMessage={vi.fn()} />);
 
-    const mainPhoto = screen.getAllByAltText('Cozy room near mosque')[0];
+    await waitFor(() => expect(screen.getByText('1 / 2')).toBeInTheDocument());
+    const mainPhoto = screen.getAllByAltText('testing photos')[0];
     await user.click(mainPhoto);
     await screen.findByLabelText('Close');
 
-    const enlargedImage = screen.getAllByAltText('Cozy room near mosque')[1];
+    const enlargedImage = screen.getAllByAltText('testing photos')[1];
     await user.click(enlargedImage);
 
     expect(screen.getByLabelText('Close')).toBeInTheDocument();
   });
 
-  it('does not render a lightbox trigger crash when there are no images', () => {
-    render(<ListingDetail listing={makeListing(0)} onClose={vi.fn()} onMessage={vi.fn()} />);
+  it('does not crash and shows no lightbox trigger when there are no images', async () => {
+    mockDetailFetch([]);
+    render(<ListingDetail listing={makeListing([])} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.queryByLabelText('Close')).not.toBeInTheDocument();
+  });
+
+  it('keeps showing the prop thumbnail without crashing if the detail fetch fails', async () => {
+    getByIdMock.mockRejectedValue(new Error('network error'));
+    render(<ListingDetail listing={makeListing([REAL_PROD_IMAGES[0]])} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getAllByAltText('testing photos')[0]).toBeInTheDocument();
   });
 });

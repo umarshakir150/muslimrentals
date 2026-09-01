@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import Image from 'next/image';
 import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink, Trash2 } from 'lucide-react';
-import { Listing } from '@/types';
+import { Listing, ListingImage } from '@/types';
 import { formatCAD, audienceLabel, audienceColor, formatTimeAgo, cn } from '@/lib/utils';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
@@ -28,6 +28,14 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
   const [saving, setSaving] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // `listing` as passed in by every caller (browse/map/saved/my-listings) comes
+  // straight from GET /listings, which caps `images` to 1 (take: 1) for list
+  // thumbnails -- it is never the full GET /listings/:id detail response. Without
+  // this fetch, the gallery/lightbox would never see more than one image no
+  // matter how correct their own logic is. `fullImages` overrides the prop's
+  // (possibly truncated) array once the real detail response arrives; until
+  // then the prop's thumbnail is shown so opening the modal doesn't stall.
+  const [fullImages, setFullImages] = useState<ListingImage[] | null>(null);
   const isAuth = useIsAuthenticated();
   const user = useUser();
   const { toast } = useToast();
@@ -39,10 +47,18 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
   useEffect(() => {
     setImgIdx(0);
     setLightboxOpen(false);
+    setFullImages(null);
+
+    if (!listing) return;
+    let cancelled = false;
+    listingsApi.getById(listing.id)
+      .then(res => { if (!cancelled) setFullImages(res.data?.images || []); })
+      .catch(() => { /* keep showing the prop's thumbnail; not fatal */ });
+    return () => { cancelled = true; };
   }, [listing?.id]);
 
   if (!listing) return null;
-  const imgs = listing.images || [];
+  const imgs = fullImages ?? (listing.images || []);
   const hasImgs = imgs.length > 0;
   const hasMultipleImgs = imgs.length > 1;
 

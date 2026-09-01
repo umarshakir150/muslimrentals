@@ -86,6 +86,7 @@ export interface ListingFilters {
 // ─── Messages ─────────────────────────────────────────────────────────────────
 export interface Message {
   id: string;
+  conversationId: string;
   body: string;
   isRead: boolean;
   createdAt: string;

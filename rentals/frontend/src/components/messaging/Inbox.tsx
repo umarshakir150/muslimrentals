@@ -25,8 +25,21 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<any>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>();
+  // The socket-listener effect below registers its handlers once (empty
+  // deps -- re-running it on every activeConv change would mean
+  // detaching/reattaching listeners on every conversation switch). Reading
+  // `activeConv` directly from those handlers would therefore always see
+  // its value from the moment the effect first ran (permanently `null`,
+  // since Inbox mounts before any conversation is opened) instead of the
+  // real current one. A ref kept in sync via the effect below sidesteps
+  // that staleness without needing to churn the listeners themselves.
+  const activeConvRef = useRef<Conversation | null>(null);
   const user = useUser();
   const { toast } = useToast();
+
+  useEffect(() => {
+    activeConvRef.current = activeConv;
+  }, [activeConv]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,38 +61,67 @@ export default function Inbox({ initialConvId }: InboxProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Setup socket
+  // Setup socket. Runs once per Inbox mount (not per conversation switch --
+  // openConversation() below handles join/leave for that). Handlers are
+  // named functions so the cleanup can .off() the exact instance it
+  // registered, rather than relying on the effect never re-running: without
+  // this, remounting Inbox (e.g. navigating away from /messages and back)
+  // would leave the previous mount's listeners attached to the persistent
+  // socket singleton (see lib/socket.ts) and stack a second copy on top.
   useEffect(() => {
-    socketRef.current = connectSocket();
+    const socket = connectSocket();
+    socketRef.current = socket;
 
-    socketRef.current.on('message:new', (msg: Message) => {
-      setMessages(prev => {
-        if (prev.some(m => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
+    // Every insertion here is id-deduped, not just this one -- the sender's
+    // own `sendMessage` below inserts from the REST response at the same
+    // time this event can deliver the identical row back to them (they're
+    // already in the conversation's room from opening it), so both paths
+    // have to agree on "already present" the same way or a race between
+    // them (whichever resolves first) shows the message twice.
+    //
+    // Also scoped to the conversation it actually belongs to: this socket
+    // still receives 'message:new' for a conversation the user just
+    // switched away from until the server processes the fire-and-forget
+    // 'conversation:leave' -- without the conversationId check, a message
+    // for the conversation you left could land in the thread you switched
+    // to. The sidebar preview update isn't scoped the same way, since it
+    // should update whichever conversation the message actually belongs
+    // to, active or not.
+    function handleNewMessage(msg: Message) {
+      if (msg.conversationId === activeConvRef.current?.id) {
+        setMessages(prev => (prev.some(m => m.id === msg.id) ? prev : [...prev, msg]));
+        setTimeout(scrollToBottom, 100);
+      }
       setConversations(prev => prev.map(c =>
-        c.id === activeConv?.id ? { ...c, messages: [msg] } : c
+        c.id === msg.conversationId ? { ...c, messages: [msg] } : c
       ));
-      setTimeout(scrollToBottom, 100);
-    });
+    }
 
-    socketRef.current.on('typing:start', ({ userName }: { userName: string }) => {
+    function handleTypingStart({ userName }: { userName: string }) {
       setTyping(userName);
-    });
+    }
 
-    socketRef.current.on('typing:stop', () => {
+    function handleTypingStop() {
       setTyping(null);
-    });
+    }
 
-    socketRef.current.on('conversation:new', (conv: Conversation) => {
-      setConversations(prev => [conv, ...prev]);
-    });
+    function handleNewConversation(conv: Conversation) {
+      setConversations(prev => (prev.some(c => c.id === conv.id) ? prev : [conv, ...prev]));
+    }
+
+    socket.on('message:new', handleNewMessage);
+    socket.on('typing:start', handleTypingStart);
+    socket.on('typing:stop', handleTypingStop);
+    socket.on('conversation:new', handleNewConversation);
 
     return () => {
-      if (activeConv) socketRef.current?.emit('conversation:leave', activeConv.id);
+      socket.off('message:new', handleNewMessage);
+      socket.off('typing:start', handleTypingStart);
+      socket.off('typing:stop', handleTypingStop);
+      socket.off('conversation:new', handleNewConversation);
+      if (activeConvRef.current) socket.emit('conversation:leave', activeConvRef.current.id);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scrollToBottom]);
 
   async function openConversation(conv: Conversation) {
     if (activeConv) socketRef.current?.emit('conversation:leave', activeConv.id);
@@ -110,8 +152,25 @@ export default function Inbox({ initialConvId }: InboxProps) {
 
     try {
       const res = await messagesApi.sendMessage(activeConv.id, text);
-      setMessages(prev => [...prev, res.data]);
-      setTimeout(scrollToBottom, 100);
+      // The sender is already in this conversation's Socket.IO room (joined
+      // when the conversation was opened), and the backend broadcasts
+      // 'message:new' to the whole room including the sender -- so this
+      // exact message can also arrive via the socket handler above around
+      // the same time. Dedupe by id (never by text -- two different real
+      // messages can share identical text) so whichever of the two paths
+      // resolves first wins and the second is a no-op, instead of the
+      // message appearing twice.
+      //
+      // Compared against the ref, not the `activeConv` this closure
+      // captured when the send started: if the user switches to a
+      // different conversation while this request is still in flight, the
+      // response has to land in whatever is actually open now (or nowhere,
+      // if that's no longer this conversation), not wherever it was when
+      // the request was made.
+      if (res.data.conversationId === activeConvRef.current?.id) {
+        setMessages(prev => (prev.some(m => m.id === res.data.id) ? prev : [...prev, res.data]));
+        setTimeout(scrollToBottom, 100);
+      }
     } catch {
       setBody(text);
       toast({ variant: 'destructive', title: 'Failed to send message' });
@@ -218,7 +277,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+            <div data-testid="message-thread" className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
               {messages.map((msg, i) => {
                 const isMe = msg.sender?.id === user?.id;
                 const showDate = i === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[i-1].createdAt).toDateString();

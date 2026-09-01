@@ -4,14 +4,13 @@ import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Heart } from 'lucide-react';
-import { motion } from 'framer-motion';
 import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import AuthModal from '@/components/auth/AuthModal';
-import { usersApi, messagesApi } from '@/lib/api';
+import SendMessageModal from '@/components/messaging/SendMessageModal';
+import { usersApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useIsAuthenticated } from '@/store/authStore';
-import { useToast } from '@/components/ui/use-toast';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 
@@ -22,12 +21,9 @@ export default function SavedPage() {
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [messageTarget, setMessageTarget] = useState<Listing | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [msgBody, setMsgBody] = useState('');
-  const [sendingMsg, setSendingMsg] = useState(false);
 
   const isAuth = useIsAuthenticated();
   const router = useRouter();
-  const { toast } = useToast();
 
   const fetchSaved = useCallback(async () => {
     setLoading(true);
@@ -49,22 +45,6 @@ export default function SavedPage() {
 
   function handleSaveChange(listing: Listing, saved: boolean) {
     if (!saved) setListings(prev => prev.filter(l => l.id !== listing.id));
-  }
-
-  async function handleSendMessage(e: React.FormEvent) {
-    e.preventDefault();
-    if (!msgBody.trim() || !messageTarget) return;
-    setSendingMsg(true);
-    try {
-      await messagesApi.startConversation(messageTarget.id, msgBody);
-      toast({ title: 'Message sent!', description: 'The landlord will be notified.' });
-      setMessageTarget(null);
-      setMsgBody('');
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
-    } finally {
-      setSendingMsg(false);
-    }
   }
 
   if (!isAuth) {
@@ -157,37 +137,7 @@ export default function SavedPage() {
       )}
 
       {messageTarget && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setMessageTarget(null); }}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-3xl shadow-elevated p-6 max-w-md w-full"
-          >
-            <h3 className="font-serif text-xl mb-1">Send a message</h3>
-            <p className="text-sm text-muted mb-4">Re: {messageTarget.title}</p>
-            <form onSubmit={handleSendMessage} className="space-y-3">
-              <textarea
-                value={msgBody}
-                onChange={e => setMsgBody(e.target.value)}
-                placeholder="I'm interested in your listing..."
-                rows={4}
-                className="input-field resize-none w-full"
-                autoFocus
-              />
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setMessageTarget(null)} className="btn-ghost flex-1 py-2.5 text-sm">
-                  Cancel
-                </button>
-                <button type="submit" disabled={!msgBody.trim() || sendingMsg} className="btn-brand flex-1 py-2.5 text-sm">
-                  {sendingMsg ? 'Sending...' : 'Send message'}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
+        <SendMessageModal listing={messageTarget} onClose={() => setMessageTarget(null)} />
       )}
     </div>
   );

@@ -4,9 +4,12 @@ import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
+import AuthModal from '@/components/auth/AuthModal';
+import SendMessageModal from '@/components/messaging/SendMessageModal';
 import { listingsApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useFilterStore } from '@/store/filterStore';
+import { useIsAuthenticated } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
 
 // FullMap is heavy - load client-side only. No SSR loading fallback needed
@@ -18,7 +21,10 @@ function MapPageInner() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
+  const [messageTarget, setMessageTarget] = useState<Listing | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
   const { filters, mapCenter, setMapCenter } = useFilterStore();
+  const isAuth = useIsAuthenticated();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -142,9 +148,19 @@ function MapPageInner() {
         <ListingDetail
           listing={selectedListing}
           onClose={() => setSelectedListing(null)}
-          onMessage={() => setSelectedListing(null)}
+          onMessage={(l) => {
+            setSelectedListing(null);
+            if (!isAuth) setAuthOpen(true);
+            else setMessageTarget(l);
+          }}
         />
       )}
+
+      {messageTarget && (
+        <SendMessageModal listing={messageTarget} onClose={() => setMessageTarget(null)} />
+      )}
+
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

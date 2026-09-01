@@ -19,6 +19,12 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// jsdom does not implement Element.scrollIntoView at all (throws "not a
+// function"); Inbox.tsx calls it to keep the message thread scrolled down.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 // jsdom doesn't implement matchMedia; framer-motion's useReducedMotion calls it on mount.
 if (typeof window !== 'undefined' && !window.matchMedia) {
   window.matchMedia = ((query: string) => ({

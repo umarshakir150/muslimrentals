@@ -6,13 +6,12 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
-import { listingsApi, messagesApi } from '@/lib/api';
+import { listingsApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useFilterStore } from '@/store/filterStore';
-import { useToast } from '@/components/ui/use-toast';
 import { useIsAuthenticated } from '@/store/authStore';
 import AuthModal from '@/components/auth/AuthModal';
-import { motion } from 'framer-motion';
+import SendMessageModal from '@/components/messaging/SendMessageModal';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
@@ -28,11 +27,8 @@ export default function BrowsePage() {
   const [messageTarget, setMessageTarget] = useState<Listing | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [postOpen, setPostOpen] = useState(false);
-  const [msgBody, setMsgBody] = useState('');
-  const [sendingMsg, setSendingMsg] = useState(false);
 
   const { filters } = useFilterStore();
-  const { toast } = useToast();
   const isAuth = useIsAuthenticated();
   const router = useRouter();
 
@@ -88,23 +84,6 @@ export default function BrowsePage() {
   useEffect(() => { fetchListings(); }, [fetchListings]);
 
   const handleLoadMore = () => useFilterStore.getState().setFilter('page', page + 1);
-
-  async function handleSendMessage(e: React.FormEvent) {
-    e.preventDefault();
-    if (!msgBody.trim() || !messageTarget) return;
-    if (!isAuth) { setAuthOpen(true); return; }
-    setSendingMsg(true);
-    try {
-      await messagesApi.startConversation(messageTarget.id, msgBody);
-      toast({ title: 'Message sent!', description: 'The landlord will be notified.' });
-      setMessageTarget(null);
-      setMsgBody('');
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Error', description: err.message });
-    } finally {
-      setSendingMsg(false);
-    }
-  }
 
   return (
     <div className="min-h-dvh">
@@ -210,37 +189,7 @@ export default function BrowsePage() {
       )}
 
       {messageTarget && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setMessageTarget(null); }}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-3xl shadow-elevated p-6 max-w-md w-full"
-          >
-            <h3 className="font-serif text-xl mb-1">Send a message</h3>
-            <p className="text-sm text-muted mb-4">Re: {messageTarget.title}</p>
-            <form onSubmit={handleSendMessage} className="space-y-3">
-              <textarea
-                value={msgBody}
-                onChange={e => setMsgBody(e.target.value)}
-                placeholder="I'm interested in your listing..."
-                rows={4}
-                className="input-field resize-none w-full"
-                autoFocus
-              />
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setMessageTarget(null)} className="btn-ghost flex-1 py-2.5 text-sm">
-                  Cancel
-                </button>
-                <button type="submit" disabled={!msgBody.trim() || sendingMsg} className="btn-brand flex-1 py-2.5 text-sm">
-                  {sendingMsg ? 'Sending...' : 'Send message'}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
+        <SendMessageModal listing={messageTarget} onClose={() => setMessageTarget(null)} />
       )}
 
       <PostListingModal open={postOpen} onClose={() => setPostOpen(false)} />

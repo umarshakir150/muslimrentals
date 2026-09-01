@@ -19,7 +19,7 @@ import crypto from 'crypto';
 
 import { prisma } from '../prisma/client';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
-import { sendEmail, passwordResetEmail, welcomeEmail } from '../utils/email';
+import { sendEmail, passwordResetEmail, passwordResetEmailText, welcomeEmail, welcomeEmailText } from '../utils/email';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
@@ -58,7 +58,7 @@ router.post('/register', authRateLimiter, async (req: Request, res: Response, ne
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    sendEmail({ to: email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(name) }).catch(() => {});
+    sendEmail({ to: email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(name), text: welcomeEmailText(name) }).catch(() => {});
 
     // hasPassword lets the frontend (Settings) know upfront whether to offer
     // password-based re-authentication or the Google-only confirm-by-email
@@ -132,7 +132,7 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
       });
       user = { ...created, passwordHash: null };
       hasPassword = false;
-      sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name) }).catch(() => {});
+      sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name), text: welcomeEmailText(user.name) }).catch(() => {});
     } else {
       // OWASP A07: matches the same guard /login and /refresh already apply
       // -- without this, a deleted (isActive: false) or banned account could
@@ -239,6 +239,7 @@ router.post('/forgot-password', authRateLimiter, async (req: Request, res: Respo
       to: email,
       subject: 'Reset your Muslim Rentals password',
       html: passwordResetEmail(user.name, resetUrl),
+      text: passwordResetEmailText(user.name, resetUrl),
     }).catch(() => {});
 
     res.json(SAFE_RESPONSE);

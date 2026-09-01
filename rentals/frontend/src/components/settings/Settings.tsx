@@ -39,6 +39,12 @@ export default function Settings() {
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
+  const [newEmail, setNewEmail] = useState('');
+  const [emailChangePassword, setEmailChangePassword] = useState('');
+  const [requestingEmailChange, setRequestingEmailChange] = useState(false);
+  const [emailChangeError, setEmailChangeError] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (!user) return null;
@@ -95,6 +101,23 @@ export default function Settings() {
       setProfileError(err.message || 'Could not save changes.');
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function handleRequestEmailChange(e: React.FormEvent) {
+    e.preventDefault();
+    setRequestingEmailChange(true);
+    setEmailChangeError(null);
+    try {
+      await usersApi.requestEmailChange(newEmail.trim(), hasPassword ? emailChangePassword : undefined);
+      setPendingEmail(newEmail.trim());
+      setNewEmail('');
+      setEmailChangePassword('');
+      toast({ title: 'Confirmation link sent', description: `Check ${newEmail.trim()} to confirm the change.` });
+    } catch (err: any) {
+      setEmailChangeError(err.message || 'Could not request the email change.');
+    } finally {
+      setRequestingEmailChange(false);
     }
   }
 
@@ -181,15 +204,50 @@ export default function Settings() {
 
       {/* Email */}
       <SectionCard title="Email">
-        <div className="flex items-center justify-between gap-4 mb-2">
+        <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2 text-sm">
             <Mail size={15} className="text-muted" />
             <span>{user.email}</span>
           </div>
         </div>
-        <p className="text-sm text-muted">
-          Changing your email isn&apos;t available yet — it&apos;s launching soon alongside email-based password reset.
-        </p>
+
+        {pendingEmail && (
+          <p className="text-sm text-brand-700 bg-brand-50 rounded-xl px-3 py-2 mb-4">
+            A confirmation link was sent to <strong>{pendingEmail}</strong>. Your login email won&apos;t change until you
+            click it. The link expires in 1 hour.
+          </p>
+        )}
+
+        <form onSubmit={handleRequestEmailChange} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">New email address</label>
+            <input
+              type="email"
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              required
+              className="input-field"
+              placeholder="your-new-email@example.com"
+            />
+          </div>
+          {hasPassword && (
+            <div>
+              <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Current password</label>
+              <input
+                type="password"
+                value={emailChangePassword}
+                onChange={e => setEmailChangePassword(e.target.value)}
+                required
+                className="input-field"
+                placeholder="Confirm it's you"
+              />
+            </div>
+          )}
+          {emailChangeError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{emailChangeError}</p>}
+          <button type="submit" disabled={requestingEmailChange} className="btn-brand px-5 py-2.5 text-sm">
+            {requestingEmailChange ? <Loader2 size={15} className="animate-spin" /> : 'Send confirmation link'}
+          </button>
+        </form>
       </SectionCard>
 
       {/* Password */}

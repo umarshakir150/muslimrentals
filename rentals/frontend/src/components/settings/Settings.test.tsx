@@ -4,11 +4,12 @@ import userEvent from '@testing-library/user-event';
 import Settings from './Settings';
 import { User } from '@/types';
 
-const { uploadAvatarMock, removeAvatarMock, updateProfileMock, changePasswordMock } = vi.hoisted(() => ({
+const { uploadAvatarMock, removeAvatarMock, updateProfileMock, changePasswordMock, requestEmailChangeMock } = vi.hoisted(() => ({
   uploadAvatarMock: vi.fn(),
   removeAvatarMock: vi.fn(),
   updateProfileMock: vi.fn(),
   changePasswordMock: vi.fn(),
+  requestEmailChangeMock: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({
   usersApi: {
@@ -16,6 +17,7 @@ vi.mock('@/lib/api', () => ({
     removeAvatar: removeAvatarMock,
     updateProfile: updateProfileMock,
     changePassword: changePasswordMock,
+    requestEmailChange: requestEmailChangeMock,
     deleteAccount: vi.fn(),
   },
 }));
@@ -46,6 +48,7 @@ describe('Settings', () => {
     removeAvatarMock.mockReset();
     updateProfileMock.mockReset();
     changePasswordMock.mockReset();
+    requestEmailChangeMock.mockReset();
     setUserMock.mockReset();
     toastMock.mockReset();
     mockUser = baseUser();
@@ -97,11 +100,45 @@ describe('Settings', () => {
     expect(setUserMock).toHaveBeenCalled();
   });
 
-  it('shows the email as read-only with a not-yet-available note, not a change action', () => {
+  it('shows the current email plus a form to request a change, requiring the current password for a password account', async () => {
+    requestEmailChangeMock.mockResolvedValue({ success: true, message: 'A confirmation link was sent to new@example.com.' });
+    const user = userEvent.setup();
     render(<Settings />);
+
     expect(screen.getByText('u@example.com')).toBeInTheDocument();
-    expect(screen.queryByText('Change email')).not.toBeInTheDocument();
-    expect(screen.getByText(/isn.t available yet/)).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('your-new-email@example.com'), 'new@example.com');
+    await user.type(screen.getByPlaceholderText("Confirm it's you"), 'mypassword');
+    await user.click(screen.getByRole('button', { name: 'Send confirmation link' }));
+
+    await waitFor(() => expect(requestEmailChangeMock).toHaveBeenCalledWith('new@example.com', 'mypassword'));
+    expect(await screen.findByText(/A confirmation link was sent to/)).toBeInTheDocument();
+    expect(screen.getByText('new@example.com')).toBeInTheDocument();
+  });
+
+  it('does not ask for a password to request an email change on a Google-only account', async () => {
+    mockUser = baseUser({ hasPassword: false });
+    requestEmailChangeMock.mockResolvedValue({ success: true, message: 'sent' });
+    const user = userEvent.setup();
+    render(<Settings />);
+
+    expect(screen.queryByPlaceholderText("Confirm it's you")).not.toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('your-new-email@example.com'), 'new@example.com');
+    await user.click(screen.getByRole('button', { name: 'Send confirmation link' }));
+
+    await waitFor(() => expect(requestEmailChangeMock).toHaveBeenCalledWith('new@example.com', undefined));
+  });
+
+  it('shows an error and keeps the form filled in when the email-change request fails', async () => {
+    requestEmailChangeMock.mockRejectedValue(new Error('Current password is incorrect.'));
+    const user = userEvent.setup();
+    render(<Settings />);
+
+    await user.type(screen.getByPlaceholderText('your-new-email@example.com'), 'new@example.com');
+    await user.type(screen.getByPlaceholderText("Confirm it's you"), 'wrongpassword');
+    await user.click(screen.getByRole('button', { name: 'Send confirmation link' }));
+
+    expect(await screen.findByText('Current password is incorrect.')).toBeInTheDocument();
+    expect(screen.queryByText(/A confirmation link was sent to/)).not.toBeInTheDocument();
   });
 
   it('hides the Password section entirely for a Google-only account', () => {

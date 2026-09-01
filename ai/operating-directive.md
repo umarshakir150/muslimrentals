@@ -215,6 +215,74 @@ The backend/Render path is **not** changed by this update (Render has no
 equivalent PR-preview mechanism on its current plan/config) — flag to the
 founder if an analogous gate is wanted there too, rather than assuming it.
 
+### Milestone release workflow (2026-09-01 later update — `main` decoupled from production deploy)
+
+**Founder instruction, standing until they say otherwise:** the founder has
+turned **off Netlify's production auto-deploy** (a Netlify project setting,
+their own action) ahead of a multi-feature milestone. **No session may ever
+change Netlify deploy settings** (auto-deploy toggle, production branch,
+or any other site/deploy config) — that stays exclusively the founder's
+action. Confirm this is still off before assuming it, rather than assuming
+it stays off indefinitely; if a task ever seems to need it changed, ask,
+never toggle it.
+
+Because of this, merging into `main` **no longer triggers a production
+deploy** — this materially changes what "promote to `main`" means versus
+the Preview-before-promote section above, for the duration of this
+milestone:
+
+1. `main` is now allowed to move forward with founder-approved work
+   directly — it is the reviewed baseline, not the production trigger.
+2. Build each substantial feature on its own branch/PR, continuing from
+   whatever `main` currently is.
+3. Verify locally first (same bar as always — `tsc --noEmit`, full test
+   suite, `next build`/`npm run build` as applicable) before creating
+   anything Netlify has to build.
+4. Only once a frontend feature reaches a **meaningful testable state**
+   (not on every commit — see the credit-conservation note below), open/
+   update its PR so Netlify builds a real Deploy Preview, and hand the
+   founder that URL.
+5. **Avoid unnecessary preview builds.** The founder explicitly wants
+   Netlify build/credit usage minimized during this milestone — batch
+   changes within a feature branch and push once it's actually ready to
+   look at, rather than pushing every intermediate commit. A backend-only
+   or docs-only change on a feature branch does not need a preview at all
+   (Netlify's own build-ignore logic already skips these when they don't
+   touch `rentals/frontend` — confirmed empirically on 2026-09-01, see
+   `ai/decisions.md`).
+6. Wait for the founder's explicit approval of that specific feature
+   before merging its PR into `main`. A preview existing is not approval.
+7. After approval, merge into `main` (production remains undeployed —
+   auto-deploy is off, so this is now a safe, non-production-affecting
+   action once approved). Continue the next feature from the updated
+   `main`.
+8. Repeat per feature until the whole milestone is finished, approved, and
+   merged.
+9. **Never trigger the final Netlify production deployment proactively.**
+   Once the entire milestone is merged into `main`, wait for the
+   founder's explicit instruction to trigger that one production deploy —
+   do not infer it from "the milestone is done" or any other signal short
+   of them actually saying to deploy now.
+
+**Backend/Render backward-compatibility constraint, specific to this
+milestone:** Render's single backend service is the **shared live
+backend for both the still-deployed old production frontend and every new
+Deploy Preview** — there is no separate preview backend (see the CORS
+Deploy Preview entry in `ai/decisions.md`, 2026-09-01, for why this
+matters and how it was confirmed). Any backend change made during this
+milestone must remain backward-compatible with whatever frontend is
+*currently actually live* in production (which will keep lagging behind
+`main` for the whole milestone, by design) — never remove/rename/change
+the shape of a field, route, or response the live old frontend still
+depends on. Additive, backward-compatible backend changes are fine and
+expected; breaking ones must wait for the final production deploy, or be
+made compatible (e.g. via a new field/route alongside the old one) rather
+than shipped as a breaking change mid-milestone.
+
+**Scheduler stays paused** (see the 2026-08-28 pause in `ai/decisions.md`)
+— nothing in this update resumes it, and this update itself is not an
+instruction to start any feature work; it establishes the workflow only.
+
 ## Automatic correction
 
 Bugs, review pushback, security findings, UX findings, failing checks, or

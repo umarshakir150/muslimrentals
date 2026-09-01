@@ -27,7 +27,7 @@ const sections: PolicySection[] = [
           <li>Keep a written lease agreement signed by both parties — don't rely on a verbal or messaged agreement alone.</li>
           <li>Use the Platform's messaging to keep a record of your conversation with the landlord.</li>
         </ul>
-        <p className="text-muted">
+        <p>
           Rules on how much a landlord can ask for as a deposit vary by province — for example, Ontario limits a
           rent deposit to one rental period's rent (commonly one month), while other provinces have different
           rules. Check your province's tenancy legislation or tenant board for the rule that applies to you; this
@@ -66,7 +66,7 @@ const sections: PolicySection[] = [
       <p>
         Muslim Rentals is built around community and lifestyle fit — listings may note a preferred audience (for
         example, sisters-only or family-friendly). Respect the preference a landlord has listed, and expect the
-        same in return. See our <Link href="/community-guidelines" className="text-brand-700 hover:underline">Content &amp; Community Guidelines</Link> for the full standard we hold listings and messages to, and how to report one that falls short.
+        same in return. See our <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link> for the full standard we hold listings and messages to, and how to report one that falls short.
       </p>
     ),
   },

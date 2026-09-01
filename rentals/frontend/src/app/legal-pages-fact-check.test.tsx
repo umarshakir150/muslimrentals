@@ -81,3 +81,77 @@ describe('Legal pages do not reintroduce known fabricated claims', () => {
     expect(container.textContent || '').toMatch(/delete your account/i);
   });
 });
+
+/**
+ * The founder audited the first draft against a topic checklist and asked
+ * for substantial expansion -- these guard the specific topics called out
+ * as missing or under-covered (operator identity, platform role including
+ * payment-processor, unauthorized account access, user-content licensing,
+ * fees/payments, cross-border data storage, message-access disclosure) so
+ * a future edit can't silently drop them back to one-line coverage.
+ */
+describe('Legal pages cover the topics from the founder\'s content-completeness audit', () => {
+  it('Terms flags the operator\'s legal identity as unresolved rather than inventing one', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    // Shorter, more durable anchors than a full sentence match -- the goal
+    // is to catch this fact being dropped entirely, not to lock in exact
+    // wording that would make a legitimate future rewording fail for no
+    // reason.
+    expect(text).toMatch(/registered corporate legal/i);
+    expect(text).toMatch(/\boperator\b/i);
+    expect(text).not.toMatch(/Muslim Rentals Inc/i); // still not inventing one
+  });
+
+  it('Terms explicitly states Muslim Rentals is not a payment processor', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    expect(text).toMatch(/not.*a payment processor/i);
+  });
+
+  it('Terms covers unauthorized account access', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    expect(text).toMatch(/without your permission/i);
+  });
+
+  it('Terms has a dedicated user-content license section describing what it does and does not grant', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    expect(text).toMatch(/non-exclusive/i);
+    expect(text).toMatch(/sell your content/i);
+  });
+
+  it('Terms has a dedicated fees/payments section that does not invent current payment or refund rules', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    expect(text).toMatch(/free to use/i);
+    expect(text).toMatch(/additional terms/i);
+    expect(text).toMatch(/refunds/i);
+  });
+
+  it('Terms honestly states there is no formal appeals process today', () => {
+    const text = render(<TermsPage />).container.textContent || '';
+    expect(text).toMatch(/appeal/i);
+    expect(text).toMatch(/not.{0,40}(structured|guaranteed)/i);
+  });
+
+  it('Privacy discloses that data may be processed and stored outside Canada, including the US -- not Canada-only storage', () => {
+    const text = render(<PrivacyPage />).container.textContent || '';
+    expect(text).toMatch(/outside Canada/i);
+    expect(text).toMatch(/United States/i);
+    expect(text).not.toMatch(/stored (only |exclusively )?in Canada/i);
+  });
+
+  it('Privacy explicitly says messages are not end-to-end encrypted and describes when staff can technically access them', () => {
+    const text = render(<PrivacyPage />).container.textContent || '';
+    expect(text).toMatch(/not.*end-to-end encrypted/i);
+    expect(text).toMatch(/database access/i);
+  });
+
+  it('Privacy has a dedicated Security section describing conservative, non-absolute safeguards', () => {
+    const text = render(<PrivacyPage />).container.textContent || '';
+    expect(text).toMatch(/hashed with bcrypt/i);
+    expect(text).toMatch(/No online service can guarantee complete security/i);
+  });
+
+  it('Privacy flags the operator\'s identity as unresolved, same as Terms', () => {
+    const text = render(<PrivacyPage />).container.textContent || '';
+    expect(text).toMatch(/without a separately registered corporate legal\s*entity/i);
+  });
+});

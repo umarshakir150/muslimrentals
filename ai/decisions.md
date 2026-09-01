@@ -1420,3 +1420,11 @@ Both are marked `LIVE_SITE_VERIFIED` in `ai/regression-inventory.md`, replacing 
 **No release blockers identified.** Recommendation: **GO** for the final production Netlify deploy, pending the founder's explicit approval (not triggered by this audit).
 
 **Revisit when:** the founder gives that explicit go-ahead — trigger the deploy, then do a real post-deploy click-through per the note above.
+
+## 2026-09-01 (later still) — Production deploy approved and published; milestone fully live
+
+**Decision:** Founder gave explicit approval for the final production Netlify deploy and triggered it themselves (per the standing rule that no session may trigger this without explicit founder action). Verified independently rather than taking the founder's word alone — an initial check right after their first message still showed the *old* deploy (`8f500ea`) as current, so held off updating any docs and asked the founder to confirm in the dashboard before proceeding. Re-checked after their confirmation: Netlify's production deploy is `6a972323ac04d013c488bc29`, `context: production`, `state: ready`, `commit_ref: 49d4bb7` (the exact commit this session's release-readiness audit passed), `published_at: 2026-09-01T19:16:20Z`.
+
+**Production is now unfrozen** — it matches `main` exactly, closing out the entire four-feature milestone (Gallery/lightbox fix, Settings/Account, Messaging, Legal/Policy Pages, Forgot Password + Change Email) plus everything audited in the release-readiness pass. Updated `ai/current-state.md`'s header accordingly.
+
+**Revisit when:** the founder (or this session, if asked) does the real post-deploy click-through recommended in the audit above — core journeys (browse/map, login, a message, one milestone feature) against the now-live production frontend — to catch anything the audit's static checks couldn't.

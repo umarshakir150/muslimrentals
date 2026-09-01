@@ -1,10 +1,14 @@
 # Current State
 
-Last verified against the repository: 2026-09-01, commit `006b71a` on
-`main` (PR #6 merge — Forgot Password + Change Email email delivery, the
-fourth and final feature of the current multi-feature milestone). Update
-this file whenever the picture materially changes — don't let it drift
-into fiction.
+Last verified against the repository: 2026-09-01, commit `49d4bb7` on
+`main` — this is also the commit now live in **production** (Netlify
+deploy `6a972323ac04d013c488bc29`, published 19:16:20Z, founder-approved
+after a release-readiness audit found no blockers). The multi-feature
+milestone (Gallery/lightbox, Settings/Account, Messaging, Legal/Policy
+Pages, Forgot Password + Change Email) is fully merged to `main` and now
+fully live — production is no longer frozen/decoupled from `main`.
+Update this file whenever the picture materially changes — don't let it
+drift into fiction.
 
 ## Tech stack
 

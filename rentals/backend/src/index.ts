@@ -28,6 +28,7 @@ import { sanitizeInputs, preventHpp } from './middleware/sanitize';
 import { logger } from './utils/logger';
 import { setupSocketIO } from './socket/socketServer';
 import { validateEnv } from './utils/validateEnv';
+import { makeNetlifyPreviewOriginMatcher, makeOriginChecker } from './utils/corsOrigins';
 
 // Routes
 import authRoutes    from './routes/auth';
@@ -46,6 +47,18 @@ validateEnv();
 const app    = express();
 const server = http.createServer(app);
 
+// ─── Allowed origins (OWASP A05) ──────────────────────────────────────────────
+// Only allow the configured frontend origin(s) — never wildcard in production.
+// Shared by both Socket.IO's CORS config and Express's CORS middleware below.
+// See utils/corsOrigins.ts for the Netlify Deploy Preview matching this also
+// applies (unit tested there, since this file has top-level side effects).
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+const isNetlifyPreviewOrigin = makeNetlifyPreviewOriginMatcher(allowedOrigins);
+const isAllowedOrigin = makeOriginChecker(allowedOrigins);
+
 // ─── Trust proxy (for real IP behind load balancers / Nginx / Railway etc.) ───
 // Only enable when behind a trusted reverse proxy.
 // OWASP: ensures rate limiting uses the real client IP, not the proxy IP.
@@ -56,7 +69,10 @@ if (process.env.NODE_ENV === 'production') {
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new SocketServer(server, {
   cors: {
-    origin: process.env.FRONTEND_URL,
+    origin: (origin, cb) => {
+      if (!origin || isAllowedOrigin(origin)) return cb(null, true);
+      cb(new Error(`Socket.IO CORS: origin '${origin}' not allowed.`));
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -91,16 +107,11 @@ app.use(helmet({
 }));
 
 // ─── CORS (OWASP A05) ─────────────────────────────────────────────────────────
-// Only allow the configured frontend origin — never wildcard in production.
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
-
+// allowedOrigins / isAllowedOrigin defined above, shared with Socket.IO's CORS.
 app.use(cors({
   origin: (origin, cb) => {
     // Allow server-to-server calls (no Origin header) and configured origins
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    if (!origin || isAllowedOrigin(origin)) return cb(null, true);
     cb(new Error(`CORS: origin '${origin}' not allowed.`));
   },
   credentials: true,
@@ -164,6 +175,9 @@ server.listen(PORT, () => {
   logger.info(`🚀 Muslim Rentals API running on port ${PORT}`);
   logger.info(`🌐 Environment: ${process.env.NODE_ENV}`);
   logger.info(`🔗 Allowed origins: ${allowedOrigins.join(', ')}`);
+  if (isNetlifyPreviewOrigin) {
+    logger.info('🔗 Also allowing this site\'s Netlify Deploy Preview / branch-deploy origins (*--<site>.netlify.app).');
+  }
 });
 
 export default app;

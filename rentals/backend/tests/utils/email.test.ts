@@ -12,9 +12,13 @@ vi.mock('resend', () => ({
   Resend: vi.fn(() => ({ emails: { send: sendMock } })),
 }));
 
-vi.mock('../../src/utils/logger', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+// vi.mock factories run once and are reused across vi.resetModules() calls
+// within this file, so these vi.fn()s must be reset explicitly per test
+// (like sendMock below) -- otherwise calls accumulate across tests and any
+// assertion on "was logger.info called" reports stale results from an
+// earlier test rather than the current one.
+const loggerMock = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+vi.mock('../../src/utils/logger', () => ({ logger: loggerMock }));
 
 async function loadEmailModule() {
   vi.resetModules();
@@ -23,6 +27,10 @@ async function loadEmailModule() {
 
 beforeEach(() => {
   sendMock.mockReset();
+  loggerMock.info.mockReset();
+  loggerMock.warn.mockReset();
+  loggerMock.error.mockReset();
+  loggerMock.debug.mockReset();
   delete process.env.RESEND_API_KEY;
 });
 
@@ -87,5 +95,41 @@ describe('sendEmail', () => {
     const { sendEmail } = await loadEmailModule();
     await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' }))
       .rejects.toThrow('The muslimrentals.ca domain is not verified.');
+  });
+
+  // Regression coverage for a real incident: Resend's SDK resolves (never
+  // rejects) even when the API call fails -- it returns `{ data: null,
+  // error }` instead of throwing. Code that only checks the resolved
+  // promise, or checks `data` for truthiness instead of checking `error`,
+  // would treat a rejected send as a success. Reproduces the exact error
+  // shape Resend returned for an invalid API key against the live backend
+  // (confirmed via Render logs: "Failed to send email: API key is invalid
+  // {"statusCode":401,"name":"validation_error"}") to guard against this
+  // specific case, not just a generic error object.
+  it('never logs a successful send or resolves when Resend returns an error, even though the SDK call itself resolves', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.EMAIL_FROM = 'noreply@muslimrentals.ca';
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { statusCode: 401, name: 'validation_error', message: 'API key is invalid' },
+    });
+
+    const { sendEmail } = await loadEmailModule();
+
+    await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' })).rejects.toThrow('API key is invalid');
+    expect(loggerMock.info).not.toHaveBeenCalled();
+    expect(loggerMock.error).toHaveBeenCalled();
+  });
+
+  it('never treats a response with a non-null error as success even if data is also present', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.EMAIL_FROM = 'noreply@muslimrentals.ca';
+    // Defensive case: Resend's contract is that `data` and `error` are
+    // mutually exclusive, but the check must key off `error` alone --
+    // never `if (data) succeed`, which this call would fool.
+    sendMock.mockResolvedValueOnce({ data: { id: 'email_123' }, error: { message: 'Unexpected error' } });
+
+    const { sendEmail } = await loadEmailModule();
+    await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' })).rejects.toThrow('Unexpected error');
   });
 });

@@ -155,19 +155,57 @@ router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async 
 });
 
 // ─── GET /admin/reports ───────────────────────────────────────────────────────
+// Branches on targetType so moderators get the right review context per
+// kind of report instead of every report being rendered as if it were a
+// listing report:
+//  - LISTING: the reported listing (unchanged from before this feature).
+//  - USER: the reported user's identity + restriction history (isBanned/
+//    banReason), plus the *reporter's* own filed/dismissed report counts so
+//    a moderator can spot a retaliatory or bad-faith report pattern
+//    (Trust & Safety review, 2026-09-01).
+//  - MESSAGE: the sender's identity, the frozen messageSnapshot (not a live
+//    lookup -- the message may have since been edited/deleted), and the
+//    conversation id to link into the live thread for surrounding context.
 router.get('/reports', async (req, res: Response, next: NextFunction) => {
   try {
     const { status } = z.object({ status: z.nativeEnum(ReportStatus).optional() }).parse(req.query);
     const reports = await prisma.report.findMany({
       where:   status ? { status } : { status: 'PENDING' },
       include: {
-        reporter: { select: { name: true, email: true } },
-        listing:  { select: { id: true, title: true } },
+        reporter:     { select: { id: true, name: true, email: true } },
+        listing:      { select: { id: true, title: true } },
+        reportedUser: { select: { id: true, name: true, email: true, isBanned: true, banReason: true, createdAt: true } },
+        message:      { select: { id: true, conversationId: true, sender: { select: { id: true, name: true, email: true } } } },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    res.json({ success: true, data: reports });
+
+    // Reporter report-history stats (filed / dismissed-against-them), keyed
+    // by reporterId -- surfaced only for USER-type reports below, but cheap
+    // enough to compute once for the whole page.
+    const reporterIds = [...new Set(reports.map(r => r.reporterId))];
+    const statCounts = reporterIds.length
+      ? await prisma.report.groupBy({
+          by: ['reporterId', 'status'],
+          where: { reporterId: { in: reporterIds } },
+          _count: { _all: true },
+        })
+      : [];
+    const reporterStats = new Map<string, { totalFiled: number; dismissed: number }>();
+    for (const id of reporterIds) reporterStats.set(id, { totalFiled: 0, dismissed: 0 });
+    for (const row of statCounts) {
+      const stat = reporterStats.get(row.reporterId)!;
+      stat.totalFiled += row._count._all;
+      if (row.status === ReportStatus.DISMISSED) stat.dismissed += row._count._all;
+    }
+
+    const data = reports.map(r => ({
+      ...r,
+      ...(r.targetType === 'USER' && { reporterHistory: reporterStats.get(r.reporterId) }),
+    }));
+
+    res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 

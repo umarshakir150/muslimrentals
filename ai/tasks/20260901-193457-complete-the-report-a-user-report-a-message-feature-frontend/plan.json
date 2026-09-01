@@ -1,0 +1,90 @@
+{
+  "taskId": "20260901-193457-complete-the-report-a-user-report-a-message-feature-frontend",
+  "objective": "Complete the report-a-user / report-a-message feature (frontend UI, admin dashboard, and DB migration)\n\nA past task (ai/tasks/20260828-084425-add-ability-to-report-a-user) built backend routes (POST /users/:id/report, POST /messages/:id/report) and extended the Report Prisma model (targetType, reportedUserId, messageId, messageSnapshot, nullable/additive fields) with a hand-authored migration, but the work never reached production: (1) Frontend never built the report-user/report-message UI because it incorrectly assumed the backend routes didn't exist yet (a documented cross-branch coordination gap), so today there is no way for a user to actually trigger these endpoints from the app; (2) the migration was never applied to any real database; (3) the admin dashboard's Reports panel doesn't branch on targetType, so a moderator viewing a user- or message-targeted report sees 'Listing: undefined' and gets no useful context (reported user, message snapshot, sender) even though the API now returns it; (4) the ReportModal's fixed reason taxonomy still shows a listing-specific reason ('Misleading or fraudulent listing') when reused for a person/message target. ai/current-state.md and company/product.md (both verified 2026-09-01 against the live `main` commit) confirm this feature is not actually live today — only listings are reportable in production. This closes a real, explicitly documented Trust & Safety gap (company/architecture.md's 'Known weaknesses': 'Only listings are reportable — no report path for a user or a message directly') and is an explicit ai/roadmap.md 'Next' priority.\n\nWhy this matters (backlog rationale): Reporting is the primary tool renters have to flag scams/harassment in messaging or from another user, which is a named core-risk area for this specific product (community-targeted scams, per company/principles.md's 'Trust before growth hacks'). The backend groundwork and schema design already exist and were reviewed once; finishing it is materially cheaper than starting from scratch and closes a gap the architecture doc and roadmap both call out by name.\n\nEvidence:\n- ai/tasks/20260828-084425-add-ability-to-report-a-user/qa.json: coordination gap — frontend deferred UI believing backend routes 'do not exist yet and are explicitly deferred,' but backend built them in the same cycle\n- ai/tasks/20260828-084425-add-ability-to-report-a-user/qa.json: hand-authored migration.sql never applied to a real database\n- ai/tasks/20260828-084425-add-ability-to-report-a-user/security.json: admin dashboard Reports panel not updated to branch on targetType, shows 'Listing: undefined' for USER/MESSAGE reports\n- ai/tasks/20260828-084425-add-ability-to-report-a-user/qa.json: ReportModal's fixed reason taxonomy includes a listing-only reason even when reused for user/message targets\n- company/architecture.md: 'Only listings are reportable today ... which limits Trust & Safety's tooling for harassment-via-messaging'\n- ai/roadmap.md 'Next': 'Add a report path for users/messages (not just listings), closing the Trust & Safety gap'\n- ai/current-state.md (verified 2026-09-01 against main): 'Reporting a user or a message directly — only listings can be reported today'",
+  "requiredAgents": [
+    "frontend",
+    "backend",
+    "designer",
+    "qa",
+    "security",
+    "trust_safety"
+  ],
+  "dependencies": {
+    "designer": [],
+    "trust_safety": [],
+    "frontend": [
+      "designer",
+      "trust_safety"
+    ],
+    "backend": [
+      "designer",
+      "trust_safety"
+    ],
+    "qa": [
+      "designer",
+      "trust_safety",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "designer",
+      "trust_safety",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "designer",
+      "trust_safety"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": true,
+    "reasons": [
+      "production deployment — CLAUDE.md requires explicit founder authorization before deploying any reviewed work, including running the migration against a real/production database and merging this feature live",
+      "irreversible production changes — applying a schema migration to a real database is a production change that should be confirmed with the founder even though the fields are additive/nullable"
+    ]
+  },
+  "expectedArtifacts": [
+    "ai/tasks/20260901-report-user-message-completion.md",
+    "applied database migration (verified against a real database, not just migration.sql on disk)",
+    "frontend report-user entry point",
+    "frontend report-message entry point",
+    "target-type-aware ReportModal reason taxonomy",
+    "admin Reports panel branching on targetType (user/message/listing context)",
+    "qa.json",
+    "security.json",
+    "trust_safety.json review notes"
+  ],
+  "riskNotes": [
+    "Applying the migration to a real (potentially production-connected) database is a schema change to a live system — even though the fields are additive/nullable and not destructive, it must be verified against a non-production/staging database first if one exists, or explicitly confirmed safe before touching production per CLAUDE.md's no-destructive-DB-change rule.",
+    "Prior coordination gap: frontend previously assumed backend routes didn't exist — re-verify current backend route behavior/contracts directly from code before building UI, don't assume from old task docs.",
+    "Report data (reported user, message snapshot) is sensitive user content — Trust & Safety and Security should confirm admin-only visibility and retention are appropriate.",
+    "Shipping this to production (merge to main / deploy) requires founder authorization per CLAUDE.md even after all reviews pass."
+  ]
+}

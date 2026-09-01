@@ -518,6 +518,7 @@ npm run agents:task -- tasks          # ai/tasks/ execution history
 npm run agents:task -- objective      # print the standing objective
 npm run agents:task -- objective "…"  # set it (founder-editable, no code change)
 npm run agents:scheduler              # run the persistent scheduler loop (blocks)
+npm run agents:scheduler-tick         # ONE eligibility check + (if eligible) ONE cycle, then exit -- for an external scheduler
 ```
 
 (`src/cli.ts` dispatches a small reserved set of leading words —
@@ -657,6 +658,20 @@ fake `pushBranchFn` so no test ever touches the real remote
 
 ### Production deploy policy
 
+**Suspended (2026-09-01), per explicit founder instruction:** the
+auto-merge-to-`main` exception described in this section is currently
+**off** — the founder reinstated the ordinary feature-branch -> PR ->
+QA/review -> Deploy Preview -> founder approval -> merge workflow for all
+meaningful changes and explicitly said not to auto-deploy production.
+`autoMergeToProduction`/`verifyLiveDeployAfterProductionMerge` are now
+CLI **opt-in** (`--auto-merge-production`/`--verify-live-deploy`), not
+opt-out — see the note at the bottom of this section and
+`ai/operating-directive.md`'s "Production deploy policy" for the same
+dated update. A cycle's pushed `agents/<taskId>/...` branch now needs a
+GitHub PR opened against `main` for founder review before it goes
+anywhere near production; the section below still documents the
+mechanism for when/if the founder re-authorizes it.
+
 Muslim Rentals' live site (`https://muslimrentals.netlify.app/`) is
 Netlify-deployed from GitHub branch **`main`** in the
 `umarshakir150/muslimrentals` repo. This was confirmed by direct founder
@@ -712,8 +727,10 @@ a differently-networked environment runs this), live verification stays
 real, wired, and honestly unable to complete — never faked.
 
 Both `autoMergeToProduction` and `verifyLiveDeployAfterProductionMerge`
-are off by default in `cycle.ts` itself, on by default for real autonomous
-runs (`--no-auto-merge-production`/`--no-verify-live-deploy` opt out).
+are off by default in `cycle.ts` itself, **and, as of the 2026-09-01
+suspension above, off by default for real autonomous runs too** — pass
+`--auto-merge-production`/`--verify-live-deploy` explicitly to opt back
+into the old always-on behavior for a specific run.
 Tests inject `mergeToProductionFn`/`verifyLiveDeployFn` so no test ever
 touches the real production branch or makes a real network call
 (`tests/cycle.test.ts`).
@@ -736,13 +753,14 @@ there's a real need for one.
   fully-reviewed pipeline (specialists → implementer(s) → QA → Security →
   Integrator → correction loops), on isolated branches, same as any manual
   task; push a `COMPLETE` task's reviewed `agents/<taskId>/...` branch to
-  `origin` (non-force — see "Autonomous push" above); for an actual
-  product change (not schema/migration-touching), merge that reviewed
-  branch into the real production branch (`main`) and push it, non-force,
-  by explicit standing founder authorization — see "Production deploy
-  policy" above. This is a founder-granted exception to the general
-  never-touch-production default below, scoped exactly as that policy
-  describes; nothing else in this list is affected by it.
+  `origin` (non-force — see "Autonomous push" above). **Auto-merging that
+  branch into `main` is currently suspended** (2026-09-01, see "Production
+  deploy policy") — a pushed branch now needs a GitHub PR opened against
+  `main` and founder approval, same as any other change, before it can go
+  anywhere near production. The direct-merge-to-`main` exception was a
+  founder-granted exception scoped exactly as "Production deploy policy"
+  describes, and could be re-authorized again the same way; it is off
+  unless and until that happens again.
 - May not, ever: auto-select or auto-start HIGH-risk work; weaken any
   existing approval gate, risk threshold, concurrency limit, budget limit,
   or reviewer independence; auto-merge a schema/migration-changing branch
@@ -773,7 +791,37 @@ nohup npm run agents:scheduler > .autonomy/scheduler.log 2>&1 & disown
 
 This is a dev-environment convenience, not a production deployment
 mechanism — nothing here auto-configures systemd/pm2/a process supervisor
-in a real deployment target; that remains a founder/infra decision.
+in a real deployment target; that remains a founder/infra decision. **It
+is also fragile in exactly the way that matters here**: this whole
+orchestrator runs inside a Claude Code session's own sandbox container,
+and that container gets reclaimed when the session goes idle or ends —
+killing this `nohup`'d process along with it (documented incident:
+`ai/decisions.md`'s 2026-08-28 "5-bug founder batch" entry). A `nohup`
+background loop is fine for "stay running for the rest of this one
+active session" but cannot be trusted for "keep firing every 240 minutes
+indefinitely" across sessions.
+
+**`npm run agents:scheduler-tick`** exists for exactly that case: it's
+`runSchedulerTick()` (scheduler.ts) — one eligibility check (respects
+`scheduler_state`'s RUNNING/PAUSED status, cadence, and the cycle lock)
+and, only if eligible, ONE bounded cycle — then the process exits. It
+takes the same `--no-auto-push`/`--auto-merge-production`/
+`--verify-live-deploy`/`--deep-signals`/`--live-site-signal`/
+`--worker-timeout-ms` flags as `agents:cycle`. An *external* scheduler
+that can survive this container being asleep between runs — a cron job
+on a host that outlives this container, or (as configured for this repo,
+2026-09-01) a Claude Code Remote/CCR Routine that wakes this same session
+on a cron schedule and runs this one command — gets the same real
+cadence/pause/lock bookkeeping as `agents:scheduler`'s loop, without
+needing a process to stay resident in between. `scheduler_state` (and the
+rest of `.autonomy/state.db`) still only survives within this one
+container's disk, same limitation as ever — see "Persistence" above —
+so whatever external scheduler is used must target a mechanism that
+resumes *this same* container/session rather than spinning up a
+brand-new one each time, or the backlog/cycle history/lock state
+resets. Prefer `agents:scheduler-tick` (via an external scheduler) over
+`agents:scheduler` (the in-process `nohup` loop) for any cadence meant to
+outlive one active session.
 
 ## Testing
 

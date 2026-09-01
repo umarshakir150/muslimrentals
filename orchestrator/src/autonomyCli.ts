@@ -23,6 +23,7 @@
  *   npm run agents:task -- agents                   -- list known agent roles/permission profiles
  *   npm run agents:task -- tasks                    -- list ai/tasks/ execution history
  *   npm run agents:scheduler                        -- run the persistent scheduler loop (blocks)
+ *   npm run agents:scheduler-tick                   -- one eligibility check + (if eligible) one cycle, then exit
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -34,7 +35,7 @@ import { getStandingObjective, setStandingObjective } from './autonomy/objective
 import { listBacklogItems, listAllBacklogItems, getBacklogItem } from './autonomy/backlogStore.js';
 import { getCycleLock, getLatestCycle, listCycles } from './autonomy/cycleStore.js';
 import { runCycle, DEFAULT_WORKER_TIMEOUT_MS } from './autonomy/cycle.js';
-import { getSchedulerState, pauseAutonomy, resumeAutonomy, runSchedulerLoop, startAutonomy, stopAutonomy } from './autonomy/scheduler.js';
+import { getSchedulerState, pauseAutonomy, resumeAutonomy, runSchedulerLoop, runSchedulerTick, startAutonomy, stopAutonomy } from './autonomy/scheduler.js';
 import { decideApprovalRequest, getApprovalRequest, listApprovalRequests } from './autonomy/approvalStore.js';
 import { listAutonomyEvents } from './autonomy/eventLog.js';
 import { createWorkerProcessRegistry } from './autonomy/workerRegistry.js';
@@ -58,7 +59,7 @@ function newAutonomousInvoker(args: string[]): CliClaudeInvoker {
   });
 }
 
-export const AUTONOMY_COMMANDS = ['status', 'backlog', 'cycle', 'autonomous', 'approvals', 'events', 'agents', 'tasks', 'objective', 'scheduler-loop'] as const;
+export const AUTONOMY_COMMANDS = ['status', 'backlog', 'cycle', 'autonomous', 'approvals', 'events', 'agents', 'tasks', 'objective', 'scheduler-loop', 'scheduler-tick'] as const;
 export type AutonomyCommand = (typeof AUTONOMY_COMMANDS)[number];
 
 function flag(args: string[], name: string): string | undefined {
@@ -159,14 +160,19 @@ async function cmdCycle(args: string[]): Promise<void> {
   const mode = args.includes('--dry-run') ? 'dry_run' : 'full';
   const includeDeepSignals = args.includes('--deep-signals');
   const includeLiveSiteSignal = args.includes('--live-site-signal');
-  // Real autonomous cycles push reviewed work — and, for actual product
-  // changes, merge it into production — by default
-  // (ai/operating-directive.md "Autonomous commit + push authority" and
-  // "Production deploy policy") — --no-auto-push/--no-auto-merge-production
-  // opt back out for a manual/inspection run.
+  // Real autonomous cycles push reviewed work by default
+  // (ai/operating-directive.md "Autonomous commit + push authority") —
+  // --no-auto-push opts back out for a manual/inspection run. Auto-merging
+  // into production is the OPPOSITE default: the founder's 2026-08-27
+  // standing exception for that was explicitly suspended on 2026-09-01 in
+  // favor of the ordinary feature-branch -> PR -> Deploy Preview -> founder
+  // approval -> merge workflow (see ai/decisions.md and
+  // ai/operating-directive.md "Production deploy policy" for both dates) —
+  // pass --auto-merge-production/--verify-live-deploy explicitly to opt
+  // back into the old always-on behavior for a specific run.
   const autoPush = !args.includes('--no-auto-push');
-  const autoMergeToProduction = !args.includes('--no-auto-merge-production');
-  const verifyLiveDeployAfterProductionMerge = !args.includes('--no-verify-live-deploy');
+  const autoMergeToProduction = args.includes('--auto-merge-production');
+  const verifyLiveDeployAfterProductionMerge = args.includes('--verify-live-deploy');
   console.log(
     `\n[autonomy] launching one bounded cycle — mode=${mode} includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush} autoMergeToProduction=${autoMergeToProduction} verifyLiveDeployAfterProductionMerge=${verifyLiveDeployAfterProductionMerge}\n`
   );
@@ -305,8 +311,8 @@ async function cmdSchedulerLoop(args: string[]): Promise<void> {
   const includeDeepSignals = args.includes('--deep-signals');
   const includeLiveSiteSignal = args.includes('--live-site-signal');
   const autoPush = !args.includes('--no-auto-push');
-  const autoMergeToProduction = !args.includes('--no-auto-merge-production');
-  const verifyLiveDeployAfterProductionMerge = !args.includes('--no-verify-live-deploy');
+  const autoMergeToProduction = args.includes('--auto-merge-production');
+  const verifyLiveDeployAfterProductionMerge = args.includes('--verify-live-deploy');
   console.log(
     `[scheduler] starting persistent loop — tick every ${tickIntervalMs}ms. includeDeepSignals=${includeDeepSignals} includeLiveSiteSignal=${includeLiveSiteSignal} autoPush=${autoPush} autoMergeToProduction=${autoMergeToProduction} verifyLiveDeployAfterProductionMerge=${verifyLiveDeployAfterProductionMerge}. Ctrl+C (or kill this process) to stop. See orchestrator/README.md "Running autonomy persistently".`
   );
@@ -327,6 +333,43 @@ async function cmdSchedulerLoop(args: string[]): Promise<void> {
       }
     },
   });
+}
+
+/** ONE eligibility check + (if eligible) ONE bounded cycle, then exit —
+ * unlike `scheduler-loop`, which blocks forever polling on an interval.
+ * Exists so an *external* scheduler (a cron job, a CCR/Claude Code Remote
+ * Routine, systemd timer, etc.) can drive the same real cadence/pause/
+ * lock bookkeeping `runSchedulerTick()` already implements (scheduler.ts)
+ * without needing a long-lived Node process to survive in this container
+ * — the documented failure mode in README.md's "Running autonomy
+ * persistently" (a `nohup`'d scheduler-loop gets killed when the
+ * container is reclaimed on idle). The persisted `scheduler_state` row
+ * (start/pause/resume/stop, cadence, nextEligibleAt) is exactly the same
+ * one `scheduler-loop` reads — an external trigger calling this
+ * repeatedly is functionally equivalent to that loop's own tick, just
+ * without requiring the process to stay resident between ticks. */
+async function cmdSchedulerTick(args: string[]): Promise<void> {
+  const includeDeepSignals = args.includes('--deep-signals');
+  const includeLiveSiteSignal = args.includes('--live-site-signal');
+  const autoPush = !args.includes('--no-auto-push');
+  const autoMergeToProduction = args.includes('--auto-merge-production');
+  const verifyLiveDeployAfterProductionMerge = args.includes('--verify-live-deploy');
+  const outcome = await runSchedulerTick({
+    invoker: newAutonomousInvoker(args),
+    includeDeepSignals,
+    includeLiveSiteSignal,
+    autoPush,
+    autoMergeToProduction,
+    verifyLiveDeployAfterProductionMerge,
+  });
+  if (outcome.result !== 'launched') {
+    console.log(`[scheduler-tick] ${outcome.result}`);
+    return;
+  }
+  const c = outcome.cycleOutcome;
+  console.log(`[scheduler-tick] launched cycle ${c?.cycle?.id} -> ${c?.cycle?.status} result=${c?.cycle?.result ?? ''}`);
+  console.log(`[scheduler-tick] ${c?.cycle?.summary ?? ''}`);
+  if (c?.execution) console.log(`[scheduler-tick] execution: taskId=${c.execution.taskId} finalState=${c.execution.finalState}`);
 }
 
 export async function runAutonomyCli(argv: string[]): Promise<void> {
@@ -352,6 +395,8 @@ export async function runAutonomyCli(argv: string[]): Promise<void> {
       return cmdObjective(rest);
     case 'scheduler-loop':
       return cmdSchedulerLoop(rest);
+    case 'scheduler-tick':
+      return cmdSchedulerTick(rest);
     default:
       throw new Error(`Unknown autonomy command "${command}". Known commands: ${AUTONOMY_COMMANDS.join(', ')}`);
   }

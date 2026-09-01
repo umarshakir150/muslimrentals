@@ -34,13 +34,6 @@ export default function Settings() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
-  const [changingEmail, setChangingEmail] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [emailPassword, setEmailPassword] = useState('');
-  const [emailSubmitting, setEmailSubmitting] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailRequestSent, setEmailRequestSent] = useState<string | null>(null);
-
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
@@ -102,22 +95,6 @@ export default function Settings() {
       setProfileError(err.message || 'Could not save changes.');
     } finally {
       setSavingProfile(false);
-    }
-  }
-
-  async function handleRequestEmailChange(e: React.FormEvent) {
-    e.preventDefault();
-    setEmailSubmitting(true);
-    setEmailError(null);
-    try {
-      await usersApi.requestEmailChange(newEmail.trim().toLowerCase(), hasPassword ? emailPassword : undefined);
-      setEmailRequestSent(newEmail.trim().toLowerCase());
-      setChangingEmail(false);
-      setEmailPassword('');
-    } catch (err: any) {
-      setEmailError(err.message || 'Could not request email change.');
-    } finally {
-      setEmailSubmitting(false);
     }
   }
 
@@ -209,42 +186,10 @@ export default function Settings() {
             <Mail size={15} className="text-muted" />
             <span>{user.email}</span>
           </div>
-          {!changingEmail && (
-            <button type="button" onClick={() => setChangingEmail(true)} className="text-sm font-semibold text-brand-600 hover:underline shrink-0">
-              Change email
-            </button>
-          )}
         </div>
-
-        {emailRequestSent && (
-          <p className="text-sm text-brand-700 bg-brand-50 rounded-xl px-3 py-2 mt-2">
-            Check <strong>{emailRequestSent}</strong> for a confirmation link. Your login email won&apos;t change until you confirm it.
-          </p>
-        )}
-
-        {changingEmail && (
-          <form onSubmit={handleRequestEmailChange} className="space-y-3 mt-3 pt-3 border-t border-ink/8">
-            <div>
-              <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">New email</label>
-              <input name="newEmail" type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required className="input-field" />
-            </div>
-            {hasPassword && (
-              <div>
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Current password</label>
-                <input name="emailChangePassword" type="password" value={emailPassword} onChange={e => setEmailPassword(e.target.value)} required className="input-field" />
-              </div>
-            )}
-            {emailError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{emailError}</p>}
-            <div className="flex gap-3">
-              <button type="button" onClick={() => { setChangingEmail(false); setEmailError(null); }} className="btn-ghost px-4 py-2 text-sm">
-                Cancel
-              </button>
-              <button type="submit" disabled={emailSubmitting} className="btn-brand px-4 py-2 text-sm">
-                {emailSubmitting ? <Loader2 size={15} className="animate-spin" /> : 'Send confirmation link'}
-              </button>
-            </div>
-          </form>
-        )}
+        <p className="text-sm text-muted">
+          Changing your email isn&apos;t available yet — it&apos;s launching soon alongside email-based password reset.
+        </p>
       </SectionCard>
 
       {/* Password */}

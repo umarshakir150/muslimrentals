@@ -4,11 +4,10 @@ import userEvent from '@testing-library/user-event';
 import Settings from './Settings';
 import { User } from '@/types';
 
-const { uploadAvatarMock, removeAvatarMock, updateProfileMock, requestEmailChangeMock, changePasswordMock } = vi.hoisted(() => ({
+const { uploadAvatarMock, removeAvatarMock, updateProfileMock, changePasswordMock } = vi.hoisted(() => ({
   uploadAvatarMock: vi.fn(),
   removeAvatarMock: vi.fn(),
   updateProfileMock: vi.fn(),
-  requestEmailChangeMock: vi.fn(),
   changePasswordMock: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({
@@ -16,7 +15,6 @@ vi.mock('@/lib/api', () => ({
     uploadAvatar: uploadAvatarMock,
     removeAvatar: removeAvatarMock,
     updateProfile: updateProfileMock,
-    requestEmailChange: requestEmailChangeMock,
     changePassword: changePasswordMock,
     deleteAccount: vi.fn(),
   },
@@ -47,7 +45,6 @@ describe('Settings', () => {
     uploadAvatarMock.mockReset();
     removeAvatarMock.mockReset();
     updateProfileMock.mockReset();
-    requestEmailChangeMock.mockReset();
     changePasswordMock.mockReset();
     setUserMock.mockReset();
     toastMock.mockReset();
@@ -100,33 +97,11 @@ describe('Settings', () => {
     expect(setUserMock).toHaveBeenCalled();
   });
 
-  it('shows a reauth password field in the email-change form for a password account', async () => {
-    const user = userEvent.setup();
-    const { container } = render(<Settings />);
-    await user.click(screen.getByText('Change email'));
-    expect(container.querySelector('input[name="emailChangePassword"]')).toBeInTheDocument();
-  });
-
-  it('omits the reauth password field in the email-change form for a Google-only account', async () => {
-    mockUser = baseUser({ hasPassword: false });
-    const user = userEvent.setup();
-    const { container } = render(<Settings />);
-    await user.click(screen.getByText('Change email'));
-    expect(container.querySelector('input[name="emailChangePassword"]')).not.toBeInTheDocument();
-  });
-
-  it('requests an email change and shows the pending-confirmation message', async () => {
-    requestEmailChangeMock.mockResolvedValue({ success: true, message: 'sent' });
-    const user = userEvent.setup();
-    const { container } = render(<Settings />);
-
-    await user.click(screen.getByText('Change email'));
-    await user.type(container.querySelector('input[name="newEmail"]')!, 'new@example.com');
-    await user.type(container.querySelector('input[name="emailChangePassword"]')!, 'pw');
-    await user.click(screen.getByRole('button', { name: 'Send confirmation link' }));
-
-    await waitFor(() => expect(requestEmailChangeMock).toHaveBeenCalledWith('new@example.com', 'pw'));
-    expect(screen.getByText(/Check/)).toBeInTheDocument();
+  it('shows the email as read-only with a not-yet-available note, not a change action', () => {
+    render(<Settings />);
+    expect(screen.getByText('u@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('Change email')).not.toBeInTheDocument();
+    expect(screen.getByText(/isn.t available yet/)).toBeInTheDocument();
   });
 
   it('hides the Password section entirely for a Google-only account', () => {

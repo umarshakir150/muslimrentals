@@ -12,7 +12,8 @@ into fiction.
   CSS, Radix UI, Zustand, Leaflet, Socket.IO client, react-hook-form + zod.
 - **Backend:** Express 4, TypeScript, Prisma 5, PostgreSQL, Socket.IO
   server, JWT + Google OAuth, S3-compatible storage, Resend (transactional
-  email, via HTTPS API — not SMTP, which Render blocks outbound).
+  email, via HTTPS API — Gmail SMTP from this backend timed out on ports
+  587 and 465, so the transport was switched to Resend).
 - Full breakdown: `company/architecture.md`.
 
 ## Current working features
@@ -82,11 +83,13 @@ reset-password page; an empty City table blocking listing posts).
 **Resolved — outbound email is configured and working.** Transactional
 email (password reset, change-email confirmation, welcome email) is sent
 via Resend's HTTPS API on the verified `muslimrentals.ca` domain.
-Gmail SMTP was tried first and abandoned — Render blocks outbound SMTP
-connections entirely (confirmed directly: connection attempts on both
-port 587 and 465 timed out at the raw TCP stage, never reaching
-STARTTLS/AUTH) — so the transport was switched to Resend's HTTPS API,
-which isn't subject to that block. The `SMTP_HOST`/`SMTP_PORT`/
+Gmail SMTP was tried first and abandoned — connection attempts from this
+app's Render backend to Gmail's SMTP timed out on both port 587 and 465
+(raw TCP stage, never reaching STARTTLS/AUTH). This is confirmed only
+against Gmail's SMTP specifically, not proven to be a categorical block
+of all outbound SMTP from Render — so the transport was switched to
+Resend's HTTPS API, which sidesteps whatever caused that timeout, and
+real delivery was verified. The `SMTP_HOST`/`SMTP_PORT`/
 `SMTP_USER`/`SMTP_PASS` env vars are dead and no longer read by any code
 (`src/utils/email.ts` now uses `RESEND_API_KEY` + `EMAIL_FROM` only) —
 safe to remove from Render whenever convenient. Both Forgot Password and

@@ -1,12 +1,13 @@
 import { Resend } from 'resend';
 import { logger } from './logger';
 
-// Sent over Resend's HTTPS API rather than raw SMTP. Render (like many
-// PaaS hosts) blocks outbound SMTP connections entirely as an anti-abuse
-// measure -- confirmed directly against this app's own backend: Nodemailer
-// timed out at the raw TCP connection stage (ETIMEDOUT/CONN) against Gmail's
-// SMTP on both port 587 and 465, never even reaching STARTTLS/AUTH. An
-// HTTPS API sidesteps that block entirely, since it's just a normal fetch.
+// Sent over Resend's HTTPS API rather than raw SMTP. Nodemailer's SMTP
+// transport, from this app's Render backend, timed out at the raw TCP
+// connection stage (ETIMEDOUT/CONN) against Gmail's SMTP on both port 587
+// and 465, never even reaching STARTTLS/AUTH -- switched to an HTTPS API,
+// which isn't subject to whatever caused that timeout, and confirmed real
+// delivery via Resend. (We only verified this against Gmail's SMTP specifically
+// -- not proven to be a categorical block of all outbound SMTP from Render.)
 const RESEND_CONFIGURED = Boolean(process.env.RESEND_API_KEY);
 
 const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null;

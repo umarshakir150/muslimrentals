@@ -142,8 +142,11 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'PATCH', body: JSON.stringify(body) });
   }
 
-  delete<T>(endpoint: string) {
-    return this.request<T>(endpoint, { method: 'DELETE' });
+  delete<T>(endpoint: string, body?: unknown) {
+    return this.request<T>(endpoint, {
+      method: 'DELETE',
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
   }
 
   async upload<T>(endpoint: string, formData: FormData): Promise<T> {
@@ -241,9 +244,21 @@ export const neighbourhoodsApi = {
 // ─── Users API ────────────────────────────────────────────────────────────────
 export const usersApi = {
   getProfile: (id: string) => api.get<{ data: any }>(`/users/${id}`),
-  updateProfile: (data: any) => api.patch('/users/me', data),
+  updateProfile: (data: any) => api.patch<{ data: any }>('/users/me', data),
   changePassword: (data: any) => api.post('/users/me/change-password', data),
   getSaved: () => api.get<{ data: any[] }>('/users/me/saved'),
   getMyListings: () => api.get<{ data: any[] }>('/users/me/listings'),
   getNotifications: () => api.get<{ data: any[] }>('/users/me/notifications'),
+  uploadAvatar: (file: File) => {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    return api.upload<{ success: boolean; data: { url: string } }>('/uploads/avatar', formData);
+  },
+  removeAvatar: () => api.delete<{ success: boolean; message: string }>('/users/me/avatar'),
+  requestEmailChange: (newEmail: string, currentPassword?: string) =>
+    api.post<{ success: boolean; message: string }>('/users/me/email-change-request', { newEmail, currentPassword }),
+  confirmEmailChange: (token: string) =>
+    api.post<{ success: boolean; data: any; message: string }>('/users/me/email-change-confirm', { token }),
+  deleteAccount: (data: { currentPassword?: string; confirmEmail?: string }) =>
+    api.delete<{ success: boolean; message: string }>('/users/me', data),
 };

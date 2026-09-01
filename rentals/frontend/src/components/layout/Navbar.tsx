@@ -99,6 +99,17 @@ export default function Navbar() {
                   )}
                 </Link>
 
+                {/* Mobile menu toggle -- placed here (between Messages and the
+                    account menu) so mobile's visible order is
+                    Messages -> hamburger -> Profile/account, not hidden by
+                    md:hidden on desktop where position doesn't matter. */}
+                <button
+                  onClick={() => setMobileOpen(!mobileOpen)}
+                  className="md:hidden p-2.5 rounded-full hover:bg-brand-50 transition-colors"
+                >
+                  {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+                </button>
+
                 {/* User menu */}
                 <div className="relative">
                   <button
@@ -130,11 +141,10 @@ export default function Navbar() {
                           <p className="text-xs text-muted truncate">{user.email}</p>
                         </div>
                         {[
-                          { icon: User, label: 'Profile', href: '/profile' },
+                          { icon: User, label: 'Profile', href: '/settings' },
                           { icon: Home, label: 'My listings', href: '/my-listings' },
                           { icon: BookmarkIcon, label: 'Saved listings', href: '/saved' },
                           { icon: MessageSquare, label: 'Messages', href: '/messages' },
-                          { icon: Settings, label: 'Settings', href: '/settings' },
                         ].map(item => (
                           <Link
                             key={item.href}
@@ -171,16 +181,16 @@ export default function Navbar() {
                 <Link href="/post" className="btn-brand text-sm px-5 py-2.5">
                   Post rental
                 </Link>
+                {/* Logged out: no account menu to order against, so the
+                    toggle stays in its original trailing position. */}
+                <button
+                  onClick={() => setMobileOpen(!mobileOpen)}
+                  className="md:hidden p-2.5 rounded-full hover:bg-brand-50 transition-colors"
+                >
+                  {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+                </button>
               </>
             )}
-
-            {/* Mobile menu toggle */}
-            <button
-              onClick={() => setMobileOpen(!mobileOpen)}
-              className="md:hidden p-2.5 rounded-full hover:bg-brand-50 transition-colors"
-            >
-              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
           </div>
         </nav>
 

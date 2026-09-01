@@ -60,7 +60,10 @@ router.post('/register', authRateLimiter, async (req: Request, res: Response, ne
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     sendEmail({ to: email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(name) }).catch(() => {});
 
-    res.status(201).json({ success: true, data: { user, accessToken } });
+    // hasPassword lets the frontend (Settings) know upfront whether to offer
+    // password-based re-authentication or the Google-only confirm-by-email
+    // fallback for sensitive changes -- never expose passwordHash itself.
+    res.status(201).json({ success: true, data: { user: { ...user, hasPassword: true }, accessToken } });
   } catch (err) { next(err); }
 });
 
@@ -91,7 +94,8 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response, next:
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.json({ success: true, data: { user: safeUser, accessToken } });
+    // Reached this line only with a valid passwordHash (checked above).
+    res.json({ success: true, data: { user: { ...safeUser, hasPassword: true }, accessToken } });
   } catch (err) { next(err); }
 });
 
@@ -111,11 +115,12 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
 
     let user = await prisma.user.findFirst({
       where: { OR: [{ googleId: payload.sub }, { email: payload.email }] },
-      select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true, passwordHash: true },
     });
+    let hasPassword: boolean;
 
     if (!user) {
-      user = await prisma.user.create({
+      const created = await prisma.user.create({
         data: {
           name:       payload.name || payload.email.split('@')[0],
           email:      payload.email,
@@ -123,19 +128,30 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
           avatarUrl:  payload.picture,
           isVerified: true,
         },
-        select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true },
+        select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true },
       });
+      user = { ...created, passwordHash: null };
+      hasPassword = false;
       sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name) }).catch(() => {});
     } else {
+      // OWASP A07: matches the same guard /login and /refresh already apply
+      // -- without this, a deleted (isActive: false) or banned account could
+      // still mint a fresh session via Google, since googleId/email survive
+      // account deletion by design (see the Settings delete-account flow).
+      if (!user.isActive) throw new AppError('Account is inactive.', 401);
+      if (user.isBanned)  throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403);
+
+      hasPassword = Boolean(user.passwordHash);
       await prisma.user.update({ where: { id: user.id }, data: { googleId: payload.sub, avatarUrl: payload.picture } });
     }
 
-    const accessToken  = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
+    const { passwordHash: _, ...safeUser } = user;
+    const accessToken  = signAccessToken(safeUser);
+    const refreshToken = signRefreshToken(safeUser);
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.json({ success: true, data: { user, accessToken } });
+    res.json({ success: true, data: { user: { ...safeUser, hasPassword }, accessToken } });
   } catch (err) { next(err); }
 });
 
@@ -187,10 +203,12 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next: Ne
       where: { id: req.user!.id },
       select: {
         id: true, name: true, email: true, role: true, avatarUrl: true,
-        phone: true, bio: true, isVerified: true, createdAt: true,
+        phone: true, bio: true, isVerified: true, createdAt: true, passwordHash: true,
       },
     });
-    res.json({ success: true, data: user });
+    if (!user) throw new AppError('User not found.', 404);
+    const { passwordHash, ...safeUser } = user;
+    res.json({ success: true, data: { ...safeUser, hasPassword: Boolean(passwordHash) } });
   } catch (err) { next(err); }
 });
 

@@ -70,6 +70,25 @@ export function passwordResetEmail(name: string, resetUrl: string): string {
   `;
 }
 
+export function emailChangeVerificationEmail(name: string, newEmail: string, confirmUrl: string): string {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <div style="background:linear-gradient(135deg,#0a5c42,#0f7a57);padding:30px;border-radius:12px;text-align:center;margin-bottom:24px">
+        <h1 style="color:white;margin:0;font-size:24px">☾ Muslim Rentals</h1>
+      </div>
+      <h2 style="color:#12201a">Confirm your new email</h2>
+      <p style="color:#5a6e63">Assalamu alaikum ${name},</p>
+      <p style="color:#5a6e63">A request was made to change the email on your Muslim Rentals account to <strong>${newEmail}</strong>. Click the button below to confirm this is your email address. This link expires in 1 hour.</p>
+      <div style="text-align:center;margin:30px 0">
+        <a href="${confirmUrl}" style="background:#0a5c42;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700">Confirm new email</a>
+      </div>
+      <p style="color:#5a6e63;font-size:14px">Your login email will not change until you confirm. If you did not request this, no action is needed — your account is secure and this link will simply expire.</p>
+      <hr style="border:none;border-top:1px solid #e0ece5;margin:24px 0"/>
+      <p style="color:#aaa;font-size:12px;text-align:center">Muslim Rentals · support@muslimrentals.ca</p>
+    </div>
+  `;
+}
+
 export function welcomeEmail(name: string): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">

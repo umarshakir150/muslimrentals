@@ -104,10 +104,10 @@ describe('POST /auth/forgot-password', () => {
     expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'real@example.com' }));
   });
 
-  it('still returns the safe success response even when email delivery fails (SMTP not configured)', async () => {
+  it('still returns the safe success response even when email delivery fails (Resend not configured)', async () => {
     findUniqueMock.mockResolvedValueOnce({ id: USER_ID, name: 'Test User', email: 'real@example.com' });
     updateMock.mockResolvedValueOnce({});
-    sendEmailMock.mockRejectedValueOnce(new Error('SMTP not configured'));
+    sendEmailMock.mockRejectedValueOnce(new Error('Resend not configured'));
 
     const app = await buildApp();
     const res = await request(app).post('/api/v1/auth/forgot-password').send({ email: 'real@example.com' });

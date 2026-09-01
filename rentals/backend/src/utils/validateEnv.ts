@@ -60,7 +60,7 @@ export function validateEnv(): void {
   }
 
   // Warn (don't fail) about optional-but-recommended variables
-  const RECOMMENDED = ['AWS_S3_BUCKET', 'SMTP_HOST', 'GOOGLE_CLIENT_ID', 'COOKIE_SECRET', 'ALLOWED_ORIGINS'];
+  const RECOMMENDED = ['AWS_S3_BUCKET', 'RESEND_API_KEY', 'GOOGLE_CLIENT_ID', 'COOKIE_SECRET', 'ALLOWED_ORIGINS'];
   for (const key of RECOMMENDED) {
     if (!process.env[key]) {
       logger.warn(`Optional env variable ${key} is not set. Some features may be disabled.`);

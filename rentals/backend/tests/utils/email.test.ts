@@ -7,9 +7,9 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const sendMailMock = vi.fn();
-vi.mock('nodemailer', () => ({
-  default: { createTransport: vi.fn(() => ({ sendMail: sendMailMock })) },
+const sendMock = vi.fn();
+vi.mock('resend', () => ({
+  Resend: vi.fn(() => ({ emails: { send: sendMock } })),
 }));
 
 vi.mock('../../src/utils/logger', () => ({
@@ -22,10 +22,8 @@ async function loadEmailModule() {
 }
 
 beforeEach(() => {
-  sendMailMock.mockReset();
-  delete process.env.SMTP_HOST;
-  delete process.env.SMTP_USER;
-  delete process.env.SMTP_PASS;
+  sendMock.mockReset();
+  delete process.env.RESEND_API_KEY;
 });
 
 describe('passwordResetEmail / passwordResetEmailText', () => {
@@ -62,24 +60,32 @@ describe('emailChangeVerificationEmail / emailChangeVerificationEmailText', () =
 });
 
 describe('sendEmail', () => {
-  it('throws a clear error and never attempts a connection when SMTP is not configured', async () => {
+  it('throws a clear error and never calls the Resend API when RESEND_API_KEY is not configured', async () => {
     const { sendEmail } = await loadEmailModule();
-    await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' })).rejects.toThrow('SMTP not configured');
-    expect(sendMailMock).not.toHaveBeenCalled();
+    await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' })).rejects.toThrow('Resend not configured');
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
-  it('sends both html and text bodies once SMTP is configured', async () => {
-    process.env.SMTP_HOST = 'smtp.example.com';
-    process.env.SMTP_USER = 'user';
-    process.env.SMTP_PASS = 'pass';
+  it('sends both html and text bodies once RESEND_API_KEY is configured', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
     process.env.EMAIL_FROM = 'noreply@muslimrentals.ca';
-    sendMailMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({ data: { id: 'email_123' }, error: null });
 
     const { sendEmail } = await loadEmailModule();
     await sendEmail({ to: 'a@example.com', subject: 'Subject', html: '<p>hi</p>', text: 'hi' });
 
-    expect(sendMailMock).toHaveBeenCalledWith(expect.objectContaining({
-      to: 'a@example.com', subject: 'Subject', html: '<p>hi</p>', text: 'hi',
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({
+      from: 'noreply@muslimrentals.ca', to: 'a@example.com', subject: 'Subject', html: '<p>hi</p>', text: 'hi',
     }));
+  });
+
+  it('throws with the Resend-reported error message when the API call itself fails (e.g. unverified domain)', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.EMAIL_FROM = 'noreply@muslimrentals.ca';
+    sendMock.mockResolvedValueOnce({ data: null, error: { message: 'The muslimrentals.ca domain is not verified.' } });
+
+    const { sendEmail } = await loadEmailModule();
+    await expect(sendEmail({ to: 'a@example.com', subject: 'x', html: '<p>x</p>', text: 'x' }))
+      .rejects.toThrow('The muslimrentals.ca domain is not verified.');
   });
 });

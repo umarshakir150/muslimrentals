@@ -1,24 +1,15 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { logger } from './logger';
 
-// Real credentials, not just a truthy host: nodemailer's SMTP transport
-// silently defaults `host` to "localhost" when SMTP_HOST is undefined,
-// which in production means every send attempt fails with a confusing
-// `ECONNREFUSED 127.0.0.1:587` instead of a clear "not configured"
-// signal -- SMTP_USER/SMTP_PASS being unset would fail the same way.
-const SMTP_CONFIGURED = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+// Sent over Resend's HTTPS API rather than raw SMTP. Render (like many
+// PaaS hosts) blocks outbound SMTP connections entirely as an anti-abuse
+// measure -- confirmed directly against this app's own backend: Nodemailer
+// timed out at the raw TCP connection stage (ETIMEDOUT/CONN) against Gmail's
+// SMTP on both port 587 and 465, never even reaching STARTTLS/AUTH. An
+// HTTPS API sidesteps that block entirely, since it's just a normal fetch.
+const RESEND_CONFIGURED = Boolean(process.env.RESEND_API_KEY);
 
-const transporter = SMTP_CONFIGURED
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_PORT === '465',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    })
-  : null;
+const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null;
 
 interface EmailOptions {
   to: string;
@@ -28,29 +19,28 @@ interface EmailOptions {
 }
 
 export async function sendEmail({ to, subject, html, text }: EmailOptions) {
-  if (!transporter) {
-    // Do not attempt a doomed connection -- log once per call with a clear,
-    // actionable diagnosis instead of a generic connection-refused stack
-    // trace. Callers (register/forgot-password) already treat email as
-    // best-effort and never let this block the request.
+  if (!resend) {
+    // Do not attempt a doomed call -- log once per send with a clear,
+    // actionable diagnosis instead of an opaque failure. Callers
+    // (register/forgot-password) already treat email as best-effort and
+    // never let this block the request.
     logger.warn(
-      `Email not sent (SMTP not configured -- set SMTP_HOST, SMTP_USER, SMTP_PASS on the backend host): "${subject}" to ${to}`
+      `Email not sent (RESEND_API_KEY not configured -- set it on the backend host): "${subject}" to ${to}`
     );
-    throw new Error('SMTP not configured');
+    throw new Error('Resend not configured');
   }
-  try {
-    await transporter.sendMail({
-      from: process.env.EMAIL_FROM,
-      to,
-      subject,
-      html,
-      text,
-    });
-    logger.info(`Email sent to ${to}: ${subject}`);
-  } catch (error) {
+  const { error } = await resend.emails.send({
+    from: process.env.EMAIL_FROM!,
+    to,
+    subject,
+    html,
+    text,
+  });
+  if (error) {
     logger.error('Failed to send email:', error);
-    throw error;
+    throw new Error(error.message || 'Resend API error');
   }
+  logger.info(`Email sent to ${to}: ${subject}`);
 }
 
 // ─── Shared template chrome ───────────────────────────────────────────────────

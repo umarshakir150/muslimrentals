@@ -226,8 +226,19 @@ router.post(
       const file = req.file as Express.MulterS3.File;
       if (!file) throw new AppError('No file uploaded.', 400);
 
+      const previous = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { avatarKey: true } });
+
       const url = publicUrlFor(file);
-      await prisma.user.update({ where: { id: req.user!.id }, data: { avatarUrl: url } });
+      await prisma.user.update({ where: { id: req.user!.id }, data: { avatarUrl: url, avatarKey: file.key } });
+
+      // Best-effort cleanup of the replaced avatar so R2 doesn't accumulate
+      // an orphaned object every time someone changes their photo. Only
+      // deletes a key we previously stored ourselves (never a Google avatar).
+      if (s3 && previous?.avatarKey) {
+        s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_S3_BUCKET!, Key: previous.avatarKey }))
+          .catch(e => logger.warn(`Failed to delete replaced S3 avatar object for user ${req.user!.id}: ${e}`));
+      }
+
       res.json({ success: true, data: { url } });
     } catch (err) { next(err); }
   }

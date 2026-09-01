@@ -18,6 +18,12 @@ model User {
   passwordHash      String?
   googleId          String?   @unique
   avatarUrl         String?
+  // S3/R2 object key for avatarUrl -- only set when the avatar was uploaded
+  // through our own /uploads/avatar endpoint (never for a Google-provided
+  // avatarUrl, which points at Google's own CDN). Lets account deletion and
+  // avatar removal know definitively whether -- and what -- to delete from
+  // R2, rather than guessing by parsing the URL.
+  avatarKey         String?
   phone             String?
   bio               String?
   role              UserRole  @default(USER)
@@ -28,6 +34,15 @@ model User {
   refreshToken      String?
   resetToken        String?
   resetTokenExpiry  DateTime?
+  // Email-change verification (Settings): a new email is never live on
+  // `email` until its owner confirms via a token sent to that new address.
+  // Kept deliberately separate from resetToken/resetTokenExpiry above --
+  // reusing one token field for two different security-sensitive flows
+  // (password reset vs. email change) risks one flow's token being usable
+  // for the other.
+  pendingEmail             String?
+  pendingEmailToken        String?
+  pendingEmailTokenExpiry  DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

@@ -111,7 +111,7 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
 
     let user = await prisma.user.findFirst({
       where: { OR: [{ googleId: payload.sub }, { email: payload.email }] },
-      select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true },
     });
 
     if (!user) {
@@ -123,10 +123,17 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
           avatarUrl:  payload.picture,
           isVerified: true,
         },
-        select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true },
+        select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true },
       });
       sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name) }).catch(() => {});
     } else {
+      // OWASP A07: matches the same guard /login and /refresh already apply
+      // -- without this, a deleted (isActive: false) or banned account could
+      // still mint a fresh session via Google, since googleId/email survive
+      // account deletion by design (see the Settings delete-account flow).
+      if (!user.isActive) throw new AppError('Account is inactive.', 401);
+      if (user.isBanned)  throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403);
+
       await prisma.user.update({ where: { id: user.id }, data: { googleId: payload.sub, avatarUrl: payload.picture } });
     }
 

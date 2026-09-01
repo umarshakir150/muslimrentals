@@ -104,4 +104,34 @@ describe('POST /auth/google active/banned guard', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.accessToken).toBeTruthy();
   });
+
+  it('never leaks passwordHash in the response, and reports hasPassword correctly for an account linked to both Google and a password', async () => {
+    findFirstMock.mockResolvedValue({
+      id: 'user-1', name: 'Test User', email: 'u@example.com', role: 'USER', avatarUrl: null,
+      createdAt: new Date(), isActive: true, isBanned: false,
+      passwordHash: '$2a$12$fakehashfakehashfakehashfakehashfakehashfakeh',
+    });
+    updateMock.mockResolvedValue({});
+
+    const app = await buildApp();
+    const res = await request(app).post('/api/v1/auth/google').send({ credential: 'fake-credential' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.hasPassword).toBe(true);
+    expect(res.body.data.user.passwordHash).toBeUndefined();
+  });
+
+  it('reports hasPassword: false for a brand-new Google-only signup', async () => {
+    findFirstMock.mockResolvedValue(null); // no existing account
+    createMock.mockResolvedValue({
+      id: 'user-2', name: 'New User', email: 'new@example.com', role: 'USER', avatarUrl: null, createdAt: new Date(),
+    });
+
+    const app = await buildApp();
+    const res = await request(app).post('/api/v1/auth/google').send({ credential: 'fake-credential' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.hasPassword).toBe(false);
+    expect(res.body.data.user.passwordHash).toBeUndefined();
+  });
 });

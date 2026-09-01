@@ -11,6 +11,11 @@ export interface User {
   bio?: string | null;
   isVerified?: boolean;
   createdAt: string;
+  // Whether the account has a password set -- false for a Google-only
+  // account. Settings uses this to decide whether to offer password
+  // re-authentication or the Google-only confirm-by-email fallback for
+  // sensitive changes (email change, account deletion).
+  hasPassword?: boolean;
 }
 
 // ─── Listings ─────────────────────────────────────────────────────────────────

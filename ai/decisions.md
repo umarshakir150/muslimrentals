@@ -1377,3 +1377,24 @@ The `code-review` skill's dedicated designer/reviewer pass for remaining AI-writ
 - No code changes were made to `email.ts`, templates, or any route — the Resend implementation from PR #6 was already correct; this was purely a credential/config issue.
 
 **Revisit when:** the founder runs the real Forgot Password flow on PR #6's Netlify preview. If email still doesn't arrive, check Render's logs for the *specific* new error (a different failure than 401 would point to a new root cause — e.g. sender/domain mismatch, rate limit — rather than the same invalid-key problem); if it's still literally "API key is invalid" on the newly-set key, that would indicate the env var write itself isn't reaching the running process correctly, which would need investigating separately. Per the founder's explicit instruction, Change Email is a separate follow-up test after Forgot Password is confirmed working.
+
+## 2026-09-01 (later still) — Second Resend key rotation confirmed the real fix; both flows founder-verified end-to-end; PR #6 merged, closing the milestone
+
+**The first key rotation (previous entry) turned out not to have worked.** Real evidence, not assumption: a genuinely fresh Render container boot (a free-tier spin-up-from-sleep, well after that fix's deploy went live) hit a real Forgot Password request and still logged `Failed to send email: API key is invalid`. Rather than declare success on a clean boot alone, rotated to a **second** fresh Resend API key — this one deliberately *without* the domain restriction, to isolate whether domain-scoped `sending_access` keys were themselves the problem — and set it the same way (`update_environment_variables`, merge mode). Could not verify this key directly either: this sandbox's outbound proxy blocks both `api.resend.com` and `*.onrender.com`, confirmed by direct test, so neither a raw API call nor hitting the live backend was possible from here. Handed back to the founder for a real retry rather than declaring victory on config-only evidence a second time.
+
+**The founder then ran both flows live end-to-end on PR #6's Netlify Deploy Preview and confirmed full success:**
+- **Forgot Password:** email delivered, reset link worked, password reset succeeded, new password works, old password fails, original reset link cannot be reused.
+- **Change Email:** verification email delivered, verification link worked, email changed successfully, account/authentication behavior correct afterward, original verification link cannot be reused.
+
+Both are marked `LIVE_SITE_VERIFIED` in `ai/regression-inventory.md`, replacing the stale `NOT_OPERATIONAL (email delivery)` status from the 2026-08-28 SMTP-era entry.
+
+**Merged PR #6 into `main`** (merge commit `006b71a`) — this was the fourth and final feature of the multi-feature milestone (Settings/Account, Messaging, Legal/Policy Pages, and now Forgot Password + Change Email email delivery). Per the standing milestone workflow (see the 2026-09-01 "`main` decoupled from production" entry above), merging to `main` is not itself production-affecting while Netlify's production auto-deploy stays off — **no production deploy was triggered, and the production frontend remains frozen**, per the founder's explicit instruction. The final production deploy still requires a separate, explicit founder go-ahead — not inferred from the milestone being complete.
+
+**Documentation updated to close out the email-delivery gap:**
+- `ai/regression-inventory.md` — Forgot Password row updated to `LIVE_SITE_VERIFIED` with the full checklist; new Change Email row added, also `LIVE_SITE_VERIFIED`.
+- `ai/current-state.md` — the "Known gap — outbound email is not actually configured" section rewritten to "Resolved," describing the Resend transport and noting `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS` are dead (no code reads them anymore) and safe to remove from Render whenever convenient.
+- Cleanup backlog: the "remove unused SMTP env vars once email delivery is confirmed working" item (from the 2026-08-28/09-01 entries above) is resolved by this note — Gmail SMTP was replaced by Resend's HTTPS API, and `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS` can be deleted from Render's `muslim-rentals-backend` env vars at any time; no code path reads them. Not deleted in this session since that's a Render-console action the founder can do trivially and wasn't explicitly requested as an infra change.
+
+**Untouched, per explicit instruction:** the parked map/spiderfy overlapping-marker work (`ai/roadmap.md`'s "Next" section) was not touched.
+
+**Revisit when:** the founder gives explicit approval for the final production Netlify deploy — at that point this is the natural trigger to also physically remove the dead SMTP env vars from Render, and to do a final full regression pass before the production frontend unfreezes.

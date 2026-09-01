@@ -1,15 +1,18 @@
 # Current State
 
-Last verified against the repository: 2026-08-25, commit `f086c68` on
-`main`. Update this file whenever the picture materially changes — don't
-let it drift into fiction.
+Last verified against the repository: 2026-09-01, commit `006b71a` on
+`main` (PR #6 merge — Forgot Password + Change Email email delivery, the
+fourth and final feature of the current multi-feature milestone). Update
+this file whenever the picture materially changes — don't let it drift
+into fiction.
 
 ## Tech stack
 
 - **Frontend:** Next.js 14.2 (App Router), React 18, TypeScript, Tailwind
   CSS, Radix UI, Zustand, Leaflet, Socket.IO client, react-hook-form + zod.
 - **Backend:** Express 4, TypeScript, Prisma 5, PostgreSQL, Socket.IO
-  server, JWT + Google OAuth, S3-compatible storage, Nodemailer.
+  server, JWT + Google OAuth, S3-compatible storage, Resend (transactional
+  email, via HTTPS API — not SMTP, which Render blocks outbound).
 - Full breakdown: `company/architecture.md`.
 
 ## Current working features
@@ -19,7 +22,8 @@ let it drift into fiction.
 - Real-time messaging per listing conversation, with typing indicators and
   read receipts.
 - Email/password and Google OAuth registration/login, JWT refresh rotation,
-  forgot/reset password.
+  forgot/reset password, and change-email (both with real, verified
+  transactional email delivery via Resend).
 - Admin panel: stats, user search, ban/unban, role change, listing removal,
   report triage.
 - Static policy pages: Safety, Terms, Privacy, Content & Community
@@ -75,20 +79,24 @@ boot crash; GET /listings's 50-row cap rejecting the map page's real
 limit=200 requests; a wrong-password error message; a missing
 reset-password page; an empty City table blocking listing posts).
 
-**Known gap — outbound email is not actually configured.**
-`SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` are unset on Render, so no
-transactional email (welcome email, password-reset email) is ever
-delivered — `sendEmail()` now fails fast with a clear "SMTP not
-configured" log line instead of nodemailer's confusing default attempt to
-connect to `localhost:587`, but the underlying gap is unchanged: this
-needs a real transactional email provider account (e.g. Resend, SendGrid,
-Postmark, AWS SES) and its API/SMTP credentials, which is founder/
-external work — no email-sending connector or credential is available to
-this session. Forgot/reset-password's `/auth/reset-password` page and
-backend logic both work correctly on their own (a real reset token, once
-someone has it, works end-to-end) — only the "email a link" delivery step
-is broken. See `ai/regression-inventory.md`'s "Forgot / reset password"
-row and `ai/decisions.md`'s 2026-08-28 entries for detail.
+**Resolved — outbound email is configured and working.** Transactional
+email (password reset, change-email confirmation, welcome email) is sent
+via Resend's HTTPS API on the verified `muslimrentals.ca` domain.
+Gmail SMTP was tried first and abandoned — Render blocks outbound SMTP
+connections entirely (confirmed directly: connection attempts on both
+port 587 and 465 timed out at the raw TCP stage, never reaching
+STARTTLS/AUTH) — so the transport was switched to Resend's HTTPS API,
+which isn't subject to that block. The `SMTP_HOST`/`SMTP_PORT`/
+`SMTP_USER`/`SMTP_PASS` env vars are dead and no longer read by any code
+(`src/utils/email.ts` now uses `RESEND_API_KEY` + `EMAIL_FROM` only) —
+safe to remove from Render whenever convenient. Both Forgot Password and
+Change Email were founder-verified end-to-end on PR #6's Netlify Deploy
+Preview (delivery, link validity, single-use enforcement, and correct
+post-change auth behavior) before merge. See `ai/regression-inventory.md`'s
+"Forgot / reset password" and "Change email" rows and `ai/decisions.md`'s
+2026-09-01 Resend entries for the full history, including a Resend API
+key that returned 401 "API key is invalid" and had to be rotated before
+delivery actually worked.
 
 ## Security posture
 

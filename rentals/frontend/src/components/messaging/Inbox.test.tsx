@@ -48,10 +48,12 @@ vi.mock('@/lib/socket', () => ({
   disconnectSocket: vi.fn(),
 }));
 
-const { getConversationsMock, getConversationMock, sendMessageMock } = vi.hoisted(() => ({
+const { getConversationsMock, getConversationMock, sendMessageMock, reportMessageMock, reportUserMock } = vi.hoisted(() => ({
   getConversationsMock: vi.fn(),
   getConversationMock: vi.fn(),
   sendMessageMock: vi.fn(),
+  reportMessageMock: vi.fn().mockResolvedValue({ success: true }),
+  reportUserMock: vi.fn().mockResolvedValue({ success: true }),
 }));
 vi.mock('@/lib/api', () => ({
   messagesApi: {
@@ -60,6 +62,10 @@ vi.mock('@/lib/api', () => ({
     startConversation: vi.fn(),
     sendMessage: sendMessageMock,
     getUnreadCount: vi.fn().mockResolvedValue({ data: { count: 0 } }),
+    report: reportMessageMock,
+  },
+  usersApi: {
+    report: reportUserMock,
   },
 }));
 
@@ -104,6 +110,8 @@ beforeEach(() => {
   getConversationMock.mockReset();
   sendMessageMock.mockReset();
   toastMock.mockReset();
+  reportMessageMock.mockReset().mockResolvedValue({ success: true });
+  reportUserMock.mockReset().mockResolvedValue({ success: true });
 });
 
 describe('Inbox: sending a message never shows a client-side duplicate', () => {
@@ -257,5 +265,55 @@ describe('Inbox: socket listener lifecycle', () => {
     // Belt and suspenders: even a single delivered event only renders once.
     socket.serverPush('message:new', message({ id: 'post-remount', body: 'still just once' }));
     await waitFor(() => expect(within(screen.getByTestId('message-thread')).getAllByText('still just once')).toHaveLength(1));
+  });
+});
+
+describe('Inbox: reporting a user or a message', () => {
+  it('offers a "Report {name}" action in the thread header that reports the other participant, never the current user', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({ data: { ...conversation(), messages: [] } });
+
+    const user = userEvent.setup();
+    render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: `Report ${OTHER.name}` }));
+    await user.click(screen.getByText('Harassment or abusive behavior'));
+    await user.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(reportUserMock).toHaveBeenCalledWith(OTHER.id, 'Harassment or abusive behavior', undefined));
+  });
+
+  it('offers a tap-triggered "Report message" action only on the other participant\'s messages, never on the user\'s own', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({
+      data: {
+        ...conversation(),
+        messages: [
+          message({ id: 'mine', body: 'my own message', sender: { ...ME, avatarUrl: null } }),
+          message({ id: 'theirs', body: 'their message', sender: { ...OTHER, avatarUrl: null } }),
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByText('their message')).toBeInTheDocument());
+
+    // Exactly one "Report message" action exists -- for the other participant's
+    // message -- never one attached to the user's own message.
+    const reportButtons = screen.getAllByRole('button', { name: 'Report message' });
+    expect(reportButtons).toHaveLength(1);
+
+    await user.click(reportButtons[0]);
+    expect(screen.getByText('their message', { selector: 'p' })).toBeInTheDocument();
+    await user.click(screen.getByText('Spam'));
+    await user.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(reportMessageMock).toHaveBeenCalledWith('theirs', 'Spam', undefined));
   });
 });

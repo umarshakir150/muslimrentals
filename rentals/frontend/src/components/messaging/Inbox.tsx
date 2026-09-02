@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Loader2, MessageSquare } from 'lucide-react';
+import { Send, ArrowLeft, Loader2, MessageSquare, Flag } from 'lucide-react';
 import { Conversation, Message } from '@/types';
-import { messagesApi } from '@/lib/api';
+import { messagesApi, usersApi } from '@/lib/api';
 import { useUser } from '@/store/authStore';
 import { formatTimeAgo, cn, initials } from '@/lib/utils';
 import { connectSocket, disconnectSocket } from '@/lib/socket';
 import { useToast } from '@/components/ui/use-toast';
+import ReportModal, { ReportTargetType } from '@/components/reports/ReportModal';
 
 interface InboxProps {
   initialConvId?: string;
@@ -36,6 +37,12 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const activeConvRef = useRef<Conversation | null>(null);
   const user = useUser();
   const { toast } = useToast();
+
+  const [reportTarget, setReportTarget] = useState<{
+    type: ReportTargetType;
+    contextLabel: string;
+    submit: (reason: string, description?: string) => Promise<void>;
+  } | null>(null);
 
   useEffect(() => {
     activeConvRef.current = activeConv;
@@ -191,6 +198,22 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const otherParticipant = (conv: Conversation) =>
     conv.participants.find(p => p.userId !== user?.id)?.user;
 
+  function reportUser(otherUserId: string, otherUserName: string) {
+    setReportTarget({
+      type: 'USER',
+      contextLabel: otherUserName,
+      submit: (reason, description) => usersApi.report(otherUserId, reason, description).then(() => {}),
+    });
+  }
+
+  function reportMessage(msg: Message) {
+    setReportTarget({
+      type: 'MESSAGE',
+      contextLabel: msg.body,
+      submit: (reason, description) => messagesApi.report(msg.id, reason, description).then(() => {}),
+    });
+  }
+
   return (
     <div className="flex h-[calc(100dvh-72px)] bg-white rounded-3xl border border-ink/8 shadow-card overflow-hidden">
       {/* Conversations list */}
@@ -270,10 +293,24 @@ export default function Inbox({ initialConvId }: InboxProps) {
                     : initials(other?.name || '?');
                 })()}
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm">{otherParticipant(activeConv)?.name}</p>
                 <p className="text-xs text-muted truncate max-w-xs">{activeConv.listing?.title}</p>
               </div>
+              {(() => {
+                const other = otherParticipant(activeConv);
+                if (!other) return null;
+                return (
+                  <button
+                    onClick={() => reportUser(other.id, other.name)}
+                    aria-label={`Report ${other.name}`}
+                    title={`Report ${other.name}`}
+                    className="p-2.5 rounded-full hover:bg-gray-100 text-muted shrink-0"
+                  >
+                    <Flag size={16} />
+                  </button>
+                );
+              })()}
             </div>
 
             {/* Messages */}
@@ -288,7 +325,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
                         {new Date(msg.createdAt).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
                       </div>
                     )}
-                    <div className={cn('flex', isMe ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('flex items-end gap-0.5', isMe ? 'justify-end' : 'justify-start')}>
                       <div className={cn(
                         'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed',
                         isMe ? 'bg-brand-600 text-white rounded-br-sm' : 'bg-gray-100 text-ink rounded-bl-sm'
@@ -298,6 +335,16 @@ export default function Inbox({ initialConvId }: InboxProps) {
                           {new Date(msg.createdAt).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
+                      {!isMe && (
+                        <button
+                          onClick={() => reportMessage(msg)}
+                          aria-label="Report message"
+                          title="Report message"
+                          className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted/50 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          <Flag size={14} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -340,6 +387,14 @@ export default function Inbox({ initialConvId }: InboxProps) {
           </div>
         )}
       </div>
+
+      <ReportModal
+        open={!!reportTarget}
+        onClose={() => setReportTarget(null)}
+        targetType={reportTarget?.type ?? 'USER'}
+        contextLabel={reportTarget?.contextLabel ?? ''}
+        onSubmit={reportTarget?.submit ?? (async () => {})}
+      />
     </div>
   );
 }

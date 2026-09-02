@@ -11,6 +11,7 @@ import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
 import DeleteListingDialog from './DeleteListingDialog';
 import ListingImageLightbox from './ListingImageLightbox';
+import ReportModal from '@/components/reports/ReportModal';
 
 const SWIPE_THRESHOLD = 50;
 
@@ -26,7 +27,7 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [saved, setSaved] = useState(listing?.isSaved || false);
   const [saving, setSaving] = useState(false);
-  const [reporting, setReporting] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   // `listing` as passed in by every caller (browse/map/saved/my-listings) comes
   // straight from GET /listings, which caps `images` to 1 (take: 1) for list
@@ -76,15 +77,9 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
     finally { setSaving(false); }
   }
 
-  async function handleReport() {
+  function handleReport() {
     if (!isAuth) { toast({ title: 'Sign in required' }); return; }
-    if (!window.confirm('Report this listing as inappropriate?')) return;
-    setReporting(true);
-    try {
-      await listingsApi.report(listing!.id, 'Inappropriate content');
-      toast({ title: 'Report submitted', description: 'We review all reports within 24 hours.' });
-    } catch { toast({ variant: 'destructive', title: 'Error submitting report' }); }
-    finally { setReporting(false); }
+    setReportOpen(true);
   }
 
   const isOwner = user?.id === listing.user?.id;
@@ -104,14 +99,14 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
               {audienceLabel(listing.audience)}
             </span>
             <div className="flex items-center gap-2">
-              <button onClick={handleSave} disabled={saving}
+              <button onClick={handleSave} disabled={saving} aria-label={saved ? 'Unsave listing' : 'Save listing'}
                 className={cn('p-2.5 rounded-full transition-colors', saved ? 'bg-red-50 text-red-500' : 'hover:bg-gray-100')}>
                 <Heart size={18} fill={saved ? 'currentColor' : 'none'} />
               </button>
-              <button onClick={handleReport} disabled={reporting} className="p-2.5 rounded-full hover:bg-gray-100 text-muted">
+              <button onClick={handleReport} aria-label="Report listing" className="p-2.5 rounded-full hover:bg-gray-100 text-muted">
                 <Flag size={18} />
               </button>
-              <button onClick={onClose} className="p-2.5 rounded-full hover:bg-gray-100"><X size={18} /></button>
+              <button onClick={onClose} aria-label="Close listing details" className="p-2.5 rounded-full hover:bg-gray-100"><X size={18} /></button>
             </div>
           </div>
 
@@ -240,6 +235,14 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
         onDeleted={(id) => { setDeleteOpen(false); onDeleted?.(id); onClose(); }}
+      />
+
+      <ReportModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        targetType="LISTING"
+        contextLabel={listing.title}
+        onSubmit={(reason, description) => listingsApi.report(listing.id, reason, description).then(() => {})}
       />
 
       {lightboxOpen && hasImgs && (

@@ -225,6 +225,8 @@ export const messagesApi = {
   sendMessage: (convId: string, body: string) =>
     api.post<{ data: any }>(`/messages/conversations/${convId}/messages`, { body }),
   getUnreadCount: () => api.get<{ data: { count: number } }>('/messages/unread-count'),
+  report: (messageId: string, reason: string, description?: string) =>
+    api.post<{ success: boolean; message: string }>(`/messages/${messageId}/report`, { reason, description }),
 };
 
 // ─── Cities API ───────────────────────────────────────────────────────────────
@@ -261,4 +263,6 @@ export const usersApi = {
     api.post<{ success: boolean; data: any; message: string }>('/users/me/email-change-confirm', { token }),
   deleteAccount: (data: { currentPassword?: string; confirmEmail?: string }) =>
     api.delete<{ success: boolean; message: string }>('/users/me', data),
+  report: (userId: string, reason: string, description?: string) =>
+    api.post<{ success: boolean; message: string }>(`/users/${userId}/report`, { reason, description }),
 };

@@ -1,0 +1,48 @@
+{
+  "role": "qa",
+  "taskId": "20260901-234756-build-the-report-a-user-report-a-message-feature-as",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Schema is genuinely additive/backward-compatible: ReportTargetType enum, nullable targetType (default LISTING), nullable reportedUserId/messageId (SetNull FKs), nullable messageSnapshot. Hand-authored migration.sql matches schema.prisma exactly (verified line-by-line: CREATE TYPE, additive ALTER TABLE columns, two indexes, two SetNull FKs) and is explicitly disclosed as unverified against a live Postgres instance, consistent with the repo's stated fallback precedent.",
+      "evidence": "rentals/backend/prisma/schema.prisma:242-293 and prisma/migrations/20260901235000_add_user_message_reports/migration.sql"
+    },
+    {
+      "severity": "info",
+      "finding": "POST /messages/:id/report and POST /users/:id/report correctly implement authentication, participant/self-report checks, server-side enum reason taxonomy (closing Trust & Safety's medium-severity 'free-text reason' gap), atomic message-content snapshotting at creation time, and a real DB-enforced prior-interaction gate (shared conversation OR listing conversation/save) before allowing a user report -- not an open report-any-user endpoint. Both return {success, message} only, matching the existing listing-report shape (no enumeration).",
+      "evidence": "rentals/backend/src/routes/messages.ts:200-231, rentals/backend/src/routes/users.ts:126-182, rentals/backend/src/validation/reportSchemas.ts"
+    },
+    {
+      "severity": "info",
+      "finding": "GET /admin/reports correctly branches on targetType (LISTING/USER/MESSAGE) with type-appropriate context, remains gated by the unchanged router-level requireRole(ADMIN, MODERATOR), and additionally surfaces reporterHistory (totalFiled/dismissed via groupBy) on USER reports per Trust & Safety's anti-retaliation recommendation. PATCH /admin/users/:id/ban (used by the 'Restrict user' admin action) remains ADMIN-only server-side, and the frontend now also hides that button from MODERATOR viewers client-side (defense-in-depth, not a new privilege surface).",
+      "evidence": "rentals/backend/src/routes/admin.ts:157-210, :93-94; rentals/frontend/src/app/admin/page.tsx:166"
+    },
+    {
+      "severity": "info",
+      "finding": "Frontend is fully wired end to end: ReportModal's per-targetType reason lists match the backend's server-enforced enums exactly (verified string-for-string), window.confirm() is fully removed from ListingDetail.tsx, Inbox.tsx shows 'Report {name}' in the thread header and a per-bubble report action only on the other participant's messages (never the user's own, confirmed via the !isMe guard), and admin/page.tsx renders type chips plus type-specific context/actions without the old 'Listing: undefined' failure mode for non-listing reports.",
+      "evidence": "rentals/frontend/src/components/reports/ReportModal.tsx:13-36 vs rentals/backend/src/validation/reportSchemas.ts:17-32; rentals/frontend/src/components/messaging/Inbox.tsx:300-347; rentals/frontend/src/app/admin/page.tsx:107-141"
+    },
+    {
+      "severity": "info",
+      "finding": "Ran the actual test suites and typechecks myself in this worktree rather than trusting prior reports: backend 211/211 tests pass (including the 17 new report-feature tests, spot-checked for meaningful assertions, not tautological mocks) with a clean `tsc --noEmit`; frontend 164/164 tests pass with a clean `tsc --noEmit`.",
+      "evidence": "Backend: `npm test` -> 23 files / 211 tests passed; `npx tsc --noEmit` clean. Frontend: `npm test -- --run` -> 23 files / 164 tests passed; `npx tsc --noEmit` clean."
+    },
+    {
+      "severity": "low",
+      "finding": "Trust & Safety's design-review recommendation to record which prior-interaction path (shared-conversation vs. listing-interaction) qualified a USER report as evidence for moderators was not implemented -- the gate is enforced correctly but the qualifying path is not persisted or surfaced in the admin view.",
+      "recommendedAction": "Non-blocking for this pass; log as a follow-up enhancement to GET /admin/reports if/when report volume justifies the added moderator-facing evidence field."
+    },
+    {
+      "severity": "low",
+      "finding": "The frontend added a client-side ADMIN-only guard hiding 'Restrict user' from MODERATOR viewers (server-side gate was already correct and unchanged), but no test exercises the MODERATOR-role case -- all admin/page.test.tsx tests mock role: 'ADMIN' only.",
+      "recommendedAction": "Add a small frontend test asserting a MODERATOR-role user does not see the 'Restrict user' button, for regression safety, though the code itself is correct as reviewed."
+    },
+    {
+      "severity": "info",
+      "finding": "Legal's data-retention question on indefinite storage of messageSnapshot (raised by Trust & Safety) remains unaddressed, as expected -- it is explicitly a Legal/founder decision per CLAUDE.md workflow step 12, not an engineering or QA gate, and no retention/purge mechanism was requested in scope.",
+      "recommendedAction": "Route to Legal per the required workflow before this ships to production, per Trust & Safety's own recommendation -- not a QA blocker."
+    }
+  ],
+  "notes": "Verification level achieved: CODE_REVIEWED (full diff read across schema, migration, both new routes, admin extension, reportSchemas, ReportModal, Inbox, ListingDetail, admin/page.tsx) + TYPECHECKED (backend and frontend tsc --noEmit both run clean by me) + actual test execution (backend 211/211, frontend 164/164, run by me in this worktree, not just cited from reports). No dev server/browser was driven, so this is NOT BROWSER_VERIFIED or LIVE_SITE_VERIFIED -- a real click-through of ReportModal in Inbox/ListingDetail/admin panel, and a live DB migration dry-run, should happen at the PR/Netlify-preview stage before merge, consistent with the task's own instruction not to merge or deploy from here. No blocking defects found; the two low-severity gaps (unrecorded qualifying-interaction path, untested MODERATOR-hide case) are reasonable to leave as follow-ups rather than block this pass. Per the task's explicit requirement, a second Trust & Safety pass against this actual implemented diff (not just the design) and a Security review still need to occur before this is merge-ready -- this QA PASS does not substitute for either."
+}

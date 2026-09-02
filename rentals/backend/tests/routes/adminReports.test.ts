@@ -117,14 +117,27 @@ describe('GET /admin/reports', () => {
     expect(res.body.data[0].reporterHistory).toEqual({ totalFiled: 3, dismissed: 1 });
   });
 
-  it('returns a MESSAGE report with the frozen snapshot, sender identity, and conversation id', async () => {
+  it('returns a MESSAGE report with the frozen snapshot, sender identity, derived recipient, timestamp, and conversation id', async () => {
     userFindUniqueMock.mockResolvedValue(adminUser());
+    const messageCreatedAt = new Date('2026-09-01T12:00:00.000Z');
     reportFindManyMock.mockResolvedValue([
       {
         id: 'r3', targetType: 'MESSAGE', reporterId: 'reporter-3', status: 'PENDING',
         reporter: { id: 'reporter-3', name: 'Rep3', email: 'rep3@example.com' },
         listing: null, reportedUser: null,
-        message: { id: 'msg-1', conversationId: 'conv-1', sender: { id: 'sender-1', name: 'Sender', email: 'sender@example.com' } },
+        message: {
+          id: 'msg-1',
+          conversationId: 'conv-1',
+          createdAt: messageCreatedAt,
+          senderId: 'sender-1',
+          sender: { id: 'sender-1', name: 'Sender', email: 'sender@example.com' },
+          conversation: {
+            participants: [
+              { userId: 'sender-1', user: { id: 'sender-1', name: 'Sender', email: 'sender@example.com' } },
+              { userId: 'recipient-1', user: { id: 'recipient-1', name: 'Recipient', email: 'recipient@example.com' } },
+            ],
+          },
+        },
         messageSnapshot: 'Pay me outside the app',
       },
     ]);
@@ -136,7 +149,39 @@ describe('GET /admin/reports', () => {
       .set('Authorization', `Bearer ${signToken(ADMIN_ID)}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.data[0].message).toEqual(expect.objectContaining({ conversationId: 'conv-1', sender: expect.objectContaining({ id: 'sender-1' }) }));
+    expect(res.body.data[0].message).toEqual(
+      expect.objectContaining({ conversationId: 'conv-1', createdAt: messageCreatedAt.toISOString(), sender: expect.objectContaining({ id: 'sender-1' }) })
+    );
+    // The raw nested conversation/participants payload is an implementation
+    // detail for deriving `recipient` below -- it must not leak to the client.
+    expect(res.body.data[0].message.conversation).toBeUndefined();
+    expect(res.body.data[0].recipient).toEqual(expect.objectContaining({ id: 'recipient-1', name: 'Recipient' }));
     expect(res.body.data[0].messageSnapshot).toBe('Pay me outside the app');
+  });
+
+  it('derives a null recipient for a MESSAGE report when conversation context is unavailable', async () => {
+    userFindUniqueMock.mockResolvedValue(adminUser());
+    reportFindManyMock.mockResolvedValue([
+      {
+        id: 'r4', targetType: 'MESSAGE', reporterId: 'reporter-4', status: 'PENDING',
+        reporter: { id: 'reporter-4', name: 'Rep4', email: 'rep4@example.com' },
+        listing: null, reportedUser: null,
+        message: {
+          id: 'msg-2', conversationId: 'conv-2', createdAt: new Date(), senderId: 'sender-2',
+          sender: { id: 'sender-2', name: 'Sender2', email: 'sender2@example.com' },
+          conversation: null,
+        },
+        messageSnapshot: 'deleted message content',
+      },
+    ]);
+    reportGroupByMock.mockResolvedValue([]);
+    const app = await buildApp();
+
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].recipient).toBeNull();
   });
 });

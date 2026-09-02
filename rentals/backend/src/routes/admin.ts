@@ -163,9 +163,11 @@ router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async 
 //    banReason), plus the *reporter's* own filed/dismissed report counts so
 //    a moderator can spot a retaliatory or bad-faith report pattern
 //    (Trust & Safety review, 2026-09-01).
-//  - MESSAGE: the sender's identity, the frozen messageSnapshot (not a live
-//    lookup -- the message may have since been edited/deleted), and the
-//    conversation id to link into the live thread for surrounding context.
+//  - MESSAGE: the sender's identity, the derived `recipient` (the other
+//    conversation participant, not the sender), the message's own
+//    createdAt, the frozen messageSnapshot (not a live lookup -- the
+//    message may have since been edited/deleted), and the conversation id
+//    to link into the live thread for surrounding context.
 router.get('/reports', async (req, res: Response, next: NextFunction) => {
   try {
     const { status } = z.object({ status: z.nativeEnum(ReportStatus).optional() }).parse(req.query);
@@ -175,7 +177,19 @@ router.get('/reports', async (req, res: Response, next: NextFunction) => {
         reporter:     { select: { id: true, name: true, email: true } },
         listing:      { select: { id: true, title: true } },
         reportedUser: { select: { id: true, name: true, email: true, isBanned: true, banReason: true, createdAt: true } },
-        message:      { select: { id: true, conversationId: true, sender: { select: { id: true, name: true, email: true } } } },
+        message:      {
+          select: {
+            id: true,
+            conversationId: true,
+            createdAt: true,
+            sender: { select: { id: true, name: true, email: true } },
+            conversation: {
+              select: {
+                participants: { select: { userId: true, user: { select: { id: true, name: true, email: true } } } },
+              },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -200,10 +214,19 @@ router.get('/reports', async (req, res: Response, next: NextFunction) => {
       if (row.status === ReportStatus.DISMISSED) stat.dismissed += row._count._all;
     }
 
-    const data = reports.map(r => ({
-      ...r,
-      ...(r.targetType === 'USER' && { reporterHistory: reporterStats.get(r.reporterId) }),
-    }));
+    const data = reports.map(r => {
+      // Strip the raw nested conversation/participants payload regardless of
+      // targetType -- it's only ever an intermediate for deriving `recipient`
+      // below, not something the admin UI should receive directly.
+      const { conversation, ...message } = r.message ?? {};
+      const recipient = conversation?.participants.find(p => p.userId !== r.message?.sender.id)?.user ?? null;
+      return {
+        ...r,
+        message: r.message ? message : r.message,
+        ...(r.targetType === 'MESSAGE' && { recipient }),
+        ...(r.targetType === 'USER' && { reporterHistory: reporterStats.get(r.reporterId) }),
+      };
+    });
 
     res.json({ success: true, data });
   } catch (err) { next(err); }

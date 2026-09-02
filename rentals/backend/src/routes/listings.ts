@@ -324,7 +324,7 @@ router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimit
       data: { reporterId: req.user!.id, listingId: req.params.id, reason, description },
     });
 
-    res.json({ success: true, message: 'Report submitted. We review all reports within 24 hours.' });
+    res.json({ success: true, message: 'Report submitted. Our team reviews reports as soon as possible.' });
   } catch (err) { next(err); }
 });
 

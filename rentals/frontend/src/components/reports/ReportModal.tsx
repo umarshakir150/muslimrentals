@@ -88,7 +88,7 @@ export default function ReportModal({ open, onClose, targetType, contextLabel, o
     setError(null);
     try {
       await onSubmit(reason, description.trim() || undefined);
-      toast({ title: 'Report submitted', description: 'We review all reports within 24 hours.' });
+      toast({ title: 'Report submitted', description: 'Our team reviews reports as soon as possible.' });
       onClose();
     } catch (err: any) {
       setError(err?.message || "Couldn't submit this report. Please try again.");

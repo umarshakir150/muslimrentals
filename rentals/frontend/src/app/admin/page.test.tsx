@@ -108,6 +108,43 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(link).toHaveAttribute('href', '/messages?conv=conv-99');
   });
 
+  it('renders a MESSAGE report with the recipient and sent timestamp the backend derives, for full moderation context', async () => {
+    mockReports([{
+      id: 'r4b',
+      targetType: 'MESSAGE',
+      reason: 'Spam',
+      description: 'Asking to pay outside the app',
+      reporter: { name: 'Erin' },
+      messageSnapshot: 'Buy crypto now!!',
+      message: { id: 'msg-1', conversationId: 'conv-99', createdAt: new Date(Date.now() - 60_000).toISOString(), sender: { name: 'Frank' } },
+      messageSender: { name: 'Frank' },
+      recipient: { id: 'u-recipient', name: 'Grace', email: 'grace@example.com' },
+      conversationId: 'conv-99',
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+    expect(screen.getByText(/From: Frank/)).toBeInTheDocument();
+    expect(screen.getByText(/To: Grace/)).toBeInTheDocument();
+    expect(screen.getByText(/Sent:/)).toBeInTheDocument();
+    expect(screen.getByText(/Asking to pay outside the app/)).toBeInTheDocument();
+  });
+
+  it('renders "Unknown" for the MESSAGE recipient when the backend could not derive one', async () => {
+    mockReports([{
+      id: 'r4c',
+      targetType: 'MESSAGE',
+      reason: 'Spam',
+      reporter: { name: 'Erin' },
+      messageSnapshot: 'Buy crypto now!!',
+      messageSender: { name: 'Frank' },
+      recipient: null,
+      conversationId: 'conv-99',
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+    expect(screen.getByText(/To: Unknown/)).toBeInTheDocument();
+  });
+
   it('Restrict user calls the existing ban endpoint and resolves the report, not a new privilege surface', async () => {
     mockReports([{
       id: 'r5',

@@ -8,7 +8,7 @@ import { useUser } from '@/store/authStore';
 import { useRouter } from 'next/navigation';
 import { Loader2, Users, Home, Flag, MessageSquare, User, MessageCircle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { cn } from '@/lib/utils';
+import { cn, formatTimeAgo } from '@/lib/utils';
 
 // Reports predate `targetType` (it's a nullable, backfilled-default-LISTING
 // column) -- a row from before the migration has no value for it at all, so
@@ -128,6 +128,8 @@ export default function AdminPage() {
                           {type === 'MESSAGE' && (
                             <div className="text-xs text-muted">
                               <p>From: {r.messageSender?.name || r.message?.sender?.name || 'Unknown'}</p>
+                              <p>To: {r.recipient?.name || 'Unknown'}</p>
+                              {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
                               <p className="italic bg-gray-50 rounded-lg px-2 py-1 mt-1 mb-1">&ldquo;{r.messageSnapshot || 'Message content unavailable'}&rdquo;</p>
                               {(r.conversationId || r.message?.conversationId) && (
                                 <Link

@@ -33,7 +33,7 @@ const STATS = { users: 10, activeListings: 5, pendingReports: 3, messages: 20 };
 function mockReports(reports: any[]) {
   getMock.mockImplementation((endpoint: string) => {
     if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
-    if (endpoint === '/admin/reports') return Promise.resolve({ data: reports });
+    if (endpoint.startsWith('/admin/reports?status=')) return Promise.resolve({ data: reports });
     return Promise.resolve({ data: null });
   });
 }
@@ -310,5 +310,38 @@ describe('Admin Reports panel: messageSnapshot retention hold', () => {
     const dialog = screen.getByRole('dialog', { name: 'Reported message' });
     expect(within(dialog).getByText(/redacted per the retention policy/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/Message content unavailable/)).not.toBeInTheDocument();
+  });
+});
+
+describe('Admin Reports panel: status filter tabs', () => {
+  it('defaults to the Pending tab and refetches with the selected status when a moderator switches tabs', async () => {
+    mockReports([{ id: 'r1', reason: 'Spam', reporter: { name: 'Alice' }, listing: { id: 'l1', title: 'Cozy 2BR' } }]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Cozy 2BR', { exact: false })).toBeInTheDocument());
+    expect(getMock).toHaveBeenCalledWith('/admin/reports?status=PENDING');
+
+    await user.click(screen.getByRole('button', { name: 'Resolved' }));
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/reports?status=RESOLVED'));
+  });
+
+  it('hides Dismiss/Restrict/Remove-listing actions and shows resolvedAt once viewing a non-Pending tab', async () => {
+    mockReports([{
+      id: 'r1',
+      reason: 'Spam',
+      reporter: { name: 'Alice' },
+      listing: { id: 'l1', title: 'Cozy 2BR' },
+      resolvedAt: '2026-06-01T00:00:00.000Z',
+      resolution: 'Reviewed and dismissed',
+    }]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Cozy 2BR', { exact: false })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Dismissed' }));
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/reports?status=DISMISSED'));
+    await waitFor(() => expect(screen.getByText(/Resolved:.*Reviewed and dismissed/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove listing' })).not.toBeInTheDocument();
   });
 });

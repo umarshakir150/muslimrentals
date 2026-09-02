@@ -33,6 +33,13 @@ function TypeChip({ type }: { type: ReportTargetType }) {
   );
 }
 
+type ReportStatusFilter = 'PENDING' | 'RESOLVED' | 'DISMISSED';
+const STATUS_TABS: { value: ReportStatusFilter; label: string }[] = [
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'RESOLVED', label: 'Resolved' },
+  { value: 'DISMISSED', label: 'Dismissed' },
+];
+
 export default function AdminPage() {
   const user = useUser();
   const router = useRouter();
@@ -40,18 +47,24 @@ export default function AdminPage() {
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [messageDetail, setMessageDetail] = useState<any | null>(null);
+  // Reports are fetched one status at a time (the backend defaults to
+  // PENDING when no ?status is given) -- this tab lets a moderator also
+  // look up already-resolved/dismissed reports, e.g. to confirm resolvedAt
+  // was stamped correctly or to check a message report's retention state.
+  const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('PENDING');
   const { toast } = useToast();
 
   useEffect(() => {
     if (user && user.role === 'USER') { router.push('/'); return; }
+    setLoading(true);
     Promise.all([
       api.get<any>('/admin/stats'),
-      api.get<any>('/admin/reports'),
+      api.get<any>(`/admin/reports?status=${statusFilter}`),
     ]).then(([s, r]) => {
       setStats(s.data);
       setReports(r.data || []);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [user]);
+  }, [user, statusFilter]);
 
   if (!user || user.role === 'USER') return null;
 
@@ -83,13 +96,26 @@ export default function AdminPage() {
 
             {/* Reports */}
             <div className="bg-white border border-ink/8 rounded-3xl shadow-card overflow-hidden">
-              <div className="px-6 py-4 border-b border-ink/8">
-                <h2 className="font-semibold">Pending Reports</h2>
+              <div className="px-6 py-4 border-b border-ink/8 flex items-center justify-between gap-4 flex-wrap">
+                <h2 className="font-semibold">{STATUS_TABS.find(t => t.value === statusFilter)?.label} Reports</h2>
+                <div className="flex gap-1.5">
+                  {STATUS_TABS.map(tab => (
+                    <button
+                      key={tab.value}
+                      onClick={() => setStatusFilter(tab.value)}
+                      className={cn(
+                        'px-3 py-1 text-xs font-semibold rounded-full transition-colors',
+                        statusFilter === tab.value ? 'bg-brand-700 text-white' : 'bg-gray-100 hover:bg-gray-200'
+                      )}>
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               {reports.length === 0 ? (
                 <div className="py-12 text-center text-muted">
                   <Flag size={32} className="mx-auto mb-3 opacity-20" />
-                  <p>No pending reports</p>
+                  <p>No {statusFilter.toLowerCase()} reports</p>
                 </div>
               ) : (
                 <div className="divide-y divide-ink/6">
@@ -104,6 +130,9 @@ export default function AdminPage() {
                           </div>
                           <p className="text-xs text-muted">{r.description || 'No description'}</p>
                           <p className="text-xs text-muted mt-1">By: {r.reporter?.name} {r.reporter?.email && `(${r.reporter.email})`}</p>
+                          {r.resolvedAt && (
+                            <p className="text-xs text-muted">Resolved: {formatTimeAgo(r.resolvedAt)}{r.resolution ? ` — ${r.resolution}` : ''}</p>
+                          )}
 
                           {type === 'LISTING' && (
                             <p className="text-xs text-muted">Listing: {r.listing?.title || 'Listing no longer available'}</p>
@@ -143,15 +172,17 @@ export default function AdminPage() {
                           })()}
                         </div>
                         <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-                          <button
-                            onClick={async () => {
-                              await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Reviewed and dismissed' });
-                              setReports(prev => prev.filter(rep => rep.id !== r.id));
-                              toast({ title: 'Report dismissed' });
-                            }}
-                            className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
-                            Dismiss
-                          </button>
+                          {statusFilter === 'PENDING' && (
+                            <button
+                              onClick={async () => {
+                                await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Reviewed and dismissed' });
+                                setReports(prev => prev.filter(rep => rep.id !== r.id));
+                                toast({ title: 'Report dismissed' });
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                              Dismiss
+                            </button>
+                          )}
                           {type === 'MESSAGE' && (
                             <button
                               onClick={() => setMessageDetail(r)}
@@ -185,7 +216,7 @@ export default function AdminPage() {
                               {r.retentionHold ? 'Remove retention hold' : 'Place retention hold'}
                             </button>
                           )}
-                          {type === 'LISTING' && (
+                          {type === 'LISTING' && statusFilter === 'PENDING' && (
                             <button
                               onClick={async () => {
                                 if (!r.listing) return;
@@ -198,7 +229,7 @@ export default function AdminPage() {
                               Remove listing
                             </button>
                           )}
-                          {type === 'USER' && r.reportedUser && !r.reportedUser.isBanned && user?.role === 'ADMIN' && (
+                          {type === 'USER' && statusFilter === 'PENDING' && r.reportedUser && !r.reportedUser.isBanned && user?.role === 'ADMIN' && (
                             <button
                               onClick={async () => {
                                 const reason = window.prompt(`Reason for restricting ${r.reportedUser.name}'s account:`);
@@ -249,6 +280,9 @@ export default function AdminPage() {
               <p><span className="font-semibold text-ink">Reason:</span> {messageDetail.reason}</p>
               <p>{messageDetail.description || 'No description'}</p>
               <p>Reporter: {messageDetail.reporter?.name} {messageDetail.reporter?.email && `(${messageDetail.reporter.email})`}</p>
+              {messageDetail.resolvedAt && (
+                <p>Resolved: {formatTimeAgo(messageDetail.resolvedAt)}{messageDetail.resolution ? ` — ${messageDetail.resolution}` : ''}</p>
+              )}
               {messageDetail.retentionHold && (
                 <p className="text-amber-700 font-semibold">
                   Retention hold active{messageDetail.retentionHoldReason ? `: ${messageDetail.retentionHoldReason}` : ''}

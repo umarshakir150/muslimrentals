@@ -116,11 +116,11 @@ export default function AdminPage() {
                                   <span className="ml-1.5 text-red-600 font-semibold">Already restricted</span>
                                 )}
                               </p>
-                              {/* Optional evidence context -- only present once Backend adds it to
-                                  GET /admin/reports; renders nothing if absent rather than breaking. */}
-                              {r.qualifyingInteraction && <p>Eligibility: {r.qualifyingInteraction}</p>}
-                              {typeof r.reporterReportCount === 'number' && (
-                                <p>This reporter has filed {r.reporterReportCount} report(s) total.</p>
+                              {r.reporterHistory && (
+                                <p>
+                                  This reporter has filed {r.reporterHistory.totalFiled} report(s) total,
+                                  {' '}{r.reporterHistory.dismissed} dismissed.
+                                </p>
                               )}
                             </div>
                           )}
@@ -163,7 +163,7 @@ export default function AdminPage() {
                               Remove listing
                             </button>
                           )}
-                          {type === 'USER' && r.reportedUser && !r.reportedUser.isBanned && (
+                          {type === 'USER' && r.reportedUser && !r.reportedUser.isBanned && user?.role === 'ADMIN' && (
                             <button
                               onClick={async () => {
                                 const reason = window.prompt(`Reason for restricting ${r.reportedUser.name}'s account:`);

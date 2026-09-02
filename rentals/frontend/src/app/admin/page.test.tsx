@@ -61,6 +61,21 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.queryByText(/Listing: undefined/)).not.toBeInTheDocument();
   });
 
+  it('renders the reporter history anti-retaliation signal returned by the backend as reporterHistory', async () => {
+    mockReports([{
+      id: 'r2b',
+      targetType: 'USER',
+      reason: 'Harassment or abusive behavior',
+      reporter: { name: 'Bob' },
+      reportedUser: { id: 'u2b', name: 'Carol', email: 'carol@example.com', isBanned: false },
+      reporterHistory: { totalFiled: 3, dismissed: 1 },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Carol/)).toBeInTheDocument());
+    expect(screen.getByText(/filed 3 report\(s\) total/)).toBeInTheDocument();
+    expect(screen.getByText(/1 dismissed/)).toBeInTheDocument();
+  });
+
   it('hides the Restrict user action once the reported user is already banned', async () => {
     mockReports([{
       id: 'r3',

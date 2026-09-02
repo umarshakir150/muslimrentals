@@ -1464,3 +1464,11 @@ Both are marked `LIVE_SITE_VERIFIED` in `ai/regression-inventory.md`, replacing 
 **Pushed the reviewed integration branch and opened the PR** — `agents/20260901-234756-build-the-report-a-user-report-a-message-feature-as/integration` → `main`, PR #7 (https://github.com/umarshakir150/muslimrentals/pull/7). Nothing merged or deployed. Netlify's existing PR-preview integration should build a Deploy Preview automatically, same as PR #2–#6.
 
 **Revisit when:** the founder reviews PR #7's Deploy Preview (click through both report flows and the admin panel across all three report types), confirms the migration against a real database, and decides the `messageSnapshot` retention question — then approves the merge, same as every other milestone PR this session.
+
+## 2026-09-02 (scheduled cycle, 00:36 UTC) — Lead correctly recognized PR #7 as already handled; surfaced one genuinely new Legal item
+
+The 240-minute scheduler tick fired again and found the backlog's one item (`bl_e3162883`, report-a-user/message) already marked `DONE` and linked to PR #7 — correctly did not re-select or duplicate it. Instead it read the actual `qa.json`/`security.json` from the completed task and surfaced one real, still-open gap those reviews had explicitly flagged: **`messageSnapshot`'s data-retention policy has never been sent to Legal**, as required by `CLAUDE.md` workflow step 12. Created a new backlog item for the Legal issue-spotting pass (`bl_f1125fc0`) and, correctly, filed a founder approval (`appr_e050e5a2`, `LEGAL_REVIEW_REQUIRED`) rather than starting it — `LEGAL_FLAG` category is always HIGH risk per `riskClassification.ts`, never autonomously selectable, even for pure issue-spotting with no code change. A second approval (`appr_91401194`, `PRODUCTION_APPROVAL_REQUIRED`) restates that PR #7 is ready for founder review and migration authorization — consistent with, not additional to, what's already been reported.
+
+Neither approval was acted on, per instruction — both are simply waiting for the founder.
+
+**Revisit when:** the founder reviews `appr_e050e5a2` (whether to authorize a Legal pass on `messageSnapshot` retention) alongside PR #7 itself.

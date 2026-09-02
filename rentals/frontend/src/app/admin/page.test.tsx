@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AdminPage from './page';
 
@@ -171,5 +171,68 @@ describe('Admin Reports panel: targetType branching', () => {
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u5/ban', { reason: 'Confirmed impersonation of another landlord' }));
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r5', { status: 'RESOLVED', resolution: 'Account restricted' }));
+  });
+});
+
+describe('Admin Reports panel: emails shown alongside names for unambiguous identity', () => {
+  it('shows the reporter\'s email on a LISTING report -- the only identity a LISTING report displays', async () => {
+    mockReports([{
+      id: 'rl1',
+      targetType: 'LISTING',
+      reason: 'Spam',
+      reporter: { name: 'Ivan', email: 'ivan@example.com' },
+      listing: { id: 'l9', title: 'Cozy 2BR' },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Listing')).toBeInTheDocument());
+    expect(screen.getByText(/By: Ivan/)).toBeInTheDocument();
+    expect(screen.getByText(/ivan@example\.com/)).toBeInTheDocument();
+  });
+
+  it('shows both the reporter\'s and the reported user\'s email on a USER report', async () => {
+    mockReports([{
+      id: 'ru1',
+      targetType: 'USER',
+      reason: 'Harassment or abusive behavior',
+      reporter: { name: 'Bob', email: 'bob@example.com' },
+      reportedUser: { id: 'u2', name: 'Carol', email: 'carol@example.com', isBanned: false },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Carol/)).toBeInTheDocument());
+    expect(screen.getByText(/By: Bob/)).toBeInTheDocument();
+    expect(screen.getByText(/bob@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText(/carol@example\.com/)).toBeInTheDocument();
+  });
+
+  it('shows the reporter\'s, sender\'s, and recipient\'s email on a MESSAGE report, both inline and in the "Reported message" dialog', async () => {
+    mockReports([{
+      id: 'rm1',
+      targetType: 'MESSAGE',
+      reason: 'Spam',
+      reporter: { name: 'Erin', email: 'erin@example.com' },
+      messageSnapshot: 'Buy crypto now!!',
+      message: { id: 'msg-1', conversationId: 'conv-99', createdAt: new Date().toISOString(), sender: { name: 'Frank', email: 'frank@example.com' } },
+      messageSender: { name: 'Frank', email: 'frank@example.com' },
+      recipient: { id: 'u-recipient', name: 'Grace', email: 'grace@example.com' },
+      conversationId: 'conv-99',
+    }]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+
+    // Inline summary
+    expect(screen.getByText(/By: Erin/)).toBeInTheDocument();
+    expect(screen.getByText(/erin@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText(/From: Frank/)).toBeInTheDocument();
+    expect(screen.getByText(/frank@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText(/To: Grace/)).toBeInTheDocument();
+    expect(screen.getByText(/grace@example\.com/)).toBeInTheDocument();
+
+    // The "Reported message" dialog repeats sender/recipient/reporter with email
+    await user.click(screen.getByRole('button', { name: 'Reported message' }));
+    const dialog = screen.getByRole('dialog', { name: 'Reported message' });
+    expect(within(dialog).getByText(/frank@example\.com/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/grace@example\.com/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/erin@example\.com/)).toBeInTheDocument();
   });
 });

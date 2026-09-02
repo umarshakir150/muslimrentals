@@ -103,7 +103,7 @@ export default function AdminPage() {
                             <p className="font-semibold text-sm">{r.reason}</p>
                           </div>
                           <p className="text-xs text-muted">{r.description || 'No description'}</p>
-                          <p className="text-xs text-muted mt-1">By: {r.reporter?.name}</p>
+                          <p className="text-xs text-muted mt-1">By: {r.reporter?.name} {r.reporter?.email && `(${r.reporter.email})`}</p>
 
                           {type === 'LISTING' && (
                             <p className="text-xs text-muted">Listing: {r.listing?.title || 'Listing no longer available'}</p>
@@ -126,13 +126,16 @@ export default function AdminPage() {
                             </div>
                           )}
 
-                          {type === 'MESSAGE' && (
-                            <div className="text-xs text-muted">
-                              <p>From: {r.messageSender?.name || r.message?.sender?.name || 'Unknown'}</p>
-                              <p>To: {r.recipient?.name || 'Unknown'}</p>
-                              {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
-                            </div>
-                          )}
+                          {type === 'MESSAGE' && (() => {
+                            const sender = r.messageSender || r.message?.sender;
+                            return (
+                              <div className="text-xs text-muted">
+                                <p>From: {sender?.name || 'Unknown'} {sender?.email && `(${sender.email})`}</p>
+                                <p>To: {r.recipient?.name || 'Unknown'} {r.recipient?.email && `(${r.recipient.email})`}</p>
+                                {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div className="flex gap-2 shrink-0 flex-wrap justify-end">
                           <button
@@ -208,7 +211,9 @@ export default function AdminPage() {
             <h3 id="reported-message-title" className="font-serif text-xl mb-1">Reported message</h3>
             <p className="text-xs text-muted mb-3">
               From {messageDetail.messageSender?.name || messageDetail.message?.sender?.name || 'Unknown'}
+              {' '}({(messageDetail.messageSender || messageDetail.message?.sender)?.email || 'no email on record'})
               {' '}to {messageDetail.recipient?.name || 'Unknown'}
+              {' '}({messageDetail.recipient?.email || 'no email on record'})
               {messageDetail.message?.createdAt && <> · {formatTimeAgo(messageDetail.message.createdAt)}</>}
             </p>
             <p className="italic bg-gray-50 rounded-lg px-3 py-2 mb-4 text-sm">
@@ -217,7 +222,7 @@ export default function AdminPage() {
             <div className="text-xs text-muted mb-4 space-y-0.5">
               <p><span className="font-semibold text-ink">Reason:</span> {messageDetail.reason}</p>
               <p>{messageDetail.description || 'No description'}</p>
-              <p>Reporter: {messageDetail.reporter?.name}</p>
+              <p>Reporter: {messageDetail.reporter?.name} {messageDetail.reporter?.email && `(${messageDetail.reporter.email})`}</p>
             </div>
             <button onClick={() => setMessageDetail(null)} className="btn-ghost w-full min-h-[44px] py-2.5 text-sm">
               Close

@@ -184,4 +184,86 @@ describe('GET /admin/reports', () => {
     expect(res.status).toBe(200);
     expect(res.body.data[0].recipient).toBeNull();
   });
+
+  // Regression coverage for the founder's ask that a moderator be able to
+  // see email addresses (not just names) alongside every identity a report
+  // surfaces. This endpoint already selected `email` on every identity
+  // field before this test was written -- these assertions exist to prove
+  // that fact explicitly and keep it from silently regressing, rather than
+  // relying on it being an incidental side effect of `expect.objectContaining`
+  // in the tests above (which don't fail if `email` were ever dropped).
+  it('includes the reporter\'s email on every report, regardless of targetType', async () => {
+    userFindUniqueMock.mockResolvedValue(adminUser());
+    reportFindManyMock.mockResolvedValue([
+      {
+        id: 'r5', targetType: 'LISTING', reporterId: 'reporter-5', status: 'PENDING',
+        reporter: { id: 'reporter-5', name: 'Rep5', email: 'rep5@example.com' },
+        listing: { id: 'listing-5', title: 'Place' }, reportedUser: null, message: null,
+      },
+    ]);
+    reportGroupByMock.mockResolvedValue([]);
+    const app = await buildApp();
+
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].reporter.email).toBe('rep5@example.com');
+  });
+
+  it('includes the reported user\'s email on a USER report', async () => {
+    userFindUniqueMock.mockResolvedValue(adminUser());
+    reportFindManyMock.mockResolvedValue([
+      {
+        id: 'r6', targetType: 'USER', reporterId: 'reporter-6', status: 'PENDING',
+        reporter: { id: 'reporter-6', name: 'Rep6', email: 'rep6@example.com' },
+        listing: null, message: null,
+        reportedUser: { id: 'target-6', name: 'Target6', email: 'target6@example.com', isBanned: false, banReason: null, createdAt: new Date() },
+      },
+    ]);
+    reportGroupByMock.mockResolvedValue([]);
+    const app = await buildApp();
+
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].reportedUser.email).toBe('target6@example.com');
+    expect(res.body.data[0].reporter.email).toBe('rep6@example.com');
+  });
+
+  it('includes the message sender\'s and derived recipient\'s email on a MESSAGE report', async () => {
+    userFindUniqueMock.mockResolvedValue(adminUser());
+    reportFindManyMock.mockResolvedValue([
+      {
+        id: 'r7', targetType: 'MESSAGE', reporterId: 'reporter-7', status: 'PENDING',
+        reporter: { id: 'reporter-7', name: 'Rep7', email: 'rep7@example.com' },
+        listing: null, reportedUser: null,
+        message: {
+          id: 'msg-7', conversationId: 'conv-7', createdAt: new Date(), senderId: 'sender-7',
+          sender: { id: 'sender-7', name: 'Sender7', email: 'sender7@example.com' },
+          conversation: {
+            participants: [
+              { userId: 'sender-7', user: { id: 'sender-7', name: 'Sender7', email: 'sender7@example.com' } },
+              { userId: 'recipient-7', user: { id: 'recipient-7', name: 'Recipient7', email: 'recipient7@example.com' } },
+            ],
+          },
+        },
+        messageSnapshot: 'Pay outside the app',
+      },
+    ]);
+    reportGroupByMock.mockResolvedValue([]);
+    const app = await buildApp();
+
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].message.sender.email).toBe('sender7@example.com');
+    expect(res.body.data[0].recipient.email).toBe('recipient7@example.com');
+    expect(res.body.data[0].reporter.email).toBe('rep7@example.com');
+  });
 });

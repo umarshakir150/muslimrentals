@@ -280,10 +280,17 @@ describe('Inbox: reporting a user or a message', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: `Report ${OTHER.name}` }));
+    expect(screen.getByText('Report this user')).toBeInTheDocument();
     await user.click(screen.getByText('Harassment or abusive behavior'));
     await user.click(screen.getByRole('button', { name: 'Submit report' }));
 
     await waitFor(() => expect(reportUserMock).toHaveBeenCalledWith(OTHER.id, 'Harassment or abusive behavior', undefined));
+    // The header action must never file a MESSAGE report -- regression
+    // coverage for a founder test session where every report attempt
+    // (intended as reporting one specific message) actually hit
+    // POST /users/:id/report both times, confirmed via Render's request
+    // logs and a direct check of the Report rows in the database.
+    expect(reportMessageMock).not.toHaveBeenCalled();
   });
 
   it('offers a tap-triggered "Report message" action only on the other participant\'s messages, never on the user\'s own', async () => {
@@ -310,10 +317,22 @@ describe('Inbox: reporting a user or a message', () => {
     expect(reportButtons).toHaveLength(1);
 
     await user.click(reportButtons[0]);
+    // Regression: this must open the message-report modal (title literally
+    // says "Report this message" and previews the reported text), never
+    // silently reuse the header's user-report flow.
+    expect(screen.getByText('Report this message')).toBeInTheDocument();
     expect(screen.getByText('their message', { selector: 'p' })).toBeInTheDocument();
     await user.click(screen.getByText('Spam'));
     await user.click(screen.getByRole('button', { name: 'Submit report' }));
 
     await waitFor(() => expect(reportMessageMock).toHaveBeenCalledWith('theirs', 'Spam', undefined));
+    // The individual-message action must create a MESSAGE report, never a
+    // USER report -- this is the exact regression a founder test session
+    // hit: both of their report attempts (intended as reporting a specific
+    // message) resulted in POST /users/:id/report, confirmed via Render's
+    // request logs and the actual Report rows in the database (both
+    // targetType USER, messageId null). This assertion fails if that ever
+    // regresses again.
+    expect(reportUserMock).not.toHaveBeenCalled();
   });
 });

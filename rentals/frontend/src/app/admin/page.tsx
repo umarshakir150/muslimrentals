@@ -39,6 +39,7 @@ export default function AdminPage() {
   const [stats, setStats] = useState<any>(null);
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [messageDetail, setMessageDetail] = useState<any | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -130,19 +131,10 @@ export default function AdminPage() {
                               <p>From: {r.messageSender?.name || r.message?.sender?.name || 'Unknown'}</p>
                               <p>To: {r.recipient?.name || 'Unknown'}</p>
                               {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
-                              <p className="italic bg-gray-50 rounded-lg px-2 py-1 mt-1 mb-1">&ldquo;{r.messageSnapshot || 'Message content unavailable'}&rdquo;</p>
-                              {(r.conversationId || r.message?.conversationId) && (
-                                <Link
-                                  href={`/messages?conv=${r.conversationId || r.message?.conversationId}`}
-                                  className="text-brand-600 font-semibold hover:underline"
-                                >
-                                  View conversation
-                                </Link>
-                              )}
                             </div>
                           )}
                         </div>
-                        <div className="flex gap-2 shrink-0">
+                        <div className="flex gap-2 shrink-0 flex-wrap justify-end">
                           <button
                             onClick={async () => {
                               await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Reviewed and dismissed' });
@@ -152,6 +144,20 @@ export default function AdminPage() {
                             className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
                             Dismiss
                           </button>
+                          {type === 'MESSAGE' && (
+                            <button
+                              onClick={() => setMessageDetail(r)}
+                              className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                              Reported message
+                            </button>
+                          )}
+                          {type === 'MESSAGE' && (r.conversationId || r.message?.conversationId) && (
+                            <Link
+                              href={`/messages?conv=${r.conversationId || r.message?.conversationId}`}
+                              className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                              Full conversation
+                            </Link>
+                          )}
                           {type === 'LISTING' && (
                             <button
                               onClick={async () => {
@@ -189,6 +195,36 @@ export default function AdminPage() {
           </>
         )}
       </main>
+
+      {messageDetail && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reported-message-title"
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) setMessageDetail(null); }}
+        >
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-elevated p-6">
+            <h3 id="reported-message-title" className="font-serif text-xl mb-1">Reported message</h3>
+            <p className="text-xs text-muted mb-3">
+              From {messageDetail.messageSender?.name || messageDetail.message?.sender?.name || 'Unknown'}
+              {' '}to {messageDetail.recipient?.name || 'Unknown'}
+              {messageDetail.message?.createdAt && <> · {formatTimeAgo(messageDetail.message.createdAt)}</>}
+            </p>
+            <p className="italic bg-gray-50 rounded-lg px-3 py-2 mb-4 text-sm">
+              &ldquo;{messageDetail.messageSnapshot || 'Message content unavailable'}&rdquo;
+            </p>
+            <div className="text-xs text-muted mb-4 space-y-0.5">
+              <p><span className="font-semibold text-ink">Reason:</span> {messageDetail.reason}</p>
+              <p>{messageDetail.description || 'No description'}</p>
+              <p>Reporter: {messageDetail.reporter?.name}</p>
+            </div>
+            <button onClick={() => setMessageDetail(null)} className="btn-ghost w-full min-h-[44px] py-2.5 text-sm">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

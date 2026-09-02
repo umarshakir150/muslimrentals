@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import AdminPage from './page';
 
 const { getMock, patchMock, deleteMock } = vi.hoisted(() => ({
@@ -90,7 +91,7 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.queryByRole('button', { name: 'Restrict user' })).not.toBeInTheDocument();
   });
 
-  it('renders a MESSAGE report with the frozen snapshot, sender identity, and a link to the conversation', async () => {
+  it('renders a MESSAGE report with a "Full conversation" link and a "Reported message" action that reveals the frozen snapshot', async () => {
     mockReports([{
       id: 'r4',
       targetType: 'MESSAGE',
@@ -100,12 +101,21 @@ describe('Admin Reports panel: targetType branching', () => {
       messageSender: { name: 'Frank' },
       conversationId: 'conv-99',
     }]);
+    const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
-    expect(screen.getByText(/Buy crypto now/)).toBeInTheDocument();
     expect(screen.getByText(/Frank/)).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: 'View conversation' });
+
+    const link = screen.getByRole('link', { name: 'Full conversation' });
     expect(link).toHaveAttribute('href', '/messages?conv=conv-99');
+
+    // The snapshot isn't shown inline any more -- it's behind the explicit
+    // "Reported message" action, so a dense list of reports doesn't force
+    // every message's full text into view at once.
+    expect(screen.queryByText(/Buy crypto now/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reported message' }));
+    expect(screen.getByText(/Buy crypto now/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Reported message' })).toBeInTheDocument();
   });
 
   it('renders a MESSAGE report with the recipient and sent timestamp the backend derives, for full moderation context', async () => {

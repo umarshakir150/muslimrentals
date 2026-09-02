@@ -336,13 +336,19 @@ export default function Inbox({ initialConvId }: InboxProps) {
                         </div>
                       </div>
                       {!isMe && (
+                        // Full-opacity `text-muted` (not the near-invisible
+                        // `/50` this used to be) -- a founder test session
+                        // confirmed a dim per-message icon here is easy to
+                        // miss next to the much more prominent "Report
+                        // {name}" header action, causing every report
+                        // attempt to hit the user-report endpoint instead.
                         <button
                           onClick={() => reportMessage(msg)}
                           aria-label="Report message"
-                          title="Report message"
-                          className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted/50 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          title="Report this message"
+                          className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted hover:text-red-500 hover:bg-red-50 transition-colors"
                         >
-                          <Flag size={14} />
+                          <Flag size={15} />
                         </button>
                       )}
                     </div>

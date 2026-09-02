@@ -21,3 +21,11 @@ ALTER TABLE "UserMessageRestriction" ADD CONSTRAINT "UserMessageRestriction_rest
 
 -- AddForeignKey
 ALTER TABLE "UserMessageRestriction" ADD CONSTRAINT "UserMessageRestriction_protectedUserId_fkey" FOREIGN KEY ("protectedUserId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- RLS: match the least-privilege baseline every other table already has
+-- (see 20260828011000_enable_rls_least_privilege) -- this app's only
+-- intended access path is the Express/Prisma backend (postgres role,
+-- BYPASSRLS=true), so anon/authenticated (PostgREST) get no access to
+-- this new table either, same as everything else.
+ALTER TABLE "UserMessageRestriction" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON "UserMessageRestriction" FROM PUBLIC, anon, authenticated;

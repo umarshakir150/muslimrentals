@@ -133,6 +133,11 @@ export default function AdminPage() {
                                 <p>From: {sender?.name || 'Unknown'} {sender?.email && `(${sender.email})`}</p>
                                 <p>To: {r.recipient?.name || 'Unknown'} {r.recipient?.email && `(${r.recipient.email})`}</p>
                                 {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
+                                {r.retentionHold && (
+                                  <p className="text-amber-700 font-semibold">
+                                    Retention hold active{r.retentionHoldReason ? `: ${r.retentionHoldReason}` : ''}
+                                  </p>
+                                )}
                               </div>
                             );
                           })()}
@@ -160,6 +165,25 @@ export default function AdminPage() {
                               className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
                               Full conversation
                             </Link>
+                          )}
+                          {type === 'MESSAGE' && (
+                            <button
+                              onClick={async () => {
+                                if (r.retentionHold) {
+                                  await api.patch(`/admin/reports/${r.id}`, { retentionHold: false });
+                                  setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: false, retentionHoldReason: undefined } : rep));
+                                  toast({ title: 'Retention hold removed' });
+                                } else {
+                                  const reason = window.prompt('Reason for the retention hold (active investigation, dispute, or legal preservation):');
+                                  if (!reason || reason.trim().length < 5) return;
+                                  await api.patch(`/admin/reports/${r.id}`, { retentionHold: true, retentionHoldReason: reason.trim() });
+                                  setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: true, retentionHoldReason: reason.trim() } : rep));
+                                  toast({ title: 'Retention hold placed' });
+                                }
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
+                              {r.retentionHold ? 'Remove retention hold' : 'Place retention hold'}
+                            </button>
                           )}
                           {type === 'LISTING' && (
                             <button
@@ -217,12 +241,19 @@ export default function AdminPage() {
               {messageDetail.message?.createdAt && <> · {formatTimeAgo(messageDetail.message.createdAt)}</>}
             </p>
             <p className="italic bg-gray-50 rounded-lg px-3 py-2 mb-4 text-sm">
-              &ldquo;{messageDetail.messageSnapshot || 'Message content unavailable'}&rdquo;
+              &ldquo;{messageDetail.messageSnapshot || (messageDetail.snapshotRedactedAt
+                ? 'Message content redacted per the retention policy'
+                : 'Message content unavailable')}&rdquo;
             </p>
             <div className="text-xs text-muted mb-4 space-y-0.5">
               <p><span className="font-semibold text-ink">Reason:</span> {messageDetail.reason}</p>
               <p>{messageDetail.description || 'No description'}</p>
               <p>Reporter: {messageDetail.reporter?.name} {messageDetail.reporter?.email && `(${messageDetail.reporter.email})`}</p>
+              {messageDetail.retentionHold && (
+                <p className="text-amber-700 font-semibold">
+                  Retention hold active{messageDetail.retentionHoldReason ? `: ${messageDetail.retentionHoldReason}` : ''}
+                </p>
+              )}
             </div>
             <button onClick={() => setMessageDetail(null)} className="btn-ghost w-full min-h-[44px] py-2.5 text-sm">
               Close

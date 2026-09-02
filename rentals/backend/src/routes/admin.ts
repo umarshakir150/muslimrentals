@@ -35,8 +35,16 @@ const roleSchema = z.object({
 }).strict();
 
 const reportUpdateSchema = z.object({
-  status:     z.nativeEnum(ReportStatus),
-  resolution: z.string().max(500).trim().optional(),
+  status:              z.nativeEnum(ReportStatus).optional(),
+  resolution:          z.string().max(500).trim().optional(),
+  // messageSnapshot retention hold (founder-approved policy, 2026-09-02):
+  // an admin/moderator can toggle this independent of status, to pause the
+  // 90-day post-resolution retention clock for an active investigation,
+  // dispute, or legal-preservation need. Both optional, and independent of
+  // `status`/`resolution` above, so a hold-only PATCH doesn't require also
+  // resending (or accidentally changing) the report's status.
+  retentionHold:       z.boolean().optional(),
+  retentionHoldReason: z.string().max(300).trim().optional(),
 }).strict();
 
 const adminQuerySchema = z.object({
@@ -235,11 +243,29 @@ router.get('/reports', async (req, res: Response, next: NextFunction) => {
 // ─── PATCH /admin/reports/:id ─────────────────────────────────────────────────
 router.patch('/reports/:id', validateUuidParam('id'), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
   try {
-    const { status, resolution } = reportUpdateSchema.parse(req.body);
-    await prisma.report.update({
-      where: { id: req.params.id },
-      data: { status, resolution, resolvedAt: new Date() },
-    });
+    const { status, resolution, retentionHold, retentionHoldReason } = reportUpdateSchema.parse(req.body);
+
+    const existing = await prisma.report.findUnique({ where: { id: req.params.id }, select: { status: true } });
+    if (!existing) throw new AppError('Report not found.', 404);
+
+    const data: { status?: ReportStatus; resolution?: string; resolvedAt?: Date; retentionHold?: boolean; retentionHoldReason?: string } = {};
+    if (status !== undefined) {
+      data.status = status;
+      // Only (re)start the 90-day messageSnapshot retention clock the
+      // first time a report actually transitions into a terminal state --
+      // never on a PATCH that resends the same status it's already in
+      // (e.g. a hold-only toggle that happens to also include status).
+      // The old unconditional `resolvedAt: new Date()` on every PATCH
+      // would otherwise silently push the retention clock forward
+      // indefinitely on any incidental future update.
+      const isTerminal = status === ReportStatus.RESOLVED || status === ReportStatus.DISMISSED;
+      if (isTerminal && existing.status !== status) data.resolvedAt = new Date();
+    }
+    if (resolution !== undefined) data.resolution = resolution;
+    if (retentionHold !== undefined) data.retentionHold = retentionHold;
+    if (retentionHoldReason !== undefined) data.retentionHoldReason = retentionHoldReason;
+
+    await prisma.report.update({ where: { id: req.params.id }, data });
     res.json({ success: true, message: 'Report updated.' });
   } catch (err) { next(err); }
 });

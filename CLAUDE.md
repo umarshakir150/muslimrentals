@@ -121,6 +121,7 @@ ai/                        ← project memory or "how work gets done"
   decisions.md
   workflow.md
   orchestration-plan.md
+  moderator-guide.md       ← for anyone with ADMIN/MODERATOR role: report review, retention
   tasks/
     TEMPLATE.md
 ```

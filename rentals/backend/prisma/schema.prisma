@@ -274,6 +274,20 @@ model Report {
   message         Message?      @relation(fields: [messageId], references: [id], onDelete: SetNull)
   messageSnapshot String?
 
+  // messageSnapshot retention (founder-approved policy, 2026-09-02, see
+  // ai/decisions.md): retained while a report is open; 90 days after the
+  // report reaches RESOLVED/DISMISSED (measured from resolvedAt); then the
+  // snapshot text is cleared while the report row itself (status, reason,
+  // resolution) is retained. retentionHold pauses that clock for an active
+  // investigation, dispute, or legal-preservation need -- set/cleared by an
+  // admin/moderator via PATCH /admin/reports/:id. snapshotRedactedAt records
+  // when a snapshot was actually cleared, so the redaction job never
+  // reprocesses an already-redacted row. All nullable/defaulted -- purely
+  // additive, no backfill required.
+  retentionHold       Boolean   @default(false)
+  retentionHoldReason String?
+  snapshotRedactedAt  DateTime?
+
   @@index([status])
   @@index([targetType])
   @@index([reportedUserId])

@@ -14,8 +14,15 @@ vi.mock('@/lib/api', () => ({
   authApi: { logout: vi.fn() },
 }));
 
+// A stable reference, matching the real useUser (a Zustand selector, which
+// only changes identity when the underlying user actually changes) -- a
+// fresh object literal here would make AdminPage's `useEffect(..., [user])`
+// re-fire on every render (including ones caused by this test file's own
+// setReports() calls after a moderator action), silently re-fetching and
+// reverting any local state update mid-test.
+const ADMIN_USER = { id: 'admin-1', name: 'Admin', role: 'ADMIN' };
 vi.mock('@/store/authStore', () => ({
-  useUser: () => ({ id: 'admin-1', name: 'Admin', role: 'ADMIN' }),
+  useUser: () => ADMIN_USER,
   useAuthStore: () => ({ clearAuth: vi.fn() }),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => '/admin' }));
@@ -234,5 +241,74 @@ describe('Admin Reports panel: emails shown alongside names for unambiguous iden
     expect(within(dialog).getByText(/frank@example\.com/)).toBeInTheDocument();
     expect(within(dialog).getByText(/grace@example\.com/)).toBeInTheDocument();
     expect(within(dialog).getByText(/erin@example\.com/)).toBeInTheDocument();
+  });
+});
+
+describe('Admin Reports panel: messageSnapshot retention hold', () => {
+  function messageReport(overrides: any = {}) {
+    return {
+      id: 'rm-hold',
+      targetType: 'MESSAGE',
+      reason: 'Spam',
+      reporter: { name: 'Erin', email: 'erin@example.com' },
+      messageSnapshot: 'Buy crypto now!!',
+      messageSender: { name: 'Frank', email: 'frank@example.com' },
+      recipient: { id: 'u-recipient', name: 'Grace', email: 'grace@example.com' },
+      conversationId: 'conv-99',
+      ...overrides,
+    };
+  }
+
+  it('offers "Place retention hold" for a MESSAGE report with no hold yet, and places it with a reason', async () => {
+    mockReports([messageReport()]);
+    vi.spyOn(window, 'prompt').mockReturnValue('Active police investigation');
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+
+    expect(screen.queryByText(/Retention hold active/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Place retention hold' }));
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/rm-hold', {
+      retentionHold: true,
+      retentionHoldReason: 'Active police investigation',
+    }));
+    await waitFor(() => expect(screen.getByText(/Retention hold active: Active police investigation/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Remove retention hold' })).toBeInTheDocument();
+  });
+
+  it('does not place a hold if the moderator cancels or leaves too short a reason', async () => {
+    mockReports([messageReport()]);
+    vi.spyOn(window, 'prompt').mockReturnValue('no');
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Place retention hold' }));
+    expect(patchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows the existing hold and lets a moderator remove it', async () => {
+    mockReports([messageReport({ retentionHold: true, retentionHoldReason: 'Active dispute' })]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Retention hold active: Active dispute/)).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Remove retention hold' }));
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/rm-hold', { retentionHold: false }));
+    await waitFor(() => expect(screen.queryByText(/Retention hold active/)).not.toBeInTheDocument());
+  });
+
+  it('shows a redacted-content notice in the "Reported message" dialog once the snapshot has been cleared by the retention job', async () => {
+    mockReports([messageReport({ messageSnapshot: null, snapshotRedactedAt: '2026-06-01T00:00:00.000Z' })]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Reported message' }));
+    const dialog = screen.getByRole('dialog', { name: 'Reported message' });
+    expect(within(dialog).getByText(/redacted per the retention policy/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Message content unavailable/)).not.toBeInTheDocument();
   });
 });

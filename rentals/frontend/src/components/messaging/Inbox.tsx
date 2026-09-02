@@ -212,6 +212,25 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const otherParticipant = (conv: Conversation) =>
     conv.participants.find(p => p.userId !== user?.id)?.user;
 
+  // True for a real conversation participant (the normal messaging case).
+  // False for an ADMIN/MODERATOR who opened this conversation via the
+  // admin panel's "Full conversation" action while reviewing a filed
+  // MESSAGE report -- they are never a participant themselves. The
+  // distinction matters because "isMe" (sender id === viewer id) is only
+  // meaningful for a real participant; for a moderator it would be false
+  // for BOTH sides, rendering every message identically and making it
+  // look like one person sent the whole conversation (the bug this fixes).
+  const viewerIsParticipant = !!(activeConv && user && activeConv.participants.some(p => p.userId === user.id));
+
+  // Which side of the conversation a message belongs to, for moderator
+  // (read-only) rendering -- derived strictly from the conversation's own
+  // recorded participants matched against the message's real senderId,
+  // never from the viewer's own id (the moderator has no side at all).
+  function participantSide(conv: Conversation, senderId?: string): number {
+    const idx = conv.participants.findIndex(p => p.userId === senderId);
+    return idx === -1 ? 0 : idx;
+  }
+
   function reportUser(otherUserId: string, otherUserName: string) {
     setReportTarget({
       type: 'USER',
@@ -299,72 +318,129 @@ export default function Inbox({ initialConvId }: InboxProps) {
               <button onClick={() => setActiveConv(null)} className="md:hidden p-2 rounded-full hover:bg-gray-100">
                 <ArrowLeft size={18} />
               </button>
-              <div className="w-10 h-10 rounded-full bg-brand-gradient flex items-center justify-center text-white font-bold text-sm shrink-0">
-                {(() => {
-                  const other = otherParticipant(activeConv);
-                  return other?.avatarUrl
-                    ? <img src={other.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" />
-                    : initials(other?.name || '?');
-                })()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm">{otherParticipant(activeConv)?.name}</p>
-                <p className="text-xs text-muted truncate max-w-xs">{activeConv.listing?.title}</p>
-              </div>
-              {(() => {
-                const other = otherParticipant(activeConv);
-                if (!other) return null;
-                return (
-                  <button
-                    onClick={() => reportUser(other.id, other.name)}
-                    aria-label={`Report ${other.name}`}
-                    title={`Report ${other.name}`}
-                    className="p-2.5 rounded-full hover:bg-gray-100 text-muted shrink-0"
-                  >
-                    <Flag size={16} />
-                  </button>
-                );
-              })()}
+              {viewerIsParticipant ? (
+                <>
+                  <div className="w-10 h-10 rounded-full bg-brand-gradient flex items-center justify-center text-white font-bold text-sm shrink-0">
+                    {(() => {
+                      const other = otherParticipant(activeConv);
+                      return other?.avatarUrl
+                        ? <img src={other.avatarUrl} className="w-full h-full rounded-full object-cover" alt="" />
+                        : initials(other?.name || '?');
+                    })()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{otherParticipant(activeConv)?.name}</p>
+                    <p className="text-xs text-muted truncate max-w-xs">{activeConv.listing?.title}</p>
+                  </div>
+                  {(() => {
+                    const other = otherParticipant(activeConv);
+                    if (!other) return null;
+                    return (
+                      <button
+                        onClick={() => reportUser(other.id, other.name)}
+                        aria-label={`Report ${other.name}`}
+                        title={`Report ${other.name}`}
+                        className="p-2.5 rounded-full hover:bg-gray-100 text-muted shrink-0"
+                      >
+                        <Flag size={16} />
+                      </button>
+                    );
+                  })()}
+                </>
+              ) : (
+                // Moderator (read-only) header: there is no single "other
+                // participant" relative to a viewer who isn't a participant
+                // at all -- show both real participants' names, and no
+                // report action (it would always 403 for a non-participant
+                // moderator, and reporting is reviewed separately anyway).
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm truncate">
+                    {activeConv.participants.map(p => p.user.name).join(' & ')}
+                  </p>
+                  <p className="text-xs text-muted truncate max-w-xs">
+                    {activeConv.listing?.title} · Moderator view (read-only)
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Messages */}
             <div data-testid="message-thread" className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
               {messages.map((msg, i) => {
-                const isMe = msg.sender?.id === user?.id;
                 const showDate = i === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[i-1].createdAt).toDateString();
+                const dateLabel = showDate && (
+                  <div className="text-center text-xs text-muted my-3">
+                    {new Date(msg.createdAt).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </div>
+                );
+
+                if (viewerIsParticipant) {
+                  const isMe = msg.sender?.id === user?.id;
+                  return (
+                    <div key={msg.id}>
+                      {dateLabel}
+                      <div className={cn('flex items-end gap-0.5', isMe ? 'justify-end' : 'justify-start')}>
+                        <div className={cn(
+                          'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed',
+                          isMe ? 'bg-brand-600 text-white rounded-br-sm' : 'bg-gray-100 text-ink rounded-bl-sm'
+                        )}>
+                          {msg.body}
+                          <div className={cn('text-[10px] mt-1', isMe ? 'text-white/60 text-right' : 'text-muted')}>
+                            {new Date(msg.createdAt).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                        {!isMe && (
+                          // Full-opacity `text-muted` (not the near-invisible
+                          // `/50` this used to be) -- a founder test session
+                          // confirmed a dim per-message icon here is easy to
+                          // miss next to the much more prominent "Report
+                          // {name}" header action, causing every report
+                          // attempt to hit the user-report endpoint instead.
+                          <button
+                            onClick={() => reportMessage(msg)}
+                            aria-label="Report message"
+                            title="Report this message"
+                            className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted hover:text-red-500 hover:bg-red-50 transition-colors"
+                          >
+                            <Flag size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Moderator (read-only) rendering: "isMe" would be false for
+                // BOTH participants here (the moderator matches neither),
+                // which previously made every message render identically --
+                // indistinguishable which of the two people sent what. Side
+                // and color are instead derived from the message's real
+                // sender matched against this conversation's own recorded
+                // participants; consecutive messages from the same sender
+                // are grouped under a single name label instead of
+                // repeating it on every line. No report affordance here --
+                // this view is read-only.
+                const side = participantSide(activeConv, msg.sender?.id);
+                const isSide1 = side === 1;
+                const isNewGroup = i === 0 || messages[i - 1].sender?.id !== msg.sender?.id;
                 return (
                   <div key={msg.id}>
-                    {showDate && (
-                      <div className="text-center text-xs text-muted my-3">
-                        {new Date(msg.createdAt).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
-                      </div>
+                    {dateLabel}
+                    {isNewGroup && (
+                      <p className={cn('text-[11px] font-semibold text-muted mb-1', isSide1 ? 'text-right' : 'text-left')}>
+                        {msg.sender?.name || 'Unknown'}
+                      </p>
                     )}
-                    <div className={cn('flex items-end gap-0.5', isMe ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('flex mb-1', isSide1 ? 'justify-end' : 'justify-start')}>
                       <div className={cn(
-                        'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed',
-                        isMe ? 'bg-brand-600 text-white rounded-br-sm' : 'bg-gray-100 text-ink rounded-bl-sm'
+                        'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed border',
+                        isSide1 ? 'bg-purple-50 border-purple-100 text-ink rounded-br-sm' : 'bg-gray-100 border-transparent text-ink rounded-bl-sm'
                       )}>
                         {msg.body}
-                        <div className={cn('text-[10px] mt-1', isMe ? 'text-white/60 text-right' : 'text-muted')}>
+                        <div className="text-[10px] mt-1 text-muted">
                           {new Date(msg.createdAt).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
-                      {!isMe && (
-                        // Full-opacity `text-muted` (not the near-invisible
-                        // `/50` this used to be) -- a founder test session
-                        // confirmed a dim per-message icon here is easy to
-                        // miss next to the much more prominent "Report
-                        // {name}" header action, causing every report
-                        // attempt to hit the user-report endpoint instead.
-                        <button
-                          onClick={() => reportMessage(msg)}
-                          aria-label="Report message"
-                          title="Report this message"
-                          className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted hover:text-red-500 hover:bg-red-50 transition-colors"
-                        >
-                          <Flag size={15} />
-                        </button>
-                      )}
                     </div>
                   </div>
                 );
@@ -381,23 +457,31 @@ export default function Inbox({ initialConvId }: InboxProps) {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
-            <form onSubmit={sendMessage} className="px-4 py-4 border-t border-ink/8 flex gap-3">
-              <input
-                type="text"
-                value={body}
-                onChange={handleTyping}
-                placeholder="Write a message..."
-                className="input-field flex-1"
-                disabled={sending}
-              />
-              <button type="submit" disabled={!body.trim() || sending} className={cn(
-                'w-12 h-12 rounded-full flex items-center justify-center transition-all',
-                body.trim() ? 'bg-brand-gradient text-white shadow-lg shadow-brand-600/25 hover:-translate-y-px' : 'bg-gray-100 text-muted cursor-not-allowed'
-              )}>
-                {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </form>
+            {/* Input -- moderators reviewing via "Full conversation" never
+                get a compose box: this view is strictly read-only, and the
+                backend itself would 403 a non-participant's reply anyway. */}
+            {viewerIsParticipant ? (
+              <form onSubmit={sendMessage} className="px-4 py-4 border-t border-ink/8 flex gap-3">
+                <input
+                  type="text"
+                  value={body}
+                  onChange={handleTyping}
+                  placeholder="Write a message..."
+                  className="input-field flex-1"
+                  disabled={sending}
+                />
+                <button type="submit" disabled={!body.trim() || sending} className={cn(
+                  'w-12 h-12 rounded-full flex items-center justify-center transition-all',
+                  body.trim() ? 'bg-brand-gradient text-white shadow-lg shadow-brand-600/25 hover:-translate-y-px' : 'bg-gray-100 text-muted cursor-not-allowed'
+                )}>
+                  {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                </button>
+              </form>
+            ) : (
+              <div className="px-4 py-3 border-t border-ink/8 text-center text-xs text-muted">
+                Moderator view — read-only. Messages can't be sent from here.
+              </div>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">

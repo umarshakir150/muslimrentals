@@ -383,4 +383,61 @@ describe('Inbox: deep-linking into a specific conversation via initialConvId', (
     // correct conversation id, not silently skipped or sent for the wrong one.
     await waitFor(() => expect(socket.emitted.some(e => e.event === 'messages:read' && e.payload?.conversationId === 'conv-reported')).toBe(true));
   });
+
+  it('renders participant A and participant B as visually distinct sides/groups in moderator (non-participant) mode', async () => {
+    // Neither participant is the mocked viewer (ME) -- this is the genuine
+    // moderator scenario a founder test session hit: "isMe" (sender id ===
+    // viewer id) is false for BOTH real participants, which previously
+    // rendered every message identically and made it look like one person
+    // sent the entire conversation.
+    const PERSON_A = { id: 'person-a-1', name: 'Alice', avatarUrl: null };
+    const PERSON_B = { id: 'person-b-1', name: 'Bob', avatarUrl: null };
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-mod',
+        participants: [
+          { userId: PERSON_A.id, user: PERSON_A },
+          { userId: PERSON_B.id, user: PERSON_B },
+        ],
+        messages: [
+          message({ id: 'a1', conversationId: 'conv-mod', body: 'Hi, is this still available?', sender: PERSON_A }),
+          message({ id: 'b1', conversationId: 'conv-mod', body: 'Yes it is!', sender: PERSON_B }),
+        ],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-mod" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('Yes it is!')).toBeInTheDocument());
+
+    // Both real senders' names are shown as distinct group labels -- not
+    // derived from (and never equal to) the viewer's own identity.
+    const aliceLabel = screen.getByText('Alice');
+    const bobLabel = screen.getByText('Bob');
+    expect(aliceLabel).toBeInTheDocument();
+    expect(bobLabel).toBeInTheDocument();
+
+    // Distinct sides: opposite alignment, derived from each sender's real
+    // position in the conversation's own participants array.
+    expect(aliceLabel.className).toMatch(/text-left/);
+    expect(bobLabel.className).toMatch(/text-right/);
+
+    // Distinct styling on the message bubbles themselves too, not just
+    // position -- so the two sides remain visually distinguishable even at
+    // a glance, matching the founder's "obvious who sent each message" ask.
+    const aliceBubble = screen.getByText('Hi, is this still available?').closest('div')!;
+    const bobBubble = screen.getByText('Yes it is!').closest('div')!;
+    expect(aliceBubble.className).toMatch(/bg-gray-100/);
+    expect(bobBubble.className).toMatch(/bg-purple-50/);
+
+    // Strictly read-only: no compose box, and no report affordances --
+    // neither the header's "Report {name}" nor a per-message action --
+    // since a moderator reviewing a filed report acts on the report, not
+    // by messing with this thread.
+    expect(screen.queryByPlaceholderText('Write a message...')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/read-only/i).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^Report/i })).not.toBeInTheDocument();
+  });
 });

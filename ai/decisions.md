@@ -1582,3 +1582,22 @@ Neither approval was acted on, per instruction — both are simply waiting for t
 **Not merged, not deployed to production:** PR #7 remains open and unmerged; production untouched. Nothing touched outside this bug's scope — map/spiderfy remains parked, untouched.
 
 **Revisit when:** the founder retests the refreshed Deploy Preview — specifically: opening a MESSAGE report in `/admin`, clicking "Full conversation," and confirming the two participants are now immediately, visually distinguishable (distinct alignment/color, a visible name on each message group), the view has no compose box or report buttons, and the normal (real-participant) messaging UI elsewhere is unchanged.
+
+## 2026-09-02 — PR #7 pre-merge polish: account dropdown closing on hover, admin report emails
+
+**Decision:** With the reporting/admin flow functionally approved, founder asked for two additional fixes before PR #7 is merge-ready, both frontend-only, both landed as `agents/20260901-234756-build-the-report-a-user-report-a-message-feature-as/integration` commit `dc05570`.
+
+**1. Account dropdown closing on hover (`Navbar.tsx`):** diagnosed first, per instruction. The dropdown panel had `onMouseLeave={() => setUserMenuOpen(false)}` — the sole cause; simply moving the mouse off the menu (never clicking anything) dismissed it. Removed that one handler and replaced it with a `document`-level `mousedown` + `keydown` listener, added only while the menu is open, checking a ref that wraps both the trigger button and the dropdown panel together (so re-clicking the trigger is correctly treated as "inside," never misfiring as an outside click). Clicking the trigger again and selecting a menu item already worked via existing `setUserMenuOpen` calls and needed no changes. Escape-to-close was net-new (not previously supported for this menu, unlike this codebase's modal dialogs which already have the pattern) — added for consistency and because it was essentially free. New `Navbar.test.tsx` (created; none existed before) proves: mouse-leave alone no longer closes the menu; an outside click, Escape, the trigger toggle, and selecting a menu item all still do.
+
+**2. Admin report emails (`admin/page.tsx`):** verified first, as instructed, whether the backend already includes these emails — it does. `GET /admin/reports` already selects `email` on every identity it returns (`reporter`, `reportedUser`, `message.sender`, and the derived `recipient`) from earlier rounds' work; nothing needed adding there. Pinned this down with three new backend regression tests (`adminReports.test.ts`) asserting `.email` directly on each field, rather than relying on it being an incidental side effect of existing `expect.objectContaining` assertions that wouldn't fail if `email` were ever dropped. The actual gap was purely in the frontend never rendering it:
+- Reporter's name + email now shown on every report type via the one shared "By:" line — this covers LISTING reports for free, since the reporter is the only identity a LISTING report displays at all.
+- Reported user's email on USER reports was already shown (unchanged).
+- Message sender's and recipient's email added to MESSAGE reports, both in the inline summary and the "Reported message" dialog.
+
+No new fields were exposed anywhere outside the existing ADMIN/MODERATOR-gated `/admin/reports` response — no public API or normal user-facing report UI (the report-filing modal, toast copy, etc.) was touched.
+
+**Verification:** 218/218 backend tests pass, 177/177 frontend tests pass, both `tsc --noEmit` clean. No backend production code changed this round (only new backend tests) and no schema/migration — no Render redeploy needed; Netlify's Deploy Preview for PR #7 rebuilds automatically from the pushed commit.
+
+**Not merged, not deployed to production:** PR #7 remains open and unmerged; production untouched. Nothing touched outside these two fixes' scope — map/spiderfy remains parked, untouched.
+
+**Revisit when:** the founder retests the refreshed Deploy Preview — specifically: opening the account dropdown and confirming it stays open while moving the mouse away, closing only via outside click/Escape/re-click/menu selection; and reviewing a LISTING, USER, and MESSAGE report in `/admin` and confirming every identity shown (reporter, reported user, message sender, recipient) now has its email visible alongside its name.

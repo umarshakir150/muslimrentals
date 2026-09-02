@@ -10,11 +10,13 @@
  */
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { ReportTargetType } from '@prisma/client';
 import { prisma } from '../prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
+import { messageReportSchema } from '../validation/reportSchemas';
 
 const router = Router();
 
@@ -177,6 +179,54 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
     io?.to(`conv:${conv.id}`).emit('message:new', message);
 
     res.status(201).json({ success: true, data: message });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /messages/:id/report ────────────────────────────────────────────────
+// Object-level authorization:
+//  - Who can create it? Any authenticated conversation participant, except
+//    the message's own sender (self-report blocked below).
+//  - Who can read it? Nobody via this route -- only {success, message} is
+//    returned, matching the existing listing-report response shape so a
+//    caller can never enumerate whether a report already exists.
+//  - Ownership/manipulation: :id is validated as a UUID and looked up
+//    server-side; participant membership is re-verified against the DB
+//    (never trusted from the client), same pattern as every other
+//    messages.ts route.
+//  - Data integrity: body + senderId are snapshotted into the Report row at
+//    creation time (not a live FK lookup done later), since the message can
+//    be edited or deleted after the report is filed and messages have no
+//    edit/delete audit trail of their own.
+router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { reason, description } = messageReportSchema.parse(req.body);
+
+    const message = await prisma.message.findUnique({
+      where:   { id: req.params.id },
+      include: { conversation: { include: { participants: true } } },
+    });
+    if (!message) throw new AppError('Message not found.', 404);
+
+    const isParticipant = message.conversation.participants.some(p => p.userId === req.user!.id);
+    if (!isParticipant) throw new AppError('Not authorized.', 403);
+
+    if (message.senderId === req.user!.id) {
+      throw new AppError('You cannot report your own message.', 400);
+    }
+
+    await prisma.report.create({
+      data: {
+        reporterId:      req.user!.id,
+        targetType:      ReportTargetType.MESSAGE,
+        messageId:       message.id,
+        messageSnapshot: message.body,
+        reportedUserId:  message.senderId,
+        reason,
+        description,
+      },
+    });
+
+    res.json({ success: true, message: 'Report submitted. We review all reports within 24 hours.' });
   } catch (err) { next(err); }
 });
 

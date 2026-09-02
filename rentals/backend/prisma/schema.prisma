@@ -50,7 +50,8 @@ model User {
   savedListings     SavedListing[]
   sentMessages      Message[]        @relation("SentMessages")
   conversations     ConversationParticipant[]
-  reports           Report[]
+  reports           Report[]         @relation("ReportsFiled")
+  reportsAgainst    Report[]         @relation("ReportsAgainstUser")
   notifications     Notification[]
 
   @@index([email])
@@ -202,6 +203,8 @@ model Message {
   senderId       String
   sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
 
+  reports        Report[]
+
   @@index([conversationId])
   @@index([senderId])
 }
@@ -238,20 +241,42 @@ model Neighbourhood {
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
 model Report {
-  id          String       @id @default(uuid())
+  id          String           @id @default(uuid())
   reason      String
   description String?
-  status      ReportStatus @default(PENDING)
-  createdAt   DateTime     @default(now())
+  status      ReportStatus     @default(PENDING)
+  createdAt   DateTime         @default(now())
   resolvedAt  DateTime?
   resolution  String?
 
+  // Nullable, defaulted to LISTING so every pre-existing row (all of which
+  // were listing reports, the only kind that existed before this column)
+  // keeps its correct meaning with zero backfill required.
+  targetType  ReportTargetType? @default(LISTING)
+
   reporterId  String
-  reporter    User         @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reporter    User             @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: Cascade)
   listingId   String?
-  listing     Listing?     @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  listing     Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  // USER reports: who is being reported. SetNull (not Cascade) so a
+  // reported user's own account deletion doesn't erase the report record
+  // itself -- mirrors listingId's existing SetNull pattern above.
+  reportedUserId String?
+  reportedUser   User?         @relation("ReportsAgainstUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
+
+  // MESSAGE reports: the reported message, plus a frozen snapshot of its
+  // body at report time. Messages are mutable with no edit/delete audit
+  // trail, so a live FK lookup later could show a moderator content the
+  // sender has since changed or deleted -- messageSnapshot preserves what
+  // was actually reported, independent of the message's current state.
+  messageId       String?
+  message         Message?      @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  messageSnapshot String?
 
   @@index([status])
+  @@index([targetType])
+  @@index([reportedUserId])
 }
 
 enum ReportStatus {
@@ -259,6 +284,12 @@ enum ReportStatus {
   REVIEWED
   RESOLVED
   DISMISSED
+}
+
+enum ReportTargetType {
+  LISTING
+  USER
+  MESSAGE
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

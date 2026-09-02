@@ -27,6 +27,7 @@ vi.mock('../../src/prisma/client', () => ({
       findMany: (...args: any[]) => reportFindManyMock(...args),
       groupBy:  (...args: any[]) => reportGroupByMock(...args),
     },
+    userMessageRestriction: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

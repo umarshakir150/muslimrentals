@@ -1,0 +1,305 @@
+/**
+ * Coverage for the two moderation actions introduced alongside the
+ * Pending/Resolved report-tab simplification:
+ *  - POST /admin/users/:id/restrict + PATCH /admin/users/:id/unrestrict --
+ *    a narrow, reversible action (stop one user from messaging one other
+ *    specific user again) distinct from the pre-existing, broader
+ *    account-wide /ban. ADMIN and MODERATOR can both use it.
+ *  - /ban and /unban's existing ADMIN-only gate, confirmed unchanged
+ *    (no prior test file covered their authorization at all).
+ *  - GET /admin/reports now attaches each report's active restriction
+ *    (if any) alongside its reportedUser, so the admin UI can render
+ *    Restrict vs. Unrestrict correctly.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import jwt from 'jsonwebtoken';
+
+process.env.JWT_SECRET = 'test-jwt-secret-at-least-32-chars-long';
+process.env.JWT_REFRESH_SECRET = 'test-jwt-refresh-secret-at-least-32-chars';
+
+const ADMIN_ID = '99999999-9999-4999-8999-999999999999';
+const MODERATOR_ID = '88888888-8888-4888-8888-888888888888';
+const USER_ID = '77777777-7777-4777-8777-777777777777';
+const RESTRICTED_USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const PROTECTED_USER_ID  = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+const userFindUniqueMock = vi.fn();
+const restrictionFindUniqueMock = vi.fn();
+const restrictionUpsertMock = vi.fn();
+const restrictionUpdateMock = vi.fn();
+const restrictionFindManyMock = vi.fn();
+const userUpdateMock = vi.fn();
+const reportFindManyMock = vi.fn();
+const reportGroupByMock = vi.fn();
+
+vi.mock('../../src/prisma/client', () => ({
+  prisma: {
+    user: {
+      findUnique: (...args: any[]) => userFindUniqueMock(...args),
+      update:     (...args: any[]) => userUpdateMock(...args),
+    },
+    userMessageRestriction: {
+      findUnique: (...args: any[]) => restrictionFindUniqueMock(...args),
+      upsert:     (...args: any[]) => restrictionUpsertMock(...args),
+      update:     (...args: any[]) => restrictionUpdateMock(...args),
+      findMany:   (...args: any[]) => restrictionFindManyMock(...args),
+    },
+    report: {
+      findMany: (...args: any[]) => reportFindManyMock(...args),
+      groupBy:  (...args: any[]) => reportGroupByMock(...args),
+    },
+  },
+}));
+
+function signToken(userId: string, role: string) {
+  return jwt.sign({ userId, email: `${userId}@example.com`, role }, process.env.JWT_SECRET!, {
+    algorithm: 'HS256',
+    expiresIn: '15m',
+  });
+}
+
+function actingUser(id: string, role: string) {
+  return { id, email: `${id}@example.com`, role, name: 'Staff', isActive: true, isBanned: false };
+}
+
+async function buildApp() {
+  vi.resetModules();
+  const { default: adminRoutes } = await import('../../src/routes/admin');
+  const { errorHandler } = await import('../../src/middleware/errorHandler');
+  const app = express();
+  app.use(express.json());
+  app.use('/api/v1/admin', adminRoutes);
+  app.use(errorHandler);
+  return app;
+}
+
+beforeEach(() => {
+  userFindUniqueMock.mockReset();
+  restrictionFindUniqueMock.mockReset();
+  restrictionUpsertMock.mockReset().mockResolvedValue({});
+  restrictionUpdateMock.mockReset().mockResolvedValue({});
+  restrictionFindManyMock.mockReset().mockResolvedValue([]);
+  userUpdateMock.mockReset().mockResolvedValue({ email: 'target@example.com' });
+  reportFindManyMock.mockReset().mockResolvedValue([]);
+  reportGroupByMock.mockReset().mockResolvedValue([]);
+});
+
+// The `authenticate` middleware re-fetches the acting user by id on every
+// request (see auth.ts) -- route handlers below additionally look up the
+// *protected* user by a different id, so the mock must branch on which id
+// was actually asked for rather than always returning the same fixture.
+function mockUsersById(map: Record<string, any>) {
+  userFindUniqueMock.mockImplementation(({ where }: any) =>
+    Promise.resolve(map[where.id] ?? null));
+}
+
+describe('POST /admin/users/:id/restrict', () => {
+  it('MODERATOR can place a restriction (narrower than /ban, not ADMIN-gated)', async () => {
+    mockUsersById({ [MODERATOR_ID]: actingUser(MODERATOR_ID, 'MODERATOR'), [PROTECTED_USER_ID]: { id: PROTECTED_USER_ID } });
+    const app = await buildApp();
+    const res = await request(app)
+      .post(`/api/v1/admin/users/${RESTRICTED_USER_ID}/restrict`)
+      .set('Authorization', `Bearer ${signToken(MODERATOR_ID, 'MODERATOR')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID, reason: 'Harassing the reporter after being reported' });
+
+    expect(res.status).toBe(200);
+    expect(restrictionUpsertMock).toHaveBeenCalledWith({
+      where:  { restrictedUserId_protectedUserId: { restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID } },
+      create: { restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID, reason: 'Harassing the reporter after being reported' },
+      update: { reason: 'Harassing the reporter after being reported', liftedAt: null },
+    });
+  });
+
+  it('a plain USER cannot restrict anyone (blocked by the router-wide role gate)', async () => {
+    mockUsersById({ [USER_ID]: actingUser(USER_ID, 'USER') });
+    const app = await buildApp();
+    const res = await request(app)
+      .post(`/api/v1/admin/users/${RESTRICTED_USER_ID}/restrict`)
+      .set('Authorization', `Bearer ${signToken(USER_ID, 'USER')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID, reason: 'irrelevant, should never reach the handler' });
+
+    expect(res.status).toBe(403);
+    expect(restrictionUpsertMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects restricting a user from messaging themselves', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+    const res = await request(app)
+      .post(`/api/v1/admin/users/${RESTRICTED_USER_ID}/restrict`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ protectedUserId: RESTRICTED_USER_ID, reason: 'nonsensical self-restriction' });
+
+    expect(res.status).toBe(400);
+    expect(restrictionUpsertMock).not.toHaveBeenCalled();
+  });
+
+  it('404s (well, 400s) when protectedUserId does not refer to a real user', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN'), [PROTECTED_USER_ID]: null });
+    const app = await buildApp();
+    const res = await request(app)
+      .post(`/api/v1/admin/users/${RESTRICTED_USER_ID}/restrict`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID, reason: 'valid reason but bad protectedUserId' });
+
+    expect(res.status).toBe(400);
+    expect(restrictionUpsertMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reason under 5 characters', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+    const res = await request(app)
+      .post(`/api/v1/admin/users/${RESTRICTED_USER_ID}/restrict`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID, reason: 'hi' });
+
+    expect(res.status).toBe(422);
+    expect(restrictionUpsertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /admin/users/:id/unrestrict', () => {
+  it('lifts an existing active restriction', async () => {
+    mockUsersById({ [MODERATOR_ID]: actingUser(MODERATOR_ID, 'MODERATOR') });
+    restrictionFindUniqueMock.mockResolvedValue({
+      restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID, reason: 'x', liftedAt: null,
+    });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unrestrict`)
+      .set('Authorization', `Bearer ${signToken(MODERATOR_ID, 'MODERATOR')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID });
+
+    expect(res.status).toBe(200);
+    expect(restrictionUpdateMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { restrictedUserId_protectedUserId: { restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID } },
+      data:  expect.objectContaining({ liftedAt: expect.any(Date) }),
+    }));
+  });
+
+  it('404s -- refuses to "double-unrestrict" -- when no active restriction exists for the pair', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    restrictionFindUniqueMock.mockResolvedValue(null);
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unrestrict`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID });
+
+    expect(res.status).toBe(404);
+    expect(restrictionUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('404s on a restriction that was already lifted (no contradictory double-lift)', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    restrictionFindUniqueMock.mockResolvedValue({
+      restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID, reason: 'x', liftedAt: new Date('2026-01-01'),
+    });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unrestrict`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ protectedUserId: PROTECTED_USER_ID });
+
+    expect(res.status).toBe(404);
+    expect(restrictionUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('/ban and /unban authorization (pre-existing endpoints, previously untested)', () => {
+  it('ADMIN can ban', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Repeated harassment across multiple conversations' });
+
+    expect(res.status).toBe(200);
+    expect(userUpdateMock).toHaveBeenCalledWith({
+      where: { id: RESTRICTED_USER_ID },
+      data:  { isBanned: true, banReason: 'Repeated harassment across multiple conversations', refreshToken: null },
+    });
+  });
+
+  it('MODERATOR cannot ban -- a strictly more serious action than /restrict, ADMIN-only', async () => {
+    mockUsersById({ [MODERATOR_ID]: actingUser(MODERATOR_ID, 'MODERATOR') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(MODERATOR_ID, 'MODERATOR')}`)
+      .send({ reason: 'Repeated harassment across multiple conversations' });
+
+    expect(res.status).toBe(403);
+    expect(userUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('a plain USER cannot ban', async () => {
+    mockUsersById({ [USER_ID]: actingUser(USER_ID, 'USER') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(USER_ID, 'USER')}`)
+      .send({ reason: 'Repeated harassment across multiple conversations' });
+
+    expect(res.status).toBe(403);
+    expect(userUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('MODERATOR cannot unban either', async () => {
+    mockUsersById({ [MODERATOR_ID]: actingUser(MODERATOR_ID, 'MODERATOR') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unban`)
+      .set('Authorization', `Bearer ${signToken(MODERATOR_ID, 'MODERATOR')}`);
+
+    expect(res.status).toBe(403);
+    expect(userUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /admin/reports: active restriction surfaced alongside reportedUser', () => {
+  it('attaches the active restriction (reason + createdAt) for a reportedUser who is currently restricted', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const createdAt = new Date('2026-08-01T00:00:00.000Z');
+    reportFindManyMock.mockResolvedValue([{
+      id: 'r1', reason: 'Harassment', description: null, status: 'PENDING', createdAt: new Date(), resolvedAt: null,
+      resolution: null, reporterId: PROTECTED_USER_ID, targetType: 'USER', reportedUserId: RESTRICTED_USER_ID,
+      reporter: { id: PROTECTED_USER_ID, name: 'Reporter', email: 'r@example.com' },
+      listing: null, message: null,
+      reportedUser: { id: RESTRICTED_USER_ID, name: 'Target', email: 't@example.com', isBanned: false, banReason: null, createdAt: new Date() },
+    }]);
+    restrictionFindManyMock.mockResolvedValue([{ restrictedUserId: RESTRICTED_USER_ID, protectedUserId: PROTECTED_USER_ID, reason: 'Prior harassment', createdAt }]);
+
+    const app = await buildApp();
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].restriction).toEqual({ reason: 'Prior harassment', createdAt: createdAt.toISOString() });
+  });
+
+  it('restriction is null for a reportedUser with no active restriction', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    reportFindManyMock.mockResolvedValue([{
+      id: 'r1', reason: 'Harassment', description: null, status: 'PENDING', createdAt: new Date(), resolvedAt: null,
+      resolution: null, reporterId: PROTECTED_USER_ID, targetType: 'USER', reportedUserId: RESTRICTED_USER_ID,
+      reporter: { id: PROTECTED_USER_ID, name: 'Reporter', email: 'r@example.com' },
+      listing: null, message: null,
+      reportedUser: { id: RESTRICTED_USER_ID, name: 'Target', email: 't@example.com', isBanned: false, banReason: null, createdAt: new Date() },
+    }]);
+    restrictionFindManyMock.mockResolvedValue([]);
+
+    const app = await buildApp();
+    const res = await request(app)
+      .get('/api/v1/admin/reports')
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].restriction).toBeNull();
+  });
+});

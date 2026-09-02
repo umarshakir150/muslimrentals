@@ -33,11 +33,10 @@ function TypeChip({ type }: { type: ReportTargetType }) {
   );
 }
 
-type ReportStatusFilter = 'PENDING' | 'RESOLVED' | 'DISMISSED';
+type ReportStatusFilter = 'PENDING' | 'RESOLVED';
 const STATUS_TABS: { value: ReportStatusFilter; label: string }[] = [
   { value: 'PENDING', label: 'Pending' },
   { value: 'RESOLVED', label: 'Resolved' },
-  { value: 'DISMISSED', label: 'Dismissed' },
 ];
 
 export default function AdminPage() {
@@ -47,22 +46,30 @@ export default function AdminPage() {
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [messageDetail, setMessageDetail] = useState<any | null>(null);
-  // Reports are fetched one status at a time (the backend defaults to
-  // PENDING when no ?status is given) -- this tab lets a moderator also
-  // look up already-resolved/dismissed reports, e.g. to confirm resolvedAt
-  // was stamped correctly or to check a message report's retention state.
+  // The backend's Report.status still distinguishes RESOLVED from DISMISSED
+  // internally (kept for its own audit trail), but moderators only need two
+  // views: still-open, or closed. The Resolved tab merges both backend
+  // statuses into one list so there's no separate Dismissed view to check.
   const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('PENDING');
   const { toast } = useToast();
 
   useEffect(() => {
     if (user && user.role === 'USER') { router.push('/'); return; }
     setLoading(true);
+    const reportsRequest = statusFilter === 'PENDING'
+      ? api.get<any>('/admin/reports?status=PENDING').then(r => r.data || [])
+      : Promise.all([
+          api.get<any>('/admin/reports?status=RESOLVED'),
+          api.get<any>('/admin/reports?status=DISMISSED'),
+        ]).then(([resolved, dismissed]) => [...(resolved.data || []), ...(dismissed.data || [])]
+          .sort((a: any, b: any) => new Date(b.resolvedAt ?? b.createdAt).getTime() - new Date(a.resolvedAt ?? a.createdAt).getTime()));
+
     Promise.all([
       api.get<any>('/admin/stats'),
-      api.get<any>(`/admin/reports?status=${statusFilter}`),
+      reportsRequest,
     ]).then(([s, r]) => {
       setStats(s.data);
-      setReports(r.data || []);
+      setReports(r || []);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [user, statusFilter]);
 
@@ -131,7 +138,10 @@ export default function AdminPage() {
                           <p className="text-xs text-muted">{r.description || 'No description'}</p>
                           <p className="text-xs text-muted mt-1">By: {r.reporter?.name} {r.reporter?.email && `(${r.reporter.email})`}</p>
                           {r.resolvedAt && (
-                            <p className="text-xs text-muted">Resolved: {formatTimeAgo(r.resolvedAt)}{r.resolution ? ` — ${r.resolution}` : ''}</p>
+                            <div className="text-xs mt-1">
+                              <p className="font-semibold text-ink">Outcome: {r.resolution || 'No resolution notes recorded'}</p>
+                              <p className="text-muted">Resolved {formatTimeAgo(r.resolvedAt)} · {r.status === 'DISMISSED' ? 'Dismissed' : 'Resolved'}</p>
+                            </div>
                           )}
 
                           {type === 'LISTING' && (
@@ -140,12 +150,7 @@ export default function AdminPage() {
 
                           {type === 'USER' && (
                             <div className="text-xs text-muted">
-                              <p>
-                                Reported user: {r.reportedUser?.name || 'Unknown'} ({r.reportedUser?.email || 'no email on record'})
-                                {r.reportedUser?.isBanned && (
-                                  <span className="ml-1.5 text-red-600 font-semibold">Already restricted</span>
-                                )}
-                              </p>
+                              <p>Reported user: {r.reportedUser?.name || 'Unknown'} ({r.reportedUser?.email || 'no email on record'})</p>
                               {r.reporterHistory && (
                                 <p>
                                   This reporter has filed {r.reporterHistory.totalFiled} report(s) total,
@@ -153,6 +158,26 @@ export default function AdminPage() {
                                 </p>
                               )}
                             </div>
+                          )}
+
+                          {/* Current moderation state for the reported user -- shown for USER and
+                              MESSAGE reports alike, since both name a reportedUser. Exactly one of
+                              Banned / Restricted / None applies (Ban supersedes Restrict: a banned
+                              account can't message anyone at all, so a narrower per-reporter
+                              restriction is redundant on top of it). */}
+                          {r.reportedUser && (
+                            <p className="text-xs mt-1">
+                              <span className="font-semibold text-ink">Moderation status: </span>
+                              {r.reportedUser.isBanned ? (
+                                <span className="text-red-600 font-semibold">Banned{r.reportedUser.banReason ? `: ${r.reportedUser.banReason}` : ''}</span>
+                              ) : r.restriction ? (
+                                <span className="text-amber-700 font-semibold">
+                                  Restricted from messaging {r.reporter?.name || 'the reporter'}{r.restriction.reason ? `: ${r.restriction.reason}` : ''}
+                                </span>
+                              ) : (
+                                <span className="text-muted">None</span>
+                              )}
+                            </p>
                           )}
 
                           {type === 'MESSAGE' && (() => {
@@ -229,20 +254,83 @@ export default function AdminPage() {
                               Remove listing
                             </button>
                           )}
-                          {type === 'USER' && statusFilter === 'PENDING' && r.reportedUser && !r.reportedUser.isBanned && user?.role === 'ADMIN' && (
-                            <button
-                              onClick={async () => {
-                                const reason = window.prompt(`Reason for restricting ${r.reportedUser.name}'s account:`);
-                                if (!reason || reason.trim().length < 5) return;
-                                await api.patch(`/admin/users/${r.reportedUser.id}/ban`, { reason: reason.trim() });
-                                await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Account restricted' });
-                                setReports(prev => prev.filter(rep => rep.id !== r.id));
-                                toast({ title: 'User restricted' });
-                              }}
-                              className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
-                              Restrict user
-                            </button>
-                          )}
+                          {/* Restrict/Unrestrict/Ban/Unban -- act on the reportedUser, not the
+                              report, so (unlike Dismiss/Remove-listing) these stay available on
+                              the Resolved tab too. Only resolve the report alongside them when
+                              acting from Pending, preserving the old one-click convenience there
+                              without forcing a re-resolve when revisiting an already-closed report. */}
+                          {r.reportedUser && (r.reportedUser.isBanned ? (
+                            user?.role === 'ADMIN' && (
+                              <button
+                                onClick={async () => {
+                                  await api.patch(`/admin/users/${r.reportedUser.id}/unban`, {});
+                                  setReports(prev => prev.map(rep => rep.id === r.id
+                                    ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: false, banReason: null } }
+                                    : rep));
+                                  toast({ title: 'User unbanned' });
+                                }}
+                                className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                                Unban user
+                              </button>
+                            )
+                          ) : (
+                            <>
+                              {r.restriction ? (
+                                <button
+                                  onClick={async () => {
+                                    await api.patch(`/admin/users/${r.reportedUser.id}/unrestrict`, { protectedUserId: r.reporterId });
+                                    setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, restriction: null } : rep));
+                                    toast({ title: 'Restriction removed' });
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
+                                  Unrestrict user
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={async () => {
+                                    const reason = window.prompt(`Reason for restricting ${r.reportedUser.name} from messaging ${r.reporter?.name || 'the reporter'} again:`);
+                                    if (!reason || reason.trim().length < 5) return;
+                                    await api.post(`/admin/users/${r.reportedUser.id}/restrict`, { protectedUserId: r.reporterId, reason: reason.trim() });
+                                    const shouldResolve = statusFilter === 'PENDING';
+                                    if (shouldResolve) {
+                                      await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'User restricted from messaging reporter' });
+                                    }
+                                    setReports(prev => shouldResolve
+                                      ? prev.filter(rep => rep.id !== r.id)
+                                      : prev.map(rep => rep.id === r.id ? { ...rep, restriction: { reason: reason.trim() } } : rep));
+                                    toast({ title: 'User restricted' });
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
+                                  Restrict user
+                                </button>
+                              )}
+                              {user?.role === 'ADMIN' && (
+                                <button
+                                  onClick={async () => {
+                                    const confirmed = window.confirm(
+                                      `Ban ${r.reportedUser.name}? This is more serious than a restriction: it immediately suspends their ` +
+                                      `whole account -- they're logged out, cannot log back in, and cannot send any messages or create ` +
+                                      `listings. Their existing listings remain visible. Continue?`
+                                    );
+                                    if (!confirmed) return;
+                                    const reason = window.prompt(`Reason for banning ${r.reportedUser.name}:`);
+                                    if (!reason || reason.trim().length < 5) return;
+                                    await api.patch(`/admin/users/${r.reportedUser.id}/ban`, { reason: reason.trim() });
+                                    const shouldResolve = statusFilter === 'PENDING';
+                                    if (shouldResolve) {
+                                      await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Account banned' });
+                                    }
+                                    setReports(prev => shouldResolve
+                                      ? prev.filter(rep => rep.id !== r.id)
+                                      : prev.map(rep => rep.id === r.id ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: true, banReason: reason.trim() } } : rep));
+                                    toast({ title: 'User banned' });
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
+                                  Ban user
+                                </button>
+                              )}
+                            </>
+                          ))}
                         </div>
                       </div>
                     );
@@ -281,7 +369,10 @@ export default function AdminPage() {
               <p>{messageDetail.description || 'No description'}</p>
               <p>Reporter: {messageDetail.reporter?.name} {messageDetail.reporter?.email && `(${messageDetail.reporter.email})`}</p>
               {messageDetail.resolvedAt && (
-                <p>Resolved: {formatTimeAgo(messageDetail.resolvedAt)}{messageDetail.resolution ? ` — ${messageDetail.resolution}` : ''}</p>
+                <>
+                  <p className="font-semibold text-ink">Outcome: {messageDetail.resolution || 'No resolution notes recorded'}</p>
+                  <p>Resolved {formatTimeAgo(messageDetail.resolvedAt)} · {messageDetail.status === 'DISMISSED' ? 'Dismissed' : 'Resolved'}</p>
+                </>
               )}
               {messageDetail.retentionHold && (
                 <p className="text-amber-700 font-semibold">

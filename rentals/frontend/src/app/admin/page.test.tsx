@@ -3,26 +3,31 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AdminPage from './page';
 
-const { getMock, patchMock, deleteMock } = vi.hoisted(() => ({
+const { getMock, patchMock, postMock, deleteMock } = vi.hoisted(() => ({
   getMock: vi.fn(),
   patchMock: vi.fn().mockResolvedValue({}),
+  postMock: vi.fn().mockResolvedValue({}),
   deleteMock: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('@/lib/api', () => ({
-  api: { get: getMock, patch: patchMock, delete: deleteMock },
+  api: { get: getMock, patch: patchMock, post: postMock, delete: deleteMock },
   messagesApi: { getUnreadCount: vi.fn().mockResolvedValue({ data: { count: 0 } }) },
   authApi: { logout: vi.fn() },
 }));
 
-// A stable reference, matching the real useUser (a Zustand selector, which
+// Stable references, matching the real useUser (a Zustand selector, which
 // only changes identity when the underlying user actually changes) -- a
 // fresh object literal here would make AdminPage's `useEffect(..., [user])`
 // re-fire on every render (including ones caused by this test file's own
 // setReports() calls after a moderator action), silently re-fetching and
-// reverting any local state update mid-test.
+// reverting any local state update mid-test. useUserMock defaults to
+// ADMIN_USER in beforeEach; a single test overrides it to MODERATOR_USER to
+// exercise the ADMIN-only Ban gate, without needing vi.resetModules().
 const ADMIN_USER = { id: 'admin-1', name: 'Admin', role: 'ADMIN' };
+const MODERATOR_USER = { id: 'mod-1', name: 'Moderator', role: 'MODERATOR' };
+const { useUserMock } = vi.hoisted(() => ({ useUserMock: vi.fn() }));
 vi.mock('@/store/authStore', () => ({
-  useUser: () => ADMIN_USER,
+  useUser: useUserMock,
   useAuthStore: () => ({ clearAuth: vi.fn() }),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => '/admin' }));
@@ -41,7 +46,9 @@ function mockReports(reports: any[]) {
 beforeEach(() => {
   getMock.mockReset();
   patchMock.mockReset().mockResolvedValue({});
+  postMock.mockReset().mockResolvedValue({});
   deleteMock.mockReset().mockResolvedValue({});
+  useUserMock.mockReset().mockReturnValue(ADMIN_USER);
 });
 
 describe('Admin Reports panel: targetType branching', () => {
@@ -84,18 +91,21 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.getByText(/1 dismissed/)).toBeInTheDocument();
   });
 
-  it('hides the Restrict user action once the reported user is already banned', async () => {
+  it('shows "Unban user" instead of Restrict/Ban once the reported user is already banned', async () => {
     mockReports([{
       id: 'r3',
       targetType: 'USER',
       reason: 'Scam or fraud attempt',
       reporter: { name: 'Bob' },
-      reportedUser: { id: 'u3', name: 'Dave', email: 'dave@example.com', isBanned: true },
+      reportedUser: { id: 'u3', name: 'Dave', email: 'dave@example.com', isBanned: true, banReason: 'Repeated scam listings' },
     }]);
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText(/Dave/)).toBeInTheDocument());
-    expect(screen.getByText('Already restricted')).toBeInTheDocument();
+    expect(screen.getByText(/Moderation status:/)).toBeInTheDocument();
+    expect(screen.getByText(/Banned: Repeated scam listings/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unban user' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Restrict user' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ban user' })).not.toBeInTheDocument();
   });
 
   it('renders a MESSAGE report with a "Full conversation" link and a "Reported message" action that reveals the frozen snapshot', async () => {
@@ -162,22 +172,87 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.getByText(/To: Unknown/)).toBeInTheDocument();
   });
 
-  it('Restrict user calls the existing ban endpoint and resolves the report, not a new privilege surface', async () => {
+  it('Restrict user calls the new narrow /restrict endpoint (not /ban) and resolves the report from Pending', async () => {
     mockReports([{
       id: 'r5',
       targetType: 'USER',
       reason: 'Impersonation',
-      reporter: { name: 'Gina' },
+      reporter: { id: 'gina-1', name: 'Gina' },
+      reporterId: 'gina-1',
       reportedUser: { id: 'u5', name: 'Hank', email: 'hank@example.com', isBanned: false },
     }]);
-    vi.spyOn(window, 'prompt').mockReturnValue('Confirmed impersonation of another landlord');
+    vi.spyOn(window, 'prompt').mockReturnValue('Kept messaging the reporter after the report was filed');
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restrict user' })).toBeInTheDocument());
 
     screen.getByRole('button', { name: 'Restrict user' }).click();
 
-    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u5/ban', { reason: 'Confirmed impersonation of another landlord' }));
-    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r5', { status: 'RESOLVED', resolution: 'Account restricted' }));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith('/admin/users/u5/restrict', {
+      protectedUserId: 'gina-1',
+      reason: 'Kept messaging the reporter after the report was filed',
+    }));
+    expect(patchMock).not.toHaveBeenCalledWith('/admin/users/u5/ban', expect.anything());
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r5', { status: 'RESOLVED', resolution: 'User restricted from messaging reporter' }));
+  });
+
+  it('shows "Unrestrict user" once a restriction is already active, and lifting it calls /unrestrict', async () => {
+    mockReports([{
+      id: 'r6',
+      targetType: 'USER',
+      reason: 'Impersonation',
+      reporter: { id: 'gina-2', name: 'Gina' },
+      reporterId: 'gina-2',
+      reportedUser: { id: 'u6', name: 'Ike', email: 'ike@example.com', isBanned: false },
+      restriction: { reason: 'Kept messaging after being reported', createdAt: '2026-08-01T00:00:00.000Z' },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Restricted from messaging Gina/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Restrict user' })).not.toBeInTheDocument();
+
+    screen.getByRole('button', { name: 'Unrestrict user' }).click();
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u6/unrestrict', { protectedUserId: 'gina-2' }));
+  });
+
+  it('Ban user requires confirmation, then calls /ban and resolves the report from Pending', async () => {
+    mockReports([{
+      id: 'r7',
+      targetType: 'USER',
+      reason: 'Impersonation',
+      reporter: { id: 'gina-3', name: 'Gina' },
+      reporterId: 'gina-3',
+      reportedUser: { id: 'u7', name: 'Jake', email: 'jake@example.com', isBanned: false },
+    }]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.spyOn(window, 'prompt').mockReturnValue('Serious, repeated harassment');
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument());
+
+    screen.getByRole('button', { name: 'Ban user' }).click();
+    expect(confirmSpy).toHaveBeenCalled();
+    await Promise.resolve();
+    expect(patchMock).not.toHaveBeenCalledWith('/admin/users/u7/ban', expect.anything());
+
+    confirmSpy.mockReturnValue(true);
+    screen.getByRole('button', { name: 'Ban user' }).click();
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u7/ban', { reason: 'Serious, repeated harassment' }));
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r7', { status: 'RESOLVED', resolution: 'Account banned' }));
+  });
+
+  it('a MODERATOR sees Restrict/Unrestrict but not Ban (ADMIN-only)', async () => {
+    useUserMock.mockReturnValue(MODERATOR_USER);
+    mockReports([{
+      id: 'r8',
+      targetType: 'USER',
+      reason: 'Impersonation',
+      reporter: { id: 'gina-4', name: 'Gina' },
+      reporterId: 'gina-4',
+      reportedUser: { id: 'u8', name: 'Kim', email: 'kim@example.com', isBanned: false },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restrict user' })).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Ban user' })).not.toBeInTheDocument();
   });
 });
 
@@ -313,8 +388,17 @@ describe('Admin Reports panel: messageSnapshot retention hold', () => {
   });
 });
 
-describe('Admin Reports panel: status filter tabs', () => {
-  it('defaults to the Pending tab and refetches with the selected status when a moderator switches tabs', async () => {
+describe('Admin Reports panel: Pending/Resolved status tabs', () => {
+  it('has only Pending and Resolved tabs -- no separate Dismissed tab', async () => {
+    mockReports([]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('No pending reports')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Pending' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resolved' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismissed' })).not.toBeInTheDocument();
+  });
+
+  it('defaults to Pending, and fetches both RESOLVED and DISMISSED (merged) when switching to Resolved', async () => {
     mockReports([{ id: 'r1', reason: 'Spam', reporter: { name: 'Alice' }, listing: { id: 'l1', title: 'Cozy 2BR' } }]);
     const user = userEvent.setup();
     render(<AdminPage />);
@@ -323,24 +407,84 @@ describe('Admin Reports panel: status filter tabs', () => {
 
     await user.click(screen.getByRole('button', { name: 'Resolved' }));
     await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/reports?status=RESOLVED'));
+    expect(getMock).toHaveBeenCalledWith('/admin/reports?status=DISMISSED');
   });
 
-  it('hides Dismiss/Restrict/Remove-listing actions and shows resolvedAt once viewing a non-Pending tab', async () => {
-    mockReports([{
+  it('a DISMISSED report appears in the Resolved tab (with its outcome) and is gone from Pending', async () => {
+    const dismissedReport = {
+      id: 'r-dismissed',
+      status: 'DISMISSED',
+      reason: 'Spam',
+      reporter: { name: 'Alice' },
+      listing: { id: 'l1', title: 'Cozy 2BR' },
+      resolvedAt: '2026-06-01T00:00:00.000Z',
+      resolution: 'Reviewed and dismissed',
+    };
+    getMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
+      if (endpoint === '/admin/reports?status=PENDING') return Promise.resolve({ data: [] });
+      if (endpoint === '/admin/reports?status=RESOLVED') return Promise.resolve({ data: [] });
+      if (endpoint === '/admin/reports?status=DISMISSED') return Promise.resolve({ data: [dismissedReport] });
+      return Promise.resolve({ data: null });
+    });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('No pending reports')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Resolved' }));
+    await waitFor(() => expect(screen.getByText('Cozy 2BR', { exact: false })).toBeInTheDocument());
+    expect(screen.getByText(/Outcome: Reviewed and dismissed/)).toBeInTheDocument();
+    expect(screen.getByText(/Dismissed/)).toBeInTheDocument();
+  });
+
+  it('a RESOLVED report also appears in the Resolved tab, sorted alongside dismissed ones', async () => {
+    const resolvedReport = {
+      id: 'r-resolved',
+      status: 'RESOLVED',
+      reason: 'Fraud',
+      reporter: { name: 'Bob' },
+      listing: { id: 'l2', title: 'Sunny Basement' },
+      resolvedAt: '2026-06-05T00:00:00.000Z',
+      resolution: 'Listing removed',
+    };
+    getMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
+      if (endpoint === '/admin/reports?status=PENDING') return Promise.resolve({ data: [] });
+      if (endpoint === '/admin/reports?status=RESOLVED') return Promise.resolve({ data: [resolvedReport] });
+      if (endpoint === '/admin/reports?status=DISMISSED') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: null });
+    });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('No pending reports')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Resolved' }));
+    await waitFor(() => expect(screen.getByText('Sunny Basement', { exact: false })).toBeInTheDocument());
+    expect(screen.getByText(/Outcome: Listing removed/)).toBeInTheDocument();
+  });
+
+  it('hides Dismiss/Restrict/Remove-listing actions once viewing the Resolved tab', async () => {
+    const resolvedReport = {
       id: 'r1',
       reason: 'Spam',
       reporter: { name: 'Alice' },
       listing: { id: 'l1', title: 'Cozy 2BR' },
       resolvedAt: '2026-06-01T00:00:00.000Z',
       resolution: 'Reviewed and dismissed',
-    }]);
+    };
+    getMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
+      if (endpoint === '/admin/reports?status=PENDING') return Promise.resolve({ data: [resolvedReport] });
+      if (endpoint === '/admin/reports?status=RESOLVED') return Promise.resolve({ data: [resolvedReport] });
+      if (endpoint === '/admin/reports?status=DISMISSED') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: null });
+    });
     const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText('Cozy 2BR', { exact: false })).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: 'Dismissed' }));
-    await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/reports?status=DISMISSED'));
-    await waitFor(() => expect(screen.getByText(/Resolved:.*Reviewed and dismissed/)).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Resolved' }));
+    await waitFor(() => expect(screen.getByText(/Outcome: Reviewed and dismissed/)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove listing' })).not.toBeInTheDocument();
   });

@@ -30,6 +30,15 @@ const banSchema = z.object({
   reason: z.string().min(5).max(500).trim(),
 }).strict();
 
+const restrictSchema = z.object({
+  protectedUserId: z.string().uuid(),
+  reason:          z.string().min(5).max(500).trim(),
+}).strict();
+
+const unrestrictSchema = z.object({
+  protectedUserId: z.string().uuid(),
+}).strict();
+
 const roleSchema = z.object({
   role: z.nativeEnum(UserRole),
 }).strict();
@@ -118,6 +127,50 @@ router.patch('/users/:id/unban', validateUuidParam('id'), requireRole(UserRole.A
       data: { isBanned: false, banReason: null },
     });
     res.json({ success: true, message: `User ${user.email} unbanned.` });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /admin/users/:id/restrict ───────────────────────────────────────────
+// Narrower than /ban: stops :id from messaging one specific other user
+// (protectedUserId, typically the reporter who filed a report against them)
+// without touching the rest of their account -- login, other conversations,
+// listings, and profile visibility are all unaffected. ADMIN or MODERATOR
+// (the router's default gate); unlike /ban this isn't escalated to
+// ADMIN-only since it's a narrow, reversible, per-relationship action.
+// Upserted on the (restrictedUserId, protectedUserId) unique pair so
+// restricting an already-restricted pair updates the reason/re-activates
+// a previously lifted restriction instead of erroring or duplicating.
+router.post('/users/:id/restrict', validateUuidParam('id'), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
+  try {
+    const { protectedUserId, reason } = restrictSchema.parse(req.body);
+    if (protectedUserId === req.params.id) throw new AppError('A user cannot be restricted from messaging themselves.', 400);
+
+    const protectedUser = await prisma.user.findUnique({ where: { id: protectedUserId }, select: { id: true } });
+    if (!protectedUser) throw new AppError('protectedUserId does not refer to a real user.', 400);
+
+    await prisma.userMessageRestriction.upsert({
+      where: { restrictedUserId_protectedUserId: { restrictedUserId: req.params.id, protectedUserId } },
+      create: { restrictedUserId: req.params.id, protectedUserId, reason },
+      update: { reason, liftedAt: null },
+    });
+    res.json({ success: true, message: 'User restricted from messaging this person.' });
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /admin/users/:id/unrestrict ────────────────────────────────────────
+router.patch('/users/:id/unrestrict', validateUuidParam('id'), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
+  try {
+    const { protectedUserId } = unrestrictSchema.parse(req.body);
+    const restriction = await prisma.userMessageRestriction.findUnique({
+      where: { restrictedUserId_protectedUserId: { restrictedUserId: req.params.id, protectedUserId } },
+    });
+    if (!restriction || restriction.liftedAt) throw new AppError('No active restriction found for this pair.', 404);
+
+    await prisma.userMessageRestriction.update({
+      where: { restrictedUserId_protectedUserId: { restrictedUserId: req.params.id, protectedUserId } },
+      data: { liftedAt: new Date() },
+    });
+    res.json({ success: true, message: 'Restriction removed.' });
   } catch (err) { next(err); }
 });
 
@@ -222,17 +275,33 @@ router.get('/reports', async (req, res: Response, next: NextFunction) => {
       if (row.status === ReportStatus.DISMISSED) stat.dismissed += row._count._all;
     }
 
+    // Active message-restriction lookup, keyed `restrictedUserId:protectedUserId`
+    // -- surfaced on any report that names a reportedUser (USER and MESSAGE
+    // reports both do) so the admin UI can show the reported user's current
+    // moderation state and choose Restrict vs. Unrestrict correctly.
+    const restrictionPairs = reports
+      .filter(r => r.reportedUserId)
+      .map(r => ({ restrictedUserId: r.reportedUserId!, protectedUserId: r.reporterId }));
+    const restrictions = restrictionPairs.length
+      ? await prisma.userMessageRestriction.findMany({
+          where: { OR: restrictionPairs, liftedAt: null },
+        })
+      : [];
+    const restrictionMap = new Map(restrictions.map(res => [`${res.restrictedUserId}:${res.protectedUserId}`, res]));
+
     const data = reports.map(r => {
       // Strip the raw nested conversation/participants payload regardless of
       // targetType -- it's only ever an intermediate for deriving `recipient`
       // below, not something the admin UI should receive directly.
       const { conversation, ...message } = r.message ?? {};
       const recipient = conversation?.participants.find(p => p.userId !== r.message?.sender.id)?.user ?? null;
+      const restriction = r.reportedUserId ? restrictionMap.get(`${r.reportedUserId}:${r.reporterId}`) ?? null : null;
       return {
         ...r,
         message: r.message ? message : r.message,
         ...(r.targetType === 'MESSAGE' && { recipient }),
         ...(r.targetType === 'USER' && { reporterHistory: reporterStats.get(r.reporterId) }),
+        ...(r.reportedUserId && { restriction: restriction && { reason: restriction.reason, createdAt: restriction.createdAt } }),
       };
     });
 

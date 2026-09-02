@@ -17,6 +17,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { messageReportSchema } from '../validation/reportSchemas';
+import { isRestrictedFromMessaging } from '../utils/moderation';
 
 const router = Router();
 
@@ -116,6 +117,9 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
     });
     if (!listing) throw new AppError('Listing not found.', 404);
     if (listing.userId === req.user!.id) throw new AppError('You cannot message yourself.', 400);
+    if (await isRestrictedFromMessaging(req.user!.id, listing.userId)) {
+      throw new AppError('You are not able to message this user.', 403);
+    }
 
     const existing = await prisma.conversation.findFirst({
       where: {
@@ -177,6 +181,13 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
     });
     if (!conv) throw new AppError('Conversation not found.', 404);
     if (!conv.participants.some(p => p.userId === req.user!.id)) throw new AppError('Not authorized.', 403);
+
+    const otherParticipantIds = conv.participants.filter(p => p.userId !== req.user!.id).map(p => p.userId);
+    for (const otherId of otherParticipantIds) {
+      if (await isRestrictedFromMessaging(req.user!.id, otherId)) {
+        throw new AppError('You are not able to message this user.', 403);
+      }
+    }
 
     const message = await prisma.message.create({
       data: { conversationId: conv.id, senderId: req.user!.id, body },

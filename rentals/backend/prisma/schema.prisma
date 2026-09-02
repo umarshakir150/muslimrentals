@@ -53,6 +53,8 @@ model User {
   reports           Report[]         @relation("ReportsFiled")
   reportsAgainst    Report[]         @relation("ReportsAgainstUser")
   notifications     Notification[]
+  messageRestrictionsImposed  UserMessageRestriction[] @relation("MessageRestrictionsImposed")
+  messageRestrictionsReceived UserMessageRestriction[] @relation("MessageRestrictionsProtecting")
 
   @@index([email])
   @@index([googleId])
@@ -62,6 +64,28 @@ enum UserRole {
   USER
   ADMIN
   MODERATOR
+}
+
+// A targeted moderation action, narrower than the account-wide `isBanned`
+// flag: it stops one specific user from messaging one other specific user
+// again (introduced for a report's reportedUser -> reporter direction), not
+// their whole account. Rows are never deleted so history survives a
+// restrict/unrestrict/re-restrict cycle -- `liftedAt` (nullable) marks
+// whether it's currently active; re-restricting the same pair after a lift
+// updates the same row (see the admin.ts /restrict handler's upsert)
+// instead of creating a duplicate.
+model UserMessageRestriction {
+  id               String    @id @default(uuid())
+  restrictedUserId String
+  restrictedUser   User      @relation("MessageRestrictionsImposed", fields: [restrictedUserId], references: [id], onDelete: Cascade)
+  protectedUserId  String
+  protectedUser    User      @relation("MessageRestrictionsProtecting", fields: [protectedUserId], references: [id], onDelete: Cascade)
+  reason           String
+  createdAt        DateTime  @default(now())
+  liftedAt         DateTime?
+
+  @@unique([restrictedUserId, protectedUserId])
+  @@index([protectedUserId])
 }
 
 // ─── Listings ─────────────────────────────────────────────────────────────────

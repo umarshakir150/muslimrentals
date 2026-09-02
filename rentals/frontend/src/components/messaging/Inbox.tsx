@@ -56,15 +56,19 @@ export default function Inbox({ initialConvId }: InboxProps) {
   useEffect(() => {
     setLoading(true);
     messagesApi.getConversations()
-      .then(res => {
-        setConversations(res.data);
-        if (initialConvId) {
-          const conv = res.data.find((c: Conversation) => c.id === initialConvId);
-          if (conv) openConversation(conv);
-        }
-      })
+      .then(res => setConversations(res.data))
       .catch(() => toast({ variant: 'destructive', title: 'Could not load conversations' }))
       .finally(() => setLoading(false));
+
+    // Fetched directly by id, independent of the list load above and
+    // whatever it resolves to -- a deep link from an admin's "Full
+    // conversation" action (reviewing a filed MESSAGE report) opens a
+    // conversation the moderator is not a participant in, so it would
+    // never appear in their own conversation list at all. Searching that
+    // list for a match (the previous approach) silently failed for every
+    // such case: the list lookup always came up empty, so the deep link
+    // landed on the generic inbox instead of the reported thread.
+    if (initialConvId) openConversation(initialConvId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -130,22 +134,32 @@ export default function Inbox({ initialConvId }: InboxProps) {
     };
   }, [scrollToBottom]);
 
-  async function openConversation(conv: Conversation) {
+  // `fallback` (a Conversation already in the sidebar list) lets the sidebar
+  // click path show the header/avatar immediately while messages load; the
+  // initialConvId deep-link path has no such object to hand in (the
+  // conversation being opened may not be in this user's own list at all --
+  // see the mount effect above) and simply waits for the real fetch below,
+  // which is also the single source of truth `activeConv` is ultimately set
+  // from either way.
+  async function openConversation(convId: string, fallback?: Conversation) {
     if (activeConv) socketRef.current?.emit('conversation:leave', activeConv.id);
-    setActiveConv(conv);
+    if (fallback) setActiveConv(fallback);
     setMessages([]);
 
     try {
-      const res = await messagesApi.getConversation(conv.id);
+      const res = await messagesApi.getConversation(convId);
+      setActiveConv(res.data);
       setMessages(res.data.messages || []);
-      socketRef.current?.emit('conversation:join', conv.id);
-      socketRef.current?.emit('messages:read', { conversationId: conv.id });
+      socketRef.current?.emit('conversation:join', convId);
+      socketRef.current?.emit('messages:read', { conversationId: convId });
       setTimeout(scrollToBottom, 150);
 
-      // Mark unread
-      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unreadCount: 0 } : c));
+      // Mark unread -- a no-op if this conversation isn't in the
+      // requester's own list (the moderator deep-link case).
+      setConversations(prev => prev.map(c => c.id === convId ? { ...c, unreadCount: 0 } : c));
     } catch {
       toast({ variant: 'destructive', title: 'Could not load messages' });
+      if (!fallback) setActiveConv(null);
     }
   }
 
@@ -243,7 +257,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
               return (
                 <button
                   key={conv.id}
-                  onClick={() => openConversation(conv)}
+                  onClick={() => openConversation(conv.id, conv)}
                   className={cn(
                     'w-full flex items-start gap-3 px-5 py-4 text-left hover:bg-brand-50/60 transition-colors border-b border-ink/5',
                     activeConv?.id === conv.id && 'bg-brand-50'

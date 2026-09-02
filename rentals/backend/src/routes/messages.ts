@@ -78,18 +78,28 @@ router.get('/conversations/:id', validateUuidParam('id'), authenticate, async (r
 
     if (!conv) throw new AppError('Conversation not found.', 404);
 
-    // OWASP A01: verify the requester is a participant
+    // OWASP A01: a participant can always open their own conversation.
+    // ADMIN/MODERATOR can additionally open ANY conversation strictly for
+    // moderation review (e.g. investigating a filed MESSAGE report via the
+    // admin panel's "Full conversation" action) -- an ordinary USER who
+    // isn't a participant is still fully denied, unchanged from before.
     const isParticipant = conv.participants.some(p => p.userId === req.user!.id);
-    if (!isParticipant) throw new AppError('Not authorized.', 403);
+    const isModerator   = req.user!.role === 'ADMIN' || req.user!.role === 'MODERATOR';
+    if (!isParticipant && !isModerator) throw new AppError('Not authorized.', 403);
 
-    await prisma.message.updateMany({
-      where: { conversationId: conv.id, senderId: { not: req.user!.id }, isRead: false },
-      data:  { isRead: true },
-    });
-    await prisma.conversationParticipant.updateMany({
-      where: { conversationId: conv.id, userId: req.user!.id },
-      data:  { lastReadAt: new Date() },
-    });
+    // Only a real participant's own view marks messages read / advances
+    // their own lastReadAt -- a moderator reviewing someone else's
+    // conversation must never mutate the actual participants' read state.
+    if (isParticipant) {
+      await prisma.message.updateMany({
+        where: { conversationId: conv.id, senderId: { not: req.user!.id }, isRead: false },
+        data:  { isRead: true },
+      });
+      await prisma.conversationParticipant.updateMany({
+        where: { conversationId: conv.id, userId: req.user!.id },
+        data:  { lastReadAt: new Date() },
+      });
+    }
 
     res.json({ success: true, data: conv });
   } catch (err) { next(err); }

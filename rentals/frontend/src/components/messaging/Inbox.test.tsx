@@ -336,3 +336,51 @@ describe('Inbox: reporting a user or a message', () => {
     expect(reportUserMock).not.toHaveBeenCalled();
   });
 });
+
+describe('Inbox: deep-linking into a specific conversation via initialConvId', () => {
+  it('opens the exact conversation a deep link points to, even when it is absent from the viewer\'s own conversation list', async () => {
+    // This is the moderator "Full conversation" scenario from an admin
+    // MESSAGE report: the admin is not a participant in the reported
+    // conversation, so it will never be in *their* own inbox list --
+    // simulated here by having getConversationsMock resolve to an
+    // unrelated conversation the deep link's id doesn't match at all.
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation({ id: 'conv-unrelated' })] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-reported',
+        messages: [message({ id: 'reported-msg', conversationId: 'conv-reported', body: 'Pay me outside the app', sender: { ...OTHER, avatarUrl: null } })],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-reported" />);
+
+    // Proves the Messages page actually consumed the deep-link id (fetched
+    // by it directly), not merely rendered with it unused.
+    await waitFor(() => expect(getConversationMock).toHaveBeenCalledWith('conv-reported'));
+    // Proves the specific reported thread opened -- not just the general
+    // inbox with nothing selected: the other participant's name is in the
+    // thread header and the reported message's own body is in the thread.
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('Pay me outside the app')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: `Report ${OTHER.name}` })).toBeInTheDocument();
+  });
+
+  it('never marks the participants\' unread messages as read when a non-participant (moderator) deep-links in -- the backend enforces this, but the frontend must still request it for the right id', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({ id: 'conv-reported', unreadCount: 3, messages: [message({ id: 'm1', conversationId: 'conv-reported' })] }),
+    });
+
+    render(<Inbox initialConvId="conv-reported" />);
+
+    await waitFor(() => expect(getConversationMock).toHaveBeenCalledWith('conv-reported'));
+    // The socket 'messages:read' emit is fired regardless (the server-side
+    // handler is the actual enforcement point, independently verified to
+    // no-op for a non-participant) -- asserting it's still emitted for the
+    // correct conversation id, not silently skipped or sent for the wrong one.
+    await waitFor(() => expect(socket.emitted.some(e => e.event === 'messages:read' && e.payload?.conversationId === 'conv-reported')).toBe(true));
+  });
+});

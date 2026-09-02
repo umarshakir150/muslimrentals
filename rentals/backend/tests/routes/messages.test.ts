@@ -65,6 +65,13 @@ function signToken(userId: string) {
   });
 }
 
+function signTokenWithRole(userId: string, role: string) {
+  return jwt.sign({ userId, email: `${userId}@example.com`, role }, process.env.JWT_SECRET!, {
+    algorithm: 'HS256',
+    expiresIn: '15m',
+  });
+}
+
 function activeUser(id: string, overrides: Record<string, any> = {}) {
   return { id, email: `${id}@example.com`, role: 'USER', name: `User ${id.slice(0, 4)}`, isActive: true, isBanned: false, ...overrides };
 }
@@ -313,6 +320,65 @@ describe('GET /messages/conversations/:id (open a thread)', () => {
     expect(participantUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { conversationId: CONV_ID, userId: USER_A },
     }));
+  });
+
+  // Regression coverage for the admin "Full conversation" deep-link bug:
+  // clicking it from a MESSAGE report in /admin landed on the generic
+  // inbox instead of the reported thread, root-caused to this endpoint
+  // flatly 403ing any non-participant -- including the ADMIN/MODERATOR
+  // reviewing the report, who is essentially never a participant in a
+  // conversation between two other users.
+  it('lets an ADMIN open a conversation they are not a participant in, for moderation review, without marking the real participants\' messages read', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C, { role: 'ADMIN' }));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [{ id: 'm1', senderId: USER_B, body: 'Pay me outside the app', isRead: false }],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signTokenWithRole(USER_C, 'ADMIN')}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(CONV_ID);
+    // A moderator merely reviewing someone else's conversation must never
+    // mutate the real participants' read state or lastReadAt.
+    expect(messageUpdateManyMock).not.toHaveBeenCalled();
+    expect(participantUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('also lets a MODERATOR open a conversation they are not a participant in', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C, { role: 'MODERATOR' }));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signTokenWithRole(USER_C, 'MODERATOR')}`);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('still 403s an ordinary USER who is not a participant, unchanged -- the moderator bypass never widens to regular users', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signToken(USER_C)}`);
+
+    expect(res.status).toBe(403);
   });
 });
 

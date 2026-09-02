@@ -1565,3 +1565,20 @@ Neither approval was acted on, per instruction — both are simply waiting for t
 **Not merged, not deployed to production:** PR #7 remains open and unmerged; production untouched. Nothing touched outside this bug's scope — map/spiderfy remains parked, untouched.
 
 **Revisit when:** the founder retests the refreshed Deploy Preview — specifically: opening a MESSAGE report in `/admin`, clicking "Full conversation," and confirming it lands directly on the specific reported thread (the other participant's name in the header, the reported message visible in the thread), not the generic inbox.
+
+## 2026-09-02 — PR #7 UX blocker: moderator conversation view didn't visually distinguish the two participants
+
+**Decision:** Founder confirmed both participants' messages now load correctly in the moderator "Full conversation" view, but reported both sides looked visually identical — indistinguishable which of the two people sent what. Treated as a UX blocker for PR #7.
+
+**Root cause:** message bubble alignment/color (`Inbox.tsx`) is driven by `isMe = msg.sender?.id === user?.id`. For a moderator (who is never a participant), `isMe` is `false` for **both** real participants — every message rendered with the same gray, left-aligned style regardless of who actually sent it, making the whole thread look like one person's monologue. This is a direct consequence of the earlier "Full conversation" fix successfully bringing real messages from both sides into view for the first time — the pre-existing rendering logic had simply never been exercised by a non-participant viewer before.
+
+**Fix (`agents/20260901-234756-build-the-report-a-user-report-a-message-feature-as/integration`, commit `4774a92`, frontend-only):**
+- Added `viewerIsParticipant` (computed once from the fetched conversation's own `participants` array against the logged-in user — never assumed) to explicitly branch rendering into two code paths.
+- **Real participant path: byte-for-byte unchanged** — still `isMe`-driven exactly as before, so normal messaging UI cannot regress from this change.
+- **Moderator (non-participant) path, new:** which side a message renders on and its color are derived by matching the message's real `senderId` against the conversation's own recorded `participants` array (never the viewer's id, which has no side at all). Each sender's name renders as a group label above their messages (once per consecutive run from the same sender, not repeated on every line). The thread header shows both real participants' names (there is no single "other participant" relative to a non-participant viewer) instead of the old code's arbitrary pick. The view is strictly read-only in this mode: no compose box, no per-message "Report" action, no header "Report {name}" action — replaced with a plain "Moderator view (read-only)" notice, since a moderator reviewing a filed report acts on the report itself, not on the thread.
+- New regression test (`Inbox.test.tsx`) using a conversation where **neither** participant is the mocked viewer — the genuine moderator scenario, distinct from the earlier deep-link tests (whose default conversation fixture happened to include the viewer as a participant, so they never exercised this styling path) — proves participant A and B render with opposite name-label alignment and different bubble background classes, and that no compose/report affordances appear.
+- 169/169 frontend tests pass, `tsc --noEmit` clean. No backend changes needed — pushed frontend-only; Netlify's Deploy Preview rebuilds automatically.
+
+**Not merged, not deployed to production:** PR #7 remains open and unmerged; production untouched. Nothing touched outside this bug's scope — map/spiderfy remains parked, untouched.
+
+**Revisit when:** the founder retests the refreshed Deploy Preview — specifically: opening a MESSAGE report in `/admin`, clicking "Full conversation," and confirming the two participants are now immediately, visually distinguishable (distinct alignment/color, a visible name on each message group), the view has no compose box or report buttons, and the normal (real-participant) messaging UI elsewhere is unchanged.

@@ -32,7 +32,20 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 // normal-looking pin on any real property. See mapMarkers.ts/FullMap.tsx
 // for how the client then draws an explicit "approximate area" circle of
 // this same radius around the point, rather than presenting it as exact.
-export const PRIVACY_RADIUS_METERS = 250;
+//
+// 200m (not the original 250m) per founder direction after a live test:
+// the offset math itself was verified correct and tightly bounded (see
+// getApproximateLocation's own multi-city regression coverage below,
+// which computes the real geodesic distance for every case) -- a ~1km-off
+// marker the founder observed live was not explained by this function,
+// which has never been able to produce more than PRIVACY_RADIUS_METERS of
+// displacement by construction. The likely actual cause is Nominatim
+// (the free OSM geocoder)'s own precision for that specific address --
+// see PostListingModal.tsx/CityAutocomplete's onChange, which now also
+// passes the selected city's province into the geocoding query, tightening
+// match specificity. This constant still lowered from 250 to 200 anyway,
+// per explicit product direction to target a tighter 100-200m range.
+export const PRIVACY_RADIUS_METERS = 200;
 
 // Mulberry32 -- a small, fast, deterministic PRNG. Not cryptographic (no
 // need to be: the seed is derived from public-ish data and the whole point
@@ -69,19 +82,24 @@ export interface ApproximateLocation {
 }
 
 // Deterministically offsets (lat, lng) by a pseudo-random distance in
-// [0.3 * PRIVACY_RADIUS_METERS, PRIVACY_RADIUS_METERS) at a pseudo-random
-// angle, seeded by `seed` (pass the listing's id) plus the real coordinates
-// themselves (so moving a listing's real address changes its public point
-// too, rather than the point sticking to a stale id-only seed forever).
-// The lower bound keeps the jitter from ever landing suspiciously close to
-// the real point while still guaranteeing (by construction) that the real
-// point lies within PRIVACY_RADIUS_METERS of the returned one -- exactly
-// the "somewhere in this circle" guarantee the public-facing privacy
-// circle promises.
+// [0.5 * PRIVACY_RADIUS_METERS, PRIVACY_RADIUS_METERS) -- i.e. [100, 200]
+// meters at the current radius -- at a pseudo-random angle, seeded by
+// `seed` (pass the listing's id) plus the real coordinates themselves (so
+// moving a listing's real address changes its public point too, rather
+// than the point sticking to a stale id-only seed forever). The lower
+// bound keeps the jitter from ever landing suspiciously close to the real
+// point while still guaranteeing (by construction) that the real point
+// lies within PRIVACY_RADIUS_METERS of the returned one -- exactly the
+// "somewhere in this circle" guarantee the public-facing privacy circle
+// promises. This bound is a hard mathematical ceiling, not a statistical
+// tendency -- see this function's own regression coverage in
+// tests/utils/geo.test.ts, which computes the real geodesic (haversine)
+// distance for every case across several cities/latitudes, not just the
+// equirectangular approximation used here to build the offset itself.
 export function getApproximateLocation(seed: string, lat: number, lng: number): ApproximateLocation {
   const rand = mulberry32(hashSeed(`${seed}:${lat.toFixed(6)}:${lng.toFixed(6)}`));
   const angle = rand() * 2 * Math.PI;
-  const distance = PRIVACY_RADIUS_METERS * (0.3 + rand() * 0.7);
+  const distance = PRIVACY_RADIUS_METERS * (0.5 + rand() * 0.5);
 
   const dLat = (distance * Math.cos(angle)) / METERS_PER_DEG_LAT;
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);

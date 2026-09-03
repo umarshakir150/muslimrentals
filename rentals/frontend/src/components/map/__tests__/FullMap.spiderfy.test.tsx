@@ -61,7 +61,7 @@ function buildFakeLeafletModule() {
   return { L, mapInstance, markerInstances, clusterGroupInstance };
 }
 
-// Several distinct downtown listings that, under the ~250m privacy radius,
+// Several distinct downtown listings that, under the ~200m privacy radius,
 // legitimately land on the exact same or near-identical public coordinate.
 const DENSE_DOWNTOWN_LISTINGS: Listing[] = Array.from({ length: 5 }, (_, i) => ({
   id: `listing-${i}`,
@@ -83,7 +83,7 @@ const DENSE_DOWNTOWN_LISTINGS: Listing[] = Array.from({ length: 5 }, (_, i) => (
   lat: 43.6488 + (i === 4 ? 0.00003 : 0),
   lng: -79.3817 + (i === 4 ? 0.00003 : 0),
   locationApproximate: true,
-  locationPrecisionRadiusM: 250,
+  locationPrecisionRadiusM: 200,
   contactInfo: null,
   status: 'ACTIVE',
   isActive: true,

@@ -236,7 +236,14 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                         <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">City *</label>
                         <CityAutocomplete
                           value={city || ''}
-                          onChange={(city) => setValue('city', city)}
+                          onChange={(city, _coords, province) => {
+                            setValue('city', city);
+                            // Passed straight through to server-side geocoding
+                            // (utils/geocode.ts) so "Toronto" resolves against
+                            // the actual right Toronto/province, not left to
+                            // guess from city name + country alone.
+                            if (province) setValue('province', province);
+                          }}
                           placeholder="Search city..."
                         />
                         {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}

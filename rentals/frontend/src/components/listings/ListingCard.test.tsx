@@ -69,7 +69,7 @@ describe('ListingCard — location line with a null neighbourhood', () => {
   it('renders without crashing for a listing carrying the new approximate-location fields alongside a null neighbourhood', () => {
     render(
       <ListingCard
-        listing={makeListing({ neighbourhood: null, locationApproximate: true, locationPrecisionRadiusM: 250 } as Partial<Listing>)}
+        listing={makeListing({ neighbourhood: null, locationApproximate: true, locationPrecisionRadiusM: 200 } as Partial<Listing>)}
         {...noop}
       />
     );

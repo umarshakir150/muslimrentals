@@ -143,7 +143,7 @@ beforeEach(() => {
 
 describe('FullMap approximate-location privacy zone', () => {
   it('draws a labeled privacy circle around the listing when its marker is selected, and removes it on deselect', async () => {
-    const listing = baseListing({ locationApproximate: true, locationPrecisionRadiusM: 250 } as any);
+    const listing = baseListing({ locationApproximate: true, locationPrecisionRadiusM: 200 } as any);
     const { markerInstances, circleInstances, mapInstance } = await renderFullMap([listing]);
 
     expect(circleInstances).toHaveLength(0); // nothing drawn before selection
@@ -152,7 +152,7 @@ describe('FullMap approximate-location privacy zone', () => {
 
     expect(circleInstances).toHaveLength(1);
     const circle = circleInstances[0];
-    expect(circle.options.radius).toBe(250);
+    expect(circle.options.radius).toBe(200);
     // Bound with a PERMANENT tooltip -- visible for as long as the zone is
     // shown, not just on hover -- and explicitly opened.
     expect(circle.tooltipOptions.permanent).toBe(true);
@@ -165,7 +165,7 @@ describe('FullMap approximate-location privacy zone', () => {
   });
 
   it('draws the circle around the exact same point already on the marker -- never a separate, more-precise coordinate', async () => {
-    const listing = baseListing({ lat: 45.4215, lng: -75.6972, locationApproximate: true, locationPrecisionRadiusM: 250 } as any);
+    const listing = baseListing({ lat: 45.4215, lng: -75.6972, locationApproximate: true, locationPrecisionRadiusM: 200 } as any);
     const { markerInstances, circleInstances } = await renderFullMap([listing]);
 
     markerInstances[0].fireHandler('popupopen');
@@ -186,9 +186,9 @@ describe('FullMap approximate-location privacy zone', () => {
 
   it('gives each of several listings sharing an identical public coordinate its own independent circle when selected in turn (no cross-talk under spiderfy)', async () => {
     const listings = [
-      baseListing({ id: 'a', locationApproximate: true, locationPrecisionRadiusM: 250 } as any),
-      baseListing({ id: 'b', locationApproximate: true, locationPrecisionRadiusM: 250 } as any),
-      baseListing({ id: 'c', locationApproximate: true, locationPrecisionRadiusM: 250 } as any),
+      baseListing({ id: 'a', locationApproximate: true, locationPrecisionRadiusM: 200 } as any),
+      baseListing({ id: 'b', locationApproximate: true, locationPrecisionRadiusM: 200 } as any),
+      baseListing({ id: 'c', locationApproximate: true, locationPrecisionRadiusM: 200 } as any),
     ];
     const { markerInstances, circleInstances, mapInstance } = await renderFullMap(listings);
     expect(markerInstances).toHaveLength(3); // all three still individually clickable once spiderfied

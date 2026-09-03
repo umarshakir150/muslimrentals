@@ -98,12 +98,18 @@ describe('toPublicListingLocation', () => {
     title: 'Cozy 2BR',
     lat: 43.6532,
     lng: -79.3832,
-    address: '123 Real Street, Unit 4',
+    address: '123 Real Street',
+    unit: 'Unit 4',
   };
 
   it('drops the address entirely', () => {
     const result = toPublicListingLocation(listing);
     expect(result).not.toHaveProperty('address');
+  });
+
+  it('drops the unit/apartment number entirely', () => {
+    const result = toPublicListingLocation(listing);
+    expect(result).not.toHaveProperty('unit');
   });
 
   it('replaces lat/lng with the approximate point, not the real one', () => {

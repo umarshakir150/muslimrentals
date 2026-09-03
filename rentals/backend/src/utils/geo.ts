@@ -91,15 +91,17 @@ export function getApproximateLocation(seed: string, lat: number, lng: number): 
 }
 
 // Redacts a listing's precise location for a public-facing response: drops
-// `address` entirely, replaces `lat`/`lng` with the approximate point, and
-// flags the result so the client renders the "approximate area" treatment
-// instead of an exact-address claim. Callers decide *when* to apply this
-// (owner/ADMIN/MODERATOR views should keep the real data) -- this function
-// only knows how.
-export function toPublicListingLocation<T extends { id: string; lat: number; lng: number; address?: string | null }>(
+// `address` AND `unit` entirely, replaces `lat`/`lng` with the approximate
+// point, and flags the result so the client renders the "approximate area"
+// treatment instead of an exact-address claim. Callers decide *when* to
+// apply this (owner/ADMIN/MODERATOR views should keep the real data) --
+// this function only knows how.
+export function toPublicListingLocation<
+  T extends { id: string; lat: number; lng: number; address?: string | null; unit?: string | null }
+>(
   listing: T
-): Omit<T, 'address'> & { lat: number; lng: number; locationApproximate: true; locationPrecisionRadiusM: number } {
-  const { address: _address, ...rest } = listing;
+): Omit<T, 'address' | 'unit'> & { lat: number; lng: number; locationApproximate: true; locationPrecisionRadiusM: number } {
+  const { address: _address, unit: _unit, ...rest } = listing;
   const approx = getApproximateLocation(listing.id, listing.lat, listing.lng);
   return {
     ...rest,

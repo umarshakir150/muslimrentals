@@ -46,6 +46,9 @@ export interface Listing {
   // MODERATOR staff -- every other viewer never receives this field at
   // all (see rentals/backend/src/utils/geo.ts's toPublicListingLocation).
   address?: string | null;
+  // Unit/apartment number -- same owner/staff-only visibility as `address`,
+  // and likewise stripped (not just hidden) from every other viewer.
+  unit?: string | null;
   // For most viewers this is a stable, privacy-safe *approximate* point
   // (see locationApproximate/locationPrecisionRadiusM below), not the
   // listing's real coordinates -- only the owner/staff ever get the real

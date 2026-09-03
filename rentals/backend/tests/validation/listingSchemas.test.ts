@@ -15,9 +15,7 @@ const validListing = {
   bathrooms: 1,
   audience: 'FAMILIES',
   city: 'Toronto',
-  neighbourhood: 'Financial District',
-  lat: 43.6532,
-  lng: -79.3832,
+  address: '123 Main Street',
   contactInfo: 'call 555-555-5555',
 };
 
@@ -47,16 +45,6 @@ describe('listingCreateSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects latitude out of the -90..90 range', () => {
-    const result = listingCreateSchema.safeParse({ ...validListing, lat: 91 });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects longitude out of the -180..180 range', () => {
-    const result = listingCreateSchema.safeParse({ ...validListing, lng: -181 });
-    expect(result.success).toBe(false);
-  });
-
   it('rejects an amenity not in the whitelist', () => {
     const result = listingCreateSchema.safeParse({ ...validListing, amenities: ['Free WiFi and a Pool'] });
     expect(result.success).toBe(false);
@@ -77,6 +65,25 @@ describe('listingCreateSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  // lat/lng are no longer part of this schema at all -- the route resolves
+  // them itself via server-side geocoding (utils/geocode.ts) and would
+  // reject them outright as unknown fields under .strict(), same as any
+  // other unexpected field. A client can no longer submit a coordinate
+  // detached from the address it claims to be for.
+  it('rejects a client-supplied lat/lng as unknown fields', () => {
+    const result = listingCreateSchema.safeParse({ ...validListing, lat: 43.6532, lng: -79.3832 });
+    expect(result.success).toBe(false);
+  });
+
+  // Likewise, neighbourhood is no longer collected at listing creation --
+  // the dropdown and its centroid-based positioning were removed. The
+  // Listing.neighbourhood DB column and its display uses elsewhere are
+  // unaffected; it's just not part of this schema/the create flow now.
+  it('rejects a client-supplied neighbourhood as an unknown field', () => {
+    const result = listingCreateSchema.safeParse({ ...validListing, neighbourhood: 'Downtown' });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects a non-URL image entry', () => {
     const result = listingCreateSchema.safeParse({ ...validListing, imageUrls: ['not-a-url'] });
     expect(result.success).toBe(false);
@@ -91,9 +98,7 @@ const baseListing = {
   bathrooms: 1,
   audience: ListingAudience.BROTHERS,
   city: 'Toronto',
-  neighbourhood: 'Kensington Market',
-  lat: 43.6532,
-  lng: -79.3832,
+  address: '456 Spadina Avenue',
   contactInfo: 'email me at test@example.com',
 };
 
@@ -182,39 +187,58 @@ describe('listingCreateSchema — bathrooms (Int, min 0, max 20)', () => {
   });
 });
 
-describe('listingCreateSchema — neighbourhood requirement', () => {
-  it('accepts a valid payload including neighbourhood', () => {
+describe('listingCreateSchema — address requirement (geocoding source)', () => {
+  it('accepts a valid payload including address', () => {
     const result = listingCreateSchema.safeParse(baseListing);
     expect(result.success).toBe(true);
   });
 
-  it('rejects a payload with neighbourhood omitted entirely', () => {
-    const { neighbourhood, ...rest } = baseListing;
+  it('rejects a payload with address omitted entirely', () => {
+    const { address, ...rest } = baseListing;
     const result = listingCreateSchema.safeParse(rest);
     expect(result.success).toBe(false);
   });
 
-  it('rejects a payload with neighbourhood as an empty string', () => {
-    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: '' });
+  it('rejects a payload with address as an empty string', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, address: '' });
     expect(result.success).toBe(false);
   });
 
-  it('rejects a payload with neighbourhood as only whitespace', () => {
-    // Regression guard: .trim() must run BEFORE .min(1) so a whitespace-only
-    // value is rejected outright, not accepted pre-trim and then silently
-    // reduced to "" -- "required" must actually mean required.
-    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: '   ' });
+  it('rejects a payload with address as only whitespace', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, address: '   ' });
     expect(result.success).toBe(false);
   });
 
-  it('rejects neighbourhood over 100 characters', () => {
-    const result = listingCreateSchema.safeParse({ ...baseListing, neighbourhood: 'a'.repeat(101) });
+  it('rejects an address shorter than 3 characters', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, address: 'ab' });
     expect(result.success).toBe(false);
   });
 
-  it('listingUpdateSchema (PATCH) does not require neighbourhood', () => {
+  it('rejects address over 200 characters', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, address: 'a'.repeat(201) });
+    expect(result.success).toBe(false);
+  });
+
+  it('listingUpdateSchema (PATCH) does not require address', () => {
     const result = listingUpdateSchema.safeParse({ title: 'Updated title for this listing' });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('listingCreateSchema — unit (private, optional, never used for geocoding)', () => {
+  it('accepts a listing with no unit at all', () => {
+    const result = listingCreateSchema.safeParse(baseListing);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a listing with a unit number', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, unit: 'Unit 4B' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a unit over 50 characters', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, unit: 'a'.repeat(51) });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -273,6 +297,16 @@ describe('listingQuerySchema', () => {
 
   it('rejects a radiusKm below the 1km minimum', () => {
     const result = listingQuerySchema.safeParse({ radiusKm: '0' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects latitude out of the -90..90 range', () => {
+    const result = listingQuerySchema.safeParse({ lat: '200' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects longitude out of the -180..180 range', () => {
+    const result = listingQuerySchema.safeParse({ lng: '-200' });
     expect(result.success).toBe(false);
   });
 });
@@ -345,12 +379,5 @@ describe('applyRangeFilters — Prisma where-clause construction (filter correct
     expect(where.status).toBe('ACTIVE');
     expect(where.city).toEqual({ contains: 'Toronto' });
     expect(where.bathrooms).toEqual({ gte: 1 });
-  });
-});
-
-describe('listingCreateSchema — lat/lng ranges (neighbourhood-resolved coordinates)', () => {
-  it('rejects lat/lng outside valid ranges', () => {
-    expect(listingCreateSchema.safeParse({ ...baseListing, lat: 200 }).success).toBe(false);
-    expect(listingCreateSchema.safeParse({ ...baseListing, lng: -200 }).success).toBe(false);
   });
 });

@@ -20,6 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, toPublicListingLocation } from '../utils/geo';
+import { geocodeAddress } from '../utils/geocode';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -173,14 +174,26 @@ router.get('/:id', validateUuidParam('id'), optionalAuth, async (req: AuthReques
 });
 
 // ─── POST /listings ───────────────────────────────────────────────────────────
+// Location pipeline: real address -> geocode (server-side, never trusts a
+// client-supplied coordinate) -> precise private lat/lng, stored here.
+// Public reads later run these through toPublicListingLocation() for the
+// privacy-safe approximate point -- this route only ever deals with the
+// real, precise one.
 router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = listingCreateSchema.parse(req.body);
     const { amenities = [], imageUrls = [], ...rest } = data;
 
+    const geocoded = await geocodeAddress(data.address, data.city, data.province);
+    if (!geocoded) {
+      throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+    }
+
     const listing = await prisma.listing.create({
       data: {
         ...rest,
+        lat:       geocoded.lat,
+        lng:       geocoded.lng,
         userId:    req.user!.id,
         amenities: { create: amenities.map(name => ({ name })) },
         images:    { create: imageUrls.map((url, i) => ({ url, key: url, order: i })) },
@@ -210,10 +223,35 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     const data = listingUpdateSchema.parse(req.body);
     const { amenities, imageUrls, ...rest } = data;
 
+    // Re-geocode only when something that could change the real-world
+    // location actually changed -- editing just the unit, price, title,
+    // etc. must never trigger (or need) a new geocoding lookup. Comparing
+    // against the currently stored values (not just "was address sent")
+    // also avoids a needless re-geocode when a client resubmits the same
+    // address unchanged.
+    const addressChanging  = rest.address  !== undefined && rest.address  !== listing.address;
+    const cityChanging     = rest.city     !== undefined && rest.city     !== listing.city;
+    const provinceChanging = rest.province !== undefined && rest.province !== listing.province;
+
+    let geocoded: { lat: number; lng: number } | undefined;
+    if (addressChanging || cityChanging || provinceChanging) {
+      const nextAddress  = rest.address  !== undefined ? rest.address  : listing.address;
+      const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
+      const nextProvince = rest.province !== undefined ? rest.province : listing.province;
+      if (!nextAddress) {
+        throw new AppError('An address is required to update this listing\'s location.', 422);
+      }
+      geocoded = await geocodeAddress(nextAddress, nextCity, nextProvince) ?? undefined;
+      if (!geocoded) {
+        throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+      }
+    }
+
     const updated = await prisma.listing.update({
       where: { id: req.params.id },
       data: {
         ...rest,
+        ...(geocoded && { lat: geocoded.lat, lng: geocoded.lng }),
         ...(amenities !== undefined && {
           amenities: { deleteMany: {}, create: amenities.map(name => ({ name })) },
         }),

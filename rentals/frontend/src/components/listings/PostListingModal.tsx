@@ -11,7 +11,6 @@ import { useIsAuthenticated } from '@/store/authStore';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
-import NeighbourhoodAutocomplete from '@/components/ui/NeighbourhoodAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
 import { postListingSchema, PostListingFormData as FormData } from '@/lib/postListingSchema';
 
@@ -36,7 +35,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
 
   const { register, handleSubmit, formState: { errors }, setValue, watch, trigger, reset } = useForm<FormData>({
     resolver: zodResolver(postListingSchema),
-    defaultValues: { audience: 'ALL', bedrooms: 1, bathrooms: 1, lat: 43.65, lng: -79.38 },
+    defaultValues: { audience: 'ALL', bedrooms: 1, bathrooms: 1 },
   });
 
   const city = watch('city');
@@ -110,7 +109,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   async function nextStep() {
     const fieldsToValidate: (keyof FormData)[] = step === 1
       ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
-      : ['city', 'neighbourhood', 'contactInfo'];
+      : ['city', 'address', 'contactInfo'];
     const valid = await trigger(fieldsToValidate);
     if (valid) setStep(s => s + 1);
   }
@@ -237,30 +236,23 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                         <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">City *</label>
                         <CityAutocomplete
                           value={city || ''}
-                          onChange={(city, coords) => {
-                            setValue('city', city);
-                            if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
-                            // A neighbourhood picked for the previous city no longer
-                            // applies -- and its coordinates would silently mislabel
-                            // this listing's location if left in place.
-                            setValue('neighbourhood', '');
-                          }}
+                          onChange={(city) => setValue('city', city)}
                           placeholder="Search city..."
                         />
                         {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Neighbourhood *</label>
-                        <NeighbourhoodAutocomplete
-                          value={watch('neighbourhood') || ''}
-                          city={city || ''}
-                          onChange={(neighbourhood, coords) => {
-                            setValue('neighbourhood', neighbourhood, { shouldValidate: true });
-                            if (coords) { setValue('lat', coords[0]); setValue('lng', coords[1]); }
-                          }}
-                        />
-                        <p className="text-xs text-muted mt-1.5">Helps renters find listings near them — pick the closest match.</p>
-                        {errors.neighbourhood && <p className="text-red-500 text-xs mt-1">{errors.neighbourhood.message}</p>}
+                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Street address *</label>
+                        <input {...register('address')} placeholder="e.g. 123 Main Street" className="input-field" />
+                        <p className="text-xs text-muted mt-1.5">
+                          Used to place your listing on the map. Your exact address is never shown publicly — renters only ever see an approximate area.
+                        </p>
+                        {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Unit / Apt # (optional)</label>
+                        <input {...register('unit')} placeholder="e.g. Unit 4B" className="input-field" />
+                        <p className="text-xs text-muted mt-1.5">Kept private — never shown to renters or used to place your listing on the map.</p>
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Town / Area</label>

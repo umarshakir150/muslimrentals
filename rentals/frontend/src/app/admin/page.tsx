@@ -79,6 +79,37 @@ export default function AdminPage() {
   const [reasonSubmitting, setReasonSubmitting] = useState(false);
   const { toast } = useToast();
 
+  // User Search / User Management -- a separate ADMIN-only directory search,
+  // deliberately independent of the Reports panel below (which is untouched
+  // by this feature). Ban/Unban/Delete here call the exact same endpoints
+  // and reuse the same reasonPrompt modal as the Reports panel's own
+  // Ban/Delete actions -- no parallel moderation logic. Restrict/Unrestrict
+  // is intentionally absent: it only makes sense in the context of a
+  // specific report's reporter/reportedUser pair, which a directory search
+  // has no equivalent of.
+  const [userQuery, setUserQuery] = useState('');
+  const [userResults, setUserResults] = useState<any[]>([]);
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
+  const [userSearched, setUserSearched] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+
+  async function handleUserSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const q = userQuery.trim();
+    if (!q) return;
+    setUserSearchLoading(true);
+    setSelectedUser(null);
+    try {
+      const res = await api.get<any>(`/admin/users?q=${encodeURIComponent(q)}`);
+      setUserResults(res.data || []);
+      setUserSearched(true);
+    } catch (err: any) {
+      toast({ title: 'Search failed', description: err?.message, variant: 'destructive' });
+    } finally {
+      setUserSearchLoading(false);
+    }
+  }
+
   function openReasonPrompt(prompt: typeof reasonPrompt) {
     setReasonInput('');
     setConfirmPhraseInput('');
@@ -151,6 +182,140 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
+
+            {/* User Search / User Management -- ADMIN-only, separate from and
+                does not modify the Reports panel below. */}
+            {user?.role === 'ADMIN' && (
+              <div className="bg-white border border-ink/8 rounded-3xl shadow-card overflow-hidden mb-8">
+                <div className="px-6 py-4 border-b border-ink/8">
+                  <h2 className="font-semibold">User Search</h2>
+                </div>
+                <div className="p-6">
+                  <form onSubmit={handleUserSearch} className="flex gap-2 mb-4">
+                    <input
+                      type="text"
+                      value={userQuery}
+                      onChange={e => setUserQuery(e.target.value)}
+                      placeholder="Search by name or email"
+                      aria-label="Search users by name or email"
+                      className="flex-1 border border-ink/15 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-700/30"
+                    />
+                    <button
+                      type="submit"
+                      disabled={userSearchLoading || !userQuery.trim()}
+                      className="px-4 py-2 text-sm font-semibold bg-brand-700 text-white rounded-full hover:bg-brand-800 transition-colors disabled:opacity-50">
+                      Search
+                    </button>
+                  </form>
+
+                  {userSearchLoading && (
+                    <div className="flex items-center justify-center py-6"><Loader2 size={20} className="animate-spin text-muted" /></div>
+                  )}
+
+                  {!userSearchLoading && userSearched && userResults.length === 0 && (
+                    <p className="text-sm text-muted py-2">No users found.</p>
+                  )}
+
+                  {!userSearchLoading && userResults.length > 0 && (
+                    <div className="divide-y divide-ink/6 border border-ink/8 rounded-2xl overflow-hidden mb-4">
+                      {userResults.map(u => (
+                        <button
+                          key={u.id}
+                          onClick={() => setSelectedUser(u)}
+                          className={cn(
+                            'w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between gap-2',
+                            selectedUser?.id === u.id && 'bg-brand-50/60'
+                          )}>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold truncate">{u.name}</p>
+                            <p className="text-xs text-muted truncate">{u.email}</p>
+                          </div>
+                          {u.isBanned && (
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-red-600 shrink-0">Banned</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedUser && (
+                    <div className="border border-ink/8 rounded-2xl p-4 bg-gray-50">
+                      <p className="font-semibold">{selectedUser.name}</p>
+                      <p className="text-sm text-muted">{selectedUser.email}</p>
+                      <p className="text-xs mt-2">
+                        <span className="font-semibold text-ink">Account status: </span>
+                        {selectedUser.isActive ? 'Active' : 'Inactive'}
+                      </p>
+                      <p className="text-xs">
+                        <span className="font-semibold text-ink">Moderation status: </span>
+                        {selectedUser.isBanned ? (
+                          <span className="text-red-600 font-semibold">Banned{selectedUser.banReason ? `: ${selectedUser.banReason}` : ''}</span>
+                        ) : (
+                          <span className="text-muted">Not banned</span>
+                        )}
+                      </p>
+                      {selectedUser.createdAt && (
+                        <p className="text-xs text-muted">Joined {formatTimeAgo(selectedUser.createdAt)}</p>
+                      )}
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        {selectedUser.isBanned ? (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.patch(`/admin/users/${selectedUser.id}/unban`, {});
+                                setSelectedUser((prev: any) => prev && { ...prev, isBanned: false, banReason: null });
+                                setUserResults(prev => prev.map(u => u.id === selectedUser.id ? { ...u, isBanned: false, banReason: null } : u));
+                                toast({ title: 'User unbanned' });
+                              } catch (err: any) {
+                                toast({ title: 'Could not unban user', description: err?.message, variant: 'destructive' });
+                              }
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                            Unban user
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openReasonPrompt({
+                              title: `Ban ${selectedUser.name}?`,
+                              warning: "This is more serious than a restriction: it immediately suspends their whole account -- they're logged out, cannot log back in, and cannot send any messages or create listings. Their existing active listings will also be immediately hidden from public view (restored automatically if unbanned).",
+                              confirmLabel: 'Ban user',
+                              danger: true,
+                              onConfirm: async (reason) => {
+                                await api.patch(`/admin/users/${selectedUser.id}/ban`, { reason });
+                                setSelectedUser((prev: any) => prev && { ...prev, isBanned: true, banReason: reason });
+                                setUserResults(prev => prev.map(u => u.id === selectedUser.id ? { ...u, isBanned: true, banReason: reason } : u));
+                                toast({ title: 'User banned' });
+                              },
+                            })}
+                            className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
+                            Ban user
+                          </button>
+                        )}
+                        {selectedUser.id !== user.id && (
+                          <button
+                            onClick={() => openReasonPrompt({
+                              title: `Permanently delete ${selectedUser.name}'s account?`,
+                              warning: `Different from Ban and cannot be undone. The account itself is removed -- ${selectedUser.email || 'their email'} becomes available for a brand new signup with no connection to this account's history. Their listings are hidden from public view; their past messages and reports are kept, shown as "Deleted user".`,
+                              confirmLabel: 'Delete account permanently',
+                              extreme: true,
+                              confirmPhrase: selectedUser.email || selectedUser.name,
+                              onConfirm: async (reason) => {
+                                await api.delete(`/admin/users/${selectedUser.id}`, { reason });
+                                setUserResults(prev => prev.filter(u => u.id !== selectedUser.id));
+                                setSelectedUser(null);
+                                toast({ title: 'Account permanently deleted' });
+                              },
+                            })}
+                            className="px-3 py-1.5 text-xs font-semibold bg-ink text-white rounded-full hover:bg-black transition-colors">
+                            Delete account
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Reports */}
             <div className="bg-white border border-ink/8 rounded-3xl shadow-card overflow-hidden">

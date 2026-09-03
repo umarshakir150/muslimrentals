@@ -107,8 +107,16 @@ router.get('/stats', async (_req, res: Response, next: NextFunction) => {
   } catch (err) { next(err); }
 });
 
-// ─── GET /admin/users ─────────────────────────────────────────────────────────
-router.get('/users', async (req, res: Response, next: NextFunction) => {
+// ─── GET /admin/users — directory search for User Search/Management ──────────
+// ADMIN-only (escalated like /ban, /role, and permanent delete) -- unlike
+// every other GET in this router, this one returns a searchable slice of
+// every user account, so it's deliberately not available to MODERATOR.
+// Partial, case-insensitive match on name or email (`q`), returning only
+// the fields the admin UI actually needs (never passwordHash, tokens, or
+// other sensitive columns). No `q` returns the full directory ordered by
+// newest-first, same as before this became ADMIN-only -- the frontend's
+// own User Search UI only ever calls this with a non-empty query.
+router.get('/users', requireRole(UserRole.ADMIN), async (req, res: Response, next: NextFunction) => {
   try {
     const { q, page } = adminQuerySchema.parse(req.query);
     const where: any = {};

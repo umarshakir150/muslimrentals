@@ -773,3 +773,157 @@ describe('Admin Reports panel: permanent Delete account (ADMIN-only, distinct fr
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
+
+describe('User Search / User Management (ADMIN-only, separate from Reports)', () => {
+  function mockAdminPage({ users = [] as any[] } = {}) {
+    getMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
+      if (endpoint.startsWith('/admin/reports?status=')) return Promise.resolve({ data: [] });
+      if (endpoint.startsWith('/admin/users?q=')) return Promise.resolve({ data: users });
+      return Promise.resolve({ data: null });
+    });
+  }
+
+  const JAKE = { id: 'u30', name: 'Jake Smith', email: 'jake@example.com', role: 'USER', isBanned: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' };
+
+  it('is hidden entirely for MODERATOR', async () => {
+    mockAdminPage();
+    useUserMock.mockReturnValue(MODERATOR_USER);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('No pending reports')).toBeInTheDocument());
+    expect(screen.queryByText('User Search')).not.toBeInTheDocument();
+  });
+
+  it('is shown to ADMIN, and searching calls the search endpoint with the typed query', async () => {
+    mockAdminPage({ users: [JAKE] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/users?q=Jake'));
+    expect(await screen.findByText('Jake Smith')).toBeInTheDocument();
+    expect(screen.getByText('jake@example.com')).toBeInTheDocument();
+  });
+
+  it('cannot submit an empty search', async () => {
+    mockAdminPage();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
+  });
+
+  it('shows a "No users found" state when the search returns nothing', async () => {
+    mockAdminPage({ users: [] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+
+    await user.type(screen.getByLabelText('Search users by name or email'), 'nobody');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => expect(screen.getByText('No users found.')).toBeInTheDocument());
+  });
+
+  it('selecting a result shows name, email, account status, ban state, and join date, plus Ban + Delete actions', async () => {
+    mockAdminPage({ users: [JAKE] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('Jake Smith'));
+
+    expect(screen.getByText(/Account status:/)).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByText('Not banned')).toBeInTheDocument();
+    expect(screen.getByText(/Joined/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete account' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unban user' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Restrict user')).not.toBeInTheDocument();
+  });
+
+  it('shows the correct current ban state and Unban (not Ban) for an already-banned user', async () => {
+    mockAdminPage({ users: [{ ...JAKE, isBanned: true, banReason: 'Prior scam' }] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('Jake Smith'));
+
+    expect(screen.getByText(/Banned: Prior scam/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unban user' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ban user' })).not.toBeInTheDocument();
+    // The results list also flags banned users directly.
+    expect(screen.getByText('Banned')).toBeInTheDocument();
+  });
+
+  it('bans a selected user via the shared reason-prompt modal and updates the panel', async () => {
+    mockAdminPage({ users: [JAKE] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('Jake Smith'));
+
+    await user.click(screen.getByRole('button', { name: 'Ban user' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ban Jake Smith?' });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Confirmed scam activity');
+    await user.click(within(dialog).getByRole('button', { name: 'Ban user' }));
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u30/ban', { reason: 'Confirmed scam activity' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Unban user' })).toBeInTheDocument());
+  });
+
+  it('unbans a selected user directly, with no confirmation modal', async () => {
+    mockAdminPage({ users: [{ ...JAKE, isBanned: true, banReason: 'Prior scam' }] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('Jake Smith'));
+
+    await user.click(screen.getByRole('button', { name: 'Unban user' }));
+
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u30/unban', {}));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument());
+  });
+
+  it('permanently deletes a selected user via the shared extreme confirmation modal, and the user disappears from the results', async () => {
+    mockAdminPage({ users: [JAKE] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'Jake');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('Jake Smith'));
+
+    await user.click(screen.getByRole('button', { name: 'Delete account' }));
+    const dialog = await screen.findByRole('dialog', { name: "Permanently delete Jake Smith's account?" });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Confirmed scam account');
+    await user.type(within(dialog).getByLabelText(/Type/), 'jake@example.com');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete account permanently' }));
+
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('/admin/users/u30', { reason: 'Confirmed scam account' }));
+    await waitFor(() => expect(screen.queryByText('Jake Smith')).not.toBeInTheDocument());
+  });
+
+  it('does not offer Delete account when the selected user is the logged-in admin themselves', async () => {
+    mockAdminPage({ users: [{ ...JAKE, id: ADMIN_USER.id, name: 'MyOwnAccount' }] });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('User Search')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search users by name or email'), 'my');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByText('MyOwnAccount'));
+
+    expect(screen.queryByRole('button', { name: 'Delete account' })).not.toBeInTheDocument();
+  });
+});

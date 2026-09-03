@@ -181,7 +181,16 @@ export default function AdminPage() {
                           )}
 
                           {type === 'LISTING' && (
-                            <p className="text-xs text-muted">Listing: {r.listing?.title || 'Listing no longer available'}</p>
+                            <div className="text-xs text-muted">
+                              <p>Listing: {r.listing?.title || 'Listing no longer available'}</p>
+                              {r.listing?.moderationRemovedAt && !r.listing.moderationRestoredAt && (
+                                <p className="mt-1">
+                                  <span className="font-semibold text-red-600">Removed by moderation</span>
+                                  {r.listing.moderationRemovedBy?.name && ` by ${r.listing.moderationRemovedBy.name}`}
+                                  {r.listing.moderationRemovalReason && `: ${r.listing.moderationRemovalReason}`}
+                                </p>
+                              )}
+                            </div>
                           )}
 
                           {type === 'USER' && (
@@ -290,22 +299,54 @@ export default function AdminPage() {
                               {r.retentionHold ? 'Remove retention hold' : 'Place retention hold'}
                             </button>
                           )}
-                          {type === 'LISTING' && statusFilter === 'PENDING' && (
-                            <button
-                              onClick={async () => {
-                                if (!r.listing) return;
-                                try {
-                                  await api.delete(`/admin/listings/${r.listing.id}`);
-                                  await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Listing removed' });
-                                  setReports(prev => prev.filter(rep => rep.id !== r.id));
-                                  toast({ title: 'Listing removed' });
-                                } catch (err: any) {
-                                  toast({ title: 'Could not remove listing', description: err?.message, variant: 'destructive' });
-                                }
-                              }}
-                              className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
-                              Remove listing
-                            </button>
+                          {/* Remove/Restore act on the listing itself, not the report, so
+                              (like Restrict/Ban below) they stay available on the Resolved
+                              tab too -- a listing report can be reviewed and the listing
+                              still removed or restored well after the report is closed. */}
+                          {type === 'LISTING' && r.listing && (
+                            r.listing.moderationRemovedAt && !r.listing.moderationRestoredAt ? (
+                              <button
+                                disabled={r.listing.user?.isBanned}
+                                title={r.listing.user?.isBanned ? 'Cannot restore while the owner is banned.' : undefined}
+                                onClick={async () => {
+                                  try {
+                                    await api.patch(`/admin/listings/${r.listing.id}/restore`, {});
+                                    setReports(prev => prev.map(rep => rep.id === r.id
+                                      ? { ...rep, listing: { ...rep.listing, status: 'ACTIVE', moderationRestoredAt: new Date().toISOString() } }
+                                      : rep));
+                                    toast({ title: 'Listing restored' });
+                                  } catch (err: any) {
+                                    toast({ title: 'Could not restore listing', description: err?.message, variant: 'destructive' });
+                                  }
+                                }}
+                                className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                Restore listing
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => openReasonPrompt({
+                                  title: `Remove "${r.listing.title}" from public view?`,
+                                  warning: 'This hides the listing from browse, map, search, and its detail page. It stays reversible -- you (or another moderator) can restore it later, unless the owner is banned in the meantime.',
+                                  confirmLabel: 'Remove listing',
+                                  danger: true,
+                                  onConfirm: async (reason) => {
+                                    await api.delete(`/admin/listings/${r.listing.id}`, { reason });
+                                    const shouldResolve = statusFilter === 'PENDING';
+                                    if (shouldResolve) {
+                                      await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Listing removed' });
+                                    }
+                                    setReports(prev => shouldResolve
+                                      ? prev.filter(rep => rep.id !== r.id)
+                                      : prev.map(rep => rep.id === r.id
+                                          ? { ...rep, listing: { ...rep.listing, status: 'REMOVED', moderationRemovedAt: new Date().toISOString(), moderationRestoredAt: null, moderationRemovalReason: reason, moderationRemovedBy: { name: user?.name } } }
+                                          : rep));
+                                    toast({ title: 'Listing removed' });
+                                  },
+                                })}
+                                className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
+                                Remove listing
+                              </button>
+                            )
                           )}
                           {/* Restrict/Unrestrict/Ban/Unban -- act on the reportedUser, not the
                               report, so (unlike Dismiss/Remove-listing) these stay available on

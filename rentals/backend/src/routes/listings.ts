@@ -218,12 +218,21 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
 });
 
 // ─── DELETE /listings/:id ─────────────────────────────────────────────────────
+// Owner-only, same as /:id/permanent below -- an admin/moderator removing
+// someone else's listing must go through POST/DELETE /admin/listings/:id
+// instead, which requires a reason and records who/when/why in the
+// moderationRemoved* fields. This used to also allow ADMIN/MODERATOR to
+// bypass the ownership check here, which let a moderator soft-remove a
+// listing with no reason and no moderation record -- closed as part of
+// adding the admin Remove/Restore Listing feature (moderationRemovedAt
+// etc.), so every moderator removal now goes through the one path that
+// actually tracks it.
 router.delete('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const listing = await prisma.listing.findUnique({ where: { id: req.params.id } });
     if (!listing) throw new AppError('Listing not found.', 404);
 
-    if (listing.userId !== req.user!.id && req.user!.role === 'USER') {
+    if (listing.userId !== req.user!.id) {
       throw new AppError('Not authorized.', 403);
     }
 

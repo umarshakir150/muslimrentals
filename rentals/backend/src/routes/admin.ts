@@ -43,6 +43,10 @@ const roleSchema = z.object({
   role: z.nativeEnum(UserRole),
 }).strict();
 
+const removeListingSchema = z.object({
+  reason: z.string().min(5).max(500).trim(),
+}).strict();
+
 const reportUpdateSchema = z.object({
   status:              z.nativeEnum(ReportStatus).optional(),
   resolution:          z.string().max(500).trim().optional(),
@@ -228,7 +232,12 @@ router.get('/listings', async (req, res: Response, next: NextFunction) => {
         orderBy: { createdAt: 'desc' },
         take: 25,
         skip: (page - 1) * 25,
-        include: { user: { select: { name: true, email: true } }, images: { take: 1 } },
+        include: {
+          user:                { select: { name: true, email: true, isBanned: true } },
+          images:              { take: 1 },
+          moderationRemovedBy: { select: { name: true, email: true } },
+          moderationRestoredBy: { select: { name: true, email: true } },
+        },
       }),
       prisma.listing.count({ where }),
     ]);
@@ -236,14 +245,77 @@ router.get('/listings', async (req, res: Response, next: NextFunction) => {
   } catch (err) { next(err); }
 });
 
-// ─── DELETE /admin/listings/:id ───────────────────────────────────────────────
-router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
+// ─── DELETE /admin/listings/:id — remove from public visibility ───────────────
+// ADMIN/MODERATOR (router's default gate) -- reversible soft-remove, not a
+// destructive delete: sets status -> REMOVED (already excluded from every
+// public browse/map/search/detail query, same as an owner's own removal)
+// and records who/when/why in the moderationRemoved* fields so Restore can
+// tell this apart from a listing hidden for any other reason (owner's own
+// delete, account-deletion, or BANNED from /admin/users/:id/ban). Works
+// regardless of the listing's current status -- including one currently
+// BANNED because its owner is banned -- so a moderator's own removal
+// decision survives that owner's later /unban (see /unban's comment: it
+// only restores listings still at BANNED, and this moves the listing to
+// REMOVED, off that status entirely). Clears any prior restore record so a
+// remove -> restore -> remove cycle re-arms restore-eligibility correctly.
+router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const { reason } = removeListingSchema.parse(req.body);
+    const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!listing) throw new AppError('Listing not found.', 404);
+
     await prisma.listing.update({
       where: { id: req.params.id },
-      data: { status: ListingStatus.REMOVED, isActive: false },
+      data: {
+        status:                   ListingStatus.REMOVED,
+        isActive:                 false,
+        moderationRemovedAt:      new Date(),
+        moderationRemovedById:    req.user!.id,
+        moderationRemovalReason:  reason,
+        moderationRestoredAt:     null,
+        moderationRestoredById:   null,
+      },
     });
     res.json({ success: true, message: 'Listing removed.' });
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /admin/listings/:id/restore — reverse a moderator removal ──────────
+// Only ever reverses this listing's own moderationRemovedAt/By action --
+// never a listing hidden by its owner's own delete, by account deletion, or
+// currently BANNED for an unrelated (still-active) ban. Eligibility is
+// "moderationRemovedAt is set AND moderationRestoredAt is not" (mirrors
+// UserMessageRestriction.liftedAt's already-established pattern), so a
+// listing that was never moderator-removed, or one already restored since
+// its last removal, correctly 400s instead of silently no-op'ing. Also
+// blocked while the owner is currently banned -- the founder-specified rule
+// so a restore can never undo a ban's own listing-hiding side effect out
+// from under it; /unban (or a future moderator removal) is the only way
+// forward for that listing after the owner is unbanned.
+router.patch('/listings/:id/restore', validateUuidParam('id'), writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const listing = await prisma.listing.findUnique({
+      where:  { id: req.params.id },
+      select: { id: true, moderationRemovedAt: true, moderationRestoredAt: true, user: { select: { isBanned: true } } },
+    });
+    if (!listing) throw new AppError('Listing not found.', 404);
+    if (!listing.moderationRemovedAt || listing.moderationRestoredAt) {
+      throw new AppError('This listing was not removed by moderation, so there is nothing to restore.', 400);
+    }
+    if (listing.user.isBanned) {
+      throw new AppError('Cannot restore this listing while its owner is banned.', 400);
+    }
+
+    await prisma.listing.update({
+      where: { id: req.params.id },
+      data: {
+        status:                 ListingStatus.ACTIVE,
+        isActive:               true,
+        moderationRestoredAt:   new Date(),
+        moderationRestoredById: req.user!.id,
+      },
+    });
+    res.json({ success: true, message: 'Listing restored.' });
   } catch (err) { next(err); }
 });
 
@@ -268,7 +340,14 @@ router.get('/reports', async (req, res: Response, next: NextFunction) => {
       where:   status ? { status } : { status: 'PENDING' },
       include: {
         reporter:     { select: { id: true, name: true, email: true } },
-        listing:      { select: { id: true, title: true } },
+        listing:      {
+          select: {
+            id: true, title: true, status: true,
+            moderationRemovedAt: true, moderationRestoredAt: true, moderationRemovalReason: true,
+            moderationRemovedBy: { select: { name: true } },
+            user: { select: { isBanned: true } },
+          },
+        },
         reportedUser: { select: { id: true, name: true, email: true, isBanned: true, banReason: true, createdAt: true } },
         message:      {
           select: {

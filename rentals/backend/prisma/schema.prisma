@@ -55,6 +55,8 @@ model User {
   notifications     Notification[]
   messageRestrictionsImposed  UserMessageRestriction[] @relation("MessageRestrictionsImposed")
   messageRestrictionsReceived UserMessageRestriction[] @relation("MessageRestrictionsProtecting")
+  listingRemovalsPerformed    Listing[] @relation("ListingModerationRemovedBy")
+  listingRestoresPerformed    Listing[] @relation("ListingModerationRestoredBy")
 
   @@index([email])
   @@index([googleId])
@@ -122,6 +124,29 @@ model Listing {
   savedBy         SavedListing[]
   conversations   Conversation[]
   reports         Report[]
+
+  // Admin/moderator "Remove listing" moderation action (distinct from an
+  // owner's own DELETE /listings/:id, from BANNED set by /admin/users/:id/ban,
+  // and from REMOVED set by account deletion) -- these fields are the only
+  // way to tell those apart, since all of them land on the same `status`
+  // value or a status the ban flow also uses. Restore is only ever offered
+  // when moderationRemovedAt is set and moderationRestoredAt is not (i.e.
+  // "currently in a moderator-removed state, not yet restored") -- mirrors
+  // UserMessageRestriction.liftedAt's already-established pattern for a
+  // reversible moderation action. A restore does not clear the removedAt/
+  // removedBy/reason fields, so who removed it and when stays on record
+  // even after the listing is restored; a later re-removal clears
+  // moderationRestoredAt/By again so restore-eligibility is re-armed.
+  // SetNull (not Cascade) on both moderator relations: the moderator who
+  // performed the action might later have their own account deleted, but
+  // that must never take this listing's moderation history down with it.
+  moderationRemovedAt      DateTime?
+  moderationRemovedById    String?
+  moderationRemovedBy      User?           @relation("ListingModerationRemovedBy", fields: [moderationRemovedById], references: [id], onDelete: SetNull)
+  moderationRemovalReason  String?
+  moderationRestoredAt     DateTime?
+  moderationRestoredById   String?
+  moderationRestoredBy     User?           @relation("ListingModerationRestoredBy", fields: [moderationRestoredById], references: [id], onDelete: SetNull)
 
   @@index([city])
   @@index([userId])

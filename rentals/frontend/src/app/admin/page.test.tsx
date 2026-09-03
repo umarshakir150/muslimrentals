@@ -558,7 +558,7 @@ describe('Admin Reports panel: Pending/Resolved status tabs', () => {
     expect(screen.getByText(/Outcome: Listing removed/)).toBeInTheDocument();
   });
 
-  it('hides Dismiss/Restrict/Remove-listing actions once viewing the Resolved tab', async () => {
+  it('hides Dismiss (a report-only action) but keeps Remove listing available on the Resolved tab', async () => {
     const resolvedReport = {
       id: 'r1',
       reason: 'Spam',
@@ -581,6 +581,104 @@ describe('Admin Reports panel: Pending/Resolved status tabs', () => {
     await user.click(screen.getByRole('button', { name: 'Resolved' }));
     await waitFor(() => expect(screen.getByText(/Outcome: Reviewed and dismissed/)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
+    // Remove listing acts on the listing itself, not the report -- like
+    // Restrict/Ban, it stays available regardless of the report's own
+    // status, since a listing can still need moderation well after its
+    // report is closed.
+    expect(screen.getByRole('button', { name: 'Remove listing' })).toBeInTheDocument();
+  });
+});
+
+describe('Admin Reports panel: Remove/Restore listing', () => {
+  it('Remove listing requires a reason via the in-app modal, then calls DELETE with the reason and resolves the report from Pending', async () => {
+    mockReports([{
+      id: 'r10', reason: 'Spam', reporter: { name: 'Alice' },
+      listing: { id: 'l10', title: 'Cozy 2BR', status: 'ACTIVE', moderationRemovedAt: null, moderationRestoredAt: null },
+    }]);
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    const promptSpy = vi.spyOn(window, 'prompt');
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove listing' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Remove listing' }));
+    const dialog = await screen.findByRole('dialog', { name: /Remove "Cozy 2BR" from public view\?/ });
+    expect(within(dialog).getByRole('button', { name: 'Remove listing' })).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Duplicate scam listing');
+    await user.click(within(dialog).getByRole('button', { name: 'Remove listing' }));
+
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('/admin/listings/l10', { reason: 'Duplicate scam listing' }));
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r10', { status: 'RESOLVED', resolution: 'Listing removed' }));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(promptSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('Remove listing on the Resolved tab does not re-resolve the (already closed) report', async () => {
+    const resolvedReport = {
+      id: 'r11', reason: 'Fraud', reporter: { name: 'Bob' },
+      listing: { id: 'l11', title: 'Sunny Basement', status: 'ACTIVE', moderationRemovedAt: null, moderationRestoredAt: null },
+      resolvedAt: '2026-06-05T00:00:00.000Z', resolution: 'Reviewed, no action',
+    };
+    getMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/admin/stats') return Promise.resolve({ data: STATS });
+      if (endpoint === '/admin/reports?status=PENDING') return Promise.resolve({ data: [] });
+      if (endpoint === '/admin/reports?status=RESOLVED') return Promise.resolve({ data: [resolvedReport] });
+      if (endpoint === '/admin/reports?status=DISMISSED') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: null });
+    });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('No pending reports')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Resolved' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove listing' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Remove listing' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Found while reviewing a closed report');
+    await user.click(within(dialog).getByRole('button', { name: 'Remove listing' }));
+
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('/admin/listings/l11', { reason: 'Found while reviewing a closed report' }));
+    expect(patchMock).not.toHaveBeenCalledWith('/admin/reports/r11', expect.anything());
+  });
+
+  it('shows Restore listing (no reason required) once a listing has been removed by moderation, and calls PATCH restore', async () => {
+    mockReports([{
+      id: 'r12', reason: 'Spam', reporter: { name: 'Alice' },
+      listing: {
+        id: 'l12', title: 'Cozy 2BR', status: 'REMOVED',
+        moderationRemovedAt: '2026-09-01T00:00:00.000Z', moderationRestoredAt: null,
+        moderationRemovalReason: 'Duplicate scam listing', moderationRemovedBy: { name: 'Moderator' },
+        user: { isBanned: false },
+      },
+    }]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore listing' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Remove listing' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Removed by moderation/)).toBeInTheDocument();
+    expect(screen.getByText(/by Moderator/)).toBeInTheDocument();
+    expect(screen.getByText(/Duplicate scam listing/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Restore listing' }));
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/listings/l12/restore', {}));
+    // No confirmation dialog is required for Restore, unlike Remove.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('disables Restore listing while the listing\'s owner is currently banned', async () => {
+    mockReports([{
+      id: 'r13', reason: 'Spam', reporter: { name: 'Alice' },
+      listing: {
+        id: 'l13', title: 'Cozy 2BR', status: 'REMOVED',
+        moderationRemovedAt: '2026-09-01T00:00:00.000Z', moderationRestoredAt: null,
+        moderationRemovalReason: 'Duplicate scam listing', moderationRemovedBy: { name: 'Moderator' },
+        user: { isBanned: true },
+      },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore listing' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Restore listing' })).toBeDisabled();
   });
 });

@@ -158,7 +158,7 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.getByText(/Asking to pay outside the app/)).toBeInTheDocument();
   });
 
-  it('renders "Unknown" for the MESSAGE recipient when the backend could not derive one', async () => {
+  it('renders "Deleted user" for the MESSAGE recipient when the backend could not derive one (or that account was since deleted)', async () => {
     mockReports([{
       id: 'r4c',
       targetType: 'MESSAGE',
@@ -171,7 +171,7 @@ describe('Admin Reports panel: targetType branching', () => {
     }]);
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
-    expect(screen.getByText(/To: Unknown/)).toBeInTheDocument();
+    expect(screen.getByText(/To: Deleted user/)).toBeInTheDocument();
   });
 
   it('Restrict user opens the in-app reason modal (not window.prompt) and calls the new narrow /restrict endpoint, resolving the report from Pending', async () => {
@@ -680,5 +680,96 @@ describe('Admin Reports panel: Remove/Restore listing', () => {
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restore listing' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Restore listing' })).toBeDisabled();
+  });
+});
+
+describe('Admin Reports panel: permanent Delete account (ADMIN-only, distinct from Ban)', () => {
+  function userReport(overrides: Record<string, any> = {}) {
+    return {
+      id: 'r20', targetType: 'USER', reason: 'Fraud', reporter: { id: 'gina-4', name: 'Gina' }, reporterId: 'gina-4',
+      reportedUser: { id: 'u20', name: 'Jake', email: 'jake@example.com', isBanned: false },
+      ...overrides,
+    };
+  }
+
+  it('is shown to ADMIN and visually distinct from Ban (a separate, non-red button)', async () => {
+    mockReports([userReport()]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument());
+    const deleteBtn = screen.getByRole('button', { name: 'Delete account' });
+    const banBtn = screen.getByRole('button', { name: 'Ban user' });
+    expect(deleteBtn).toBeInTheDocument();
+    expect(deleteBtn.className).not.toBe(banBtn.className);
+    expect(deleteBtn.className).toMatch(/bg-ink/);
+  });
+
+  it('is hidden from MODERATOR (ADMIN-only, unlike Restrict)', async () => {
+    mockReports([userReport()]);
+    useUserMock.mockReturnValue(MODERATOR_USER);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText('Jake', { exact: false })).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Delete account' })).not.toBeInTheDocument();
+  });
+
+  it('is hidden when the reported user is the logged-in admin themselves', async () => {
+    mockReports([userReport({ reportedUser: { id: ADMIN_USER.id, name: 'SelfTarget', email: 'admin@example.com', isBanned: false } })]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Reported user: SelfTarget/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Delete account' })).not.toBeInTheDocument();
+  });
+
+  it('stays available even while the account is already banned (alongside Unban)', async () => {
+    mockReports([userReport({ reportedUser: { id: 'u20', name: 'Jake', email: 'jake@example.com', isBanned: true, banReason: 'Prior issue' } })]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Unban user' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Delete account' })).toBeInTheDocument();
+  });
+
+  it('requires both a reason and typing the exact email before enabling the confirm button, then calls DELETE and resolves the report', async () => {
+    mockReports([userReport()]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete account' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Delete account' }));
+    const dialog = await screen.findByRole('dialog', { name: "Permanently delete Jake's account?" });
+    expect(within(dialog).getByText(/cannot be undone/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/brand new signup/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Deleted user/)).toBeInTheDocument();
+    const confirmBtn = within(dialog).getByRole('button', { name: 'Delete account permanently' });
+    expect(confirmBtn).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Confirmed serial scam account');
+    expect(confirmBtn).toBeDisabled(); // reason alone isn't enough -- still needs the typed email
+
+    await user.type(within(dialog).getByLabelText(/Type/), 'not-the-right-email@example.com');
+    expect(confirmBtn).toBeDisabled();
+
+    await user.clear(within(dialog).getByLabelText(/Type/));
+    await user.type(within(dialog).getByLabelText(/Type/), 'jake@example.com');
+    expect(confirmBtn).not.toBeDisabled();
+
+    await user.click(confirmBtn);
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('/admin/users/u20', { reason: 'Confirmed serial scam account' }));
+    await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r20', { status: 'RESOLVED', resolution: 'Account permanently deleted' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('shows a destructive toast instead of failing silently when the deletion request fails', async () => {
+    mockReports([userReport()]);
+    deleteMock.mockRejectedValue({ message: 'Server error' });
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete account' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Delete account' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Confirmed serial scam account');
+    await user.type(within(dialog).getByLabelText(/Type/), 'jake@example.com');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete account permanently' }));
+
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Action failed', variant: 'destructive' })));
+    // Dialog stays open on failure so the admin doesn't have to redo everything.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

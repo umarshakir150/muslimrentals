@@ -65,22 +65,37 @@ export default function AdminPage() {
     warning?: string;
     confirmLabel: string;
     danger?: boolean;
+    // Permanent account deletion only: a stronger black/ink treatment (not
+    // just Ban's red) so the two irreversibility levels never look the
+    // same, plus a second typed-confirmation field (the account's exact
+    // email) beyond just the reason -- deliberately more friction than any
+    // other action here, since this is the only one that can't be undone.
+    extreme?: boolean;
+    confirmPhrase?: string;
     onConfirm: (reason: string) => Promise<void>;
   } | null>(null);
   const [reasonInput, setReasonInput] = useState('');
+  const [confirmPhraseInput, setConfirmPhraseInput] = useState('');
   const [reasonSubmitting, setReasonSubmitting] = useState(false);
   const { toast } = useToast();
 
   function openReasonPrompt(prompt: typeof reasonPrompt) {
     setReasonInput('');
+    setConfirmPhraseInput('');
     setReasonPrompt(prompt);
   }
 
+  function reasonPromptReady() {
+    if (!reasonPrompt || reasonInput.trim().length < 5) return false;
+    if (reasonPrompt.confirmPhrase && confirmPhraseInput.trim() !== reasonPrompt.confirmPhrase) return false;
+    return true;
+  }
+
   async function submitReasonPrompt() {
-    if (!reasonPrompt || reasonInput.trim().length < 5) return;
+    if (!reasonPromptReady()) return;
     setReasonSubmitting(true);
     try {
-      await reasonPrompt.onConfirm(reasonInput.trim());
+      await reasonPrompt!.onConfirm(reasonInput.trim());
       setReasonPrompt(null);
     } catch (err: any) {
       toast({ title: 'Action failed', description: err?.message || 'Please try again.', variant: 'destructive' });
@@ -195,7 +210,7 @@ export default function AdminPage() {
 
                           {type === 'USER' && (
                             <div className="text-xs text-muted">
-                              <p>Reported user: {r.reportedUser?.name || 'Unknown'} ({r.reportedUser?.email || 'no email on record'})</p>
+                              <p>Reported user: {r.reportedUser?.name || 'Deleted user'} ({r.reportedUser?.email || 'no email on record'})</p>
                               {r.reporterHistory && (
                                 <p>
                                   This reporter has filed {r.reporterHistory.totalFiled} report(s) total,
@@ -229,8 +244,8 @@ export default function AdminPage() {
                             const sender = r.messageSender || r.message?.sender;
                             return (
                               <div className="text-xs text-muted">
-                                <p>From: {sender?.name || 'Unknown'} {sender?.email && `(${sender.email})`}</p>
-                                <p>To: {r.recipient?.name || 'Unknown'} {r.recipient?.email && `(${r.recipient.email})`}</p>
+                                <p>From: {sender?.name || 'Deleted user'} {sender?.email && `(${sender.email})`}</p>
+                                <p>To: {r.recipient?.name || 'Deleted user'} {r.recipient?.email && `(${r.recipient.email})`}</p>
                                 {r.message?.createdAt && <p>Sent: {formatTimeAgo(r.message.createdAt)}</p>}
                                 {r.retentionHold && (
                                   <p className="text-amber-700 font-semibold">
@@ -371,7 +386,8 @@ export default function AdminPage() {
                                 Unban user
                               </button>
                             )
-                          ) : (
+                          ) : null)}
+                          {r.reportedUser && (r.reportedUser.isBanned ? null : (
                             <>
                               {r.restriction ? (
                                 <button
@@ -433,6 +449,37 @@ export default function AdminPage() {
                               )}
                             </>
                           ))}
+                          {/* Delete account: permanent, ADMIN-only, and deliberately
+                              distinct from Ban -- available whether the account is
+                              currently banned or not, so an admin can finish the job on
+                              an already-banned account instead of first having to
+                              unban it. Guarded against the logged-in admin's own id as
+                              a UI-level belt-and-suspenders on top of the server's own
+                              400 for the same case. */}
+                          {r.reportedUser && user?.role === 'ADMIN' && r.reportedUser.id !== user.id && (
+                            <button
+                              onClick={() => openReasonPrompt({
+                                title: `Permanently delete ${r.reportedUser.name}'s account?`,
+                                warning: `Different from Ban and cannot be undone. The account itself is removed -- ${r.reportedUser.email || 'their email'} becomes available for a brand new signup with no connection to this account's history. Their listings are hidden from public view; their past messages and reports are kept, shown as "Deleted user".`,
+                                confirmLabel: 'Delete account permanently',
+                                extreme: true,
+                                confirmPhrase: r.reportedUser.email || r.reportedUser.name,
+                                onConfirm: async (reason) => {
+                                  await api.delete(`/admin/users/${r.reportedUser.id}`, { reason });
+                                  const shouldResolve = statusFilter === 'PENDING';
+                                  if (shouldResolve) {
+                                    await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Account permanently deleted' });
+                                  }
+                                  setReports(prev => shouldResolve
+                                    ? prev.filter(rep => rep.id !== r.id)
+                                    : prev.map(rep => rep.id === r.id ? { ...rep, reportedUser: null, restriction: null } : rep));
+                                  toast({ title: 'Account permanently deleted' });
+                                },
+                              })}
+                              className="px-3 py-1.5 text-xs font-semibold bg-ink text-white rounded-full hover:bg-black transition-colors">
+                              Delete account
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -455,9 +502,9 @@ export default function AdminPage() {
           <div className="w-full max-w-md bg-white rounded-3xl shadow-elevated p-6">
             <h3 id="reported-message-title" className="font-serif text-xl mb-1">Reported message</h3>
             <p className="text-xs text-muted mb-3">
-              From {messageDetail.messageSender?.name || messageDetail.message?.sender?.name || 'Unknown'}
+              From {messageDetail.messageSender?.name || messageDetail.message?.sender?.name || 'Deleted user'}
               {' '}({(messageDetail.messageSender || messageDetail.message?.sender)?.email || 'no email on record'})
-              {' '}to {messageDetail.recipient?.name || 'Unknown'}
+              {' '}to {messageDetail.recipient?.name || 'Deleted user'}
               {' '}({messageDetail.recipient?.email || 'no email on record'})
               {messageDetail.message?.createdAt && <> · {formatTimeAgo(messageDetail.message.createdAt)}</>}
             </p>
@@ -500,7 +547,10 @@ export default function AdminPage() {
           <div className="w-full max-w-md bg-white rounded-3xl shadow-elevated p-6">
             <h3 id="reason-prompt-title" className="font-serif text-xl mb-2">{reasonPrompt.title}</h3>
             {reasonPrompt.warning && (
-              <p className={cn('text-sm rounded-lg px-3 py-2 mb-3', reasonPrompt.danger ? 'text-red-700 bg-red-50' : 'text-amber-800 bg-amber-50')}>
+              <p className={cn(
+                'text-sm rounded-lg px-3 py-2 mb-3',
+                reasonPrompt.extreme ? 'text-white bg-ink' : reasonPrompt.danger ? 'text-red-700 bg-red-50' : 'text-amber-800 bg-amber-50'
+              )}>
                 {reasonPrompt.warning}
               </p>
             )}
@@ -515,6 +565,20 @@ export default function AdminPage() {
               autoFocus
               className="w-full border border-ink/15 rounded-xl px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-brand-700/30"
             />
+            {reasonPrompt.confirmPhrase && (
+              <>
+                <label htmlFor="reason-prompt-confirm-phrase" className="block text-xs font-semibold text-muted mb-1">
+                  Type <span className="font-mono text-ink">{reasonPrompt.confirmPhrase}</span> to confirm
+                </label>
+                <input
+                  id="reason-prompt-confirm-phrase"
+                  value={confirmPhraseInput}
+                  onChange={e => setConfirmPhraseInput(e.target.value)}
+                  autoComplete="off"
+                  className="w-full border border-ink/15 rounded-xl px-3 py-2 text-sm mb-4 font-mono focus:outline-none focus:ring-2 focus:ring-brand-700/30"
+                />
+              </>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => { if (!reasonSubmitting) setReasonPrompt(null); }}
@@ -524,10 +588,10 @@ export default function AdminPage() {
               </button>
               <button
                 onClick={submitReasonPrompt}
-                disabled={reasonSubmitting || reasonInput.trim().length < 5}
+                disabled={reasonSubmitting || !reasonPromptReady()}
                 className={cn(
                   'flex-1 min-h-[44px] py-2.5 text-sm font-semibold rounded-full transition-colors disabled:opacity-50',
-                  reasonPrompt.danger ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-brand-700 text-white hover:bg-brand-800'
+                  reasonPrompt.extreme ? 'bg-ink text-white hover:bg-black' : reasonPrompt.danger ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-brand-700 text-white hover:bg-brand-800'
                 )}>
                 {reasonSubmitting ? 'Working…' : reasonPrompt.confirmLabel}
               </button>

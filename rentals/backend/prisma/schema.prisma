@@ -116,8 +116,15 @@ model Listing {
   updatedAt       DateTime        @updatedAt
   expiresAt       DateTime?
 
-  userId          String
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): permanent ADMIN account deletion
+  // (distinct from the self-service DELETE /users/me, which anonymizes
+  // rather than deletes the row) removes the User row outright, and this
+  // listing must survive that as historical/moderation record rather than
+  // being destroyed by a cascade. `userId: null` means "owner account
+  // permanently deleted" -- distinct from every other way a listing can be
+  // hidden (REMOVED/BANNED/INACTIVE all leave userId intact).
+  userId          String?
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   images          ListingImage[]
   amenities       ListingAmenity[]
@@ -256,8 +263,14 @@ model Message {
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  senderId       String
-  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): a permanently-deleted sender's own
+  // account is gone, but their messages must survive for the *other*
+  // participant's conversation history -- a real row delete must never
+  // silently blow holes in it. `senderId: null` reads as "Deleted user" on
+  // the client, the same label the self-service delete flow already uses
+  // for its anonymized row.
+  senderId       String?
+  sender         User?        @relation("SentMessages", fields: [senderId], references: [id], onDelete: SetNull)
 
   reports        Report[]
 
@@ -310,8 +323,13 @@ model Report {
   // keeps its correct meaning with zero backfill required.
   targetType  ReportTargetType? @default(LISTING)
 
-  reporterId  String
-  reporter    User             @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): a permanently-deleted reporter's own
+  // account is gone, but a report they filed against someone else is
+  // moderation evidence that has nothing to do with their own deletion --
+  // it must survive, not vanish along with them. Mirrors listingId/
+  // reportedUserId/messageId's existing SetNull pattern below.
+  reporterId  String?
+  reporter    User?            @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: SetNull)
   listingId   String?
   listing     Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
 

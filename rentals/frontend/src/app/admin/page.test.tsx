@@ -3,11 +3,12 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AdminPage from './page';
 
-const { getMock, patchMock, postMock, deleteMock } = vi.hoisted(() => ({
+const { getMock, patchMock, postMock, deleteMock, toastMock } = vi.hoisted(() => ({
   getMock: vi.fn(),
   patchMock: vi.fn().mockResolvedValue({}),
   postMock: vi.fn().mockResolvedValue({}),
   deleteMock: vi.fn().mockResolvedValue({}),
+  toastMock: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({
   api: { get: getMock, patch: patchMock, post: postMock, delete: deleteMock },
@@ -31,7 +32,7 @@ vi.mock('@/store/authStore', () => ({
   useAuthStore: () => ({ clearAuth: vi.fn() }),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => '/admin' }));
-vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }));
 
 const STATS = { users: 10, activeListings: 5, pendingReports: 3, messages: 20 };
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   patchMock.mockReset().mockResolvedValue({});
   postMock.mockReset().mockResolvedValue({});
   deleteMock.mockReset().mockResolvedValue({});
+  toastMock.mockReset();
   useUserMock.mockReset().mockReturnValue(ADMIN_USER);
 });
 
@@ -172,7 +174,7 @@ describe('Admin Reports panel: targetType branching', () => {
     expect(screen.getByText(/To: Unknown/)).toBeInTheDocument();
   });
 
-  it('Restrict user calls the new narrow /restrict endpoint (not /ban) and resolves the report from Pending', async () => {
+  it('Restrict user opens the in-app reason modal (not window.prompt) and calls the new narrow /restrict endpoint, resolving the report from Pending', async () => {
     mockReports([{
       id: 'r5',
       targetType: 'USER',
@@ -181,11 +183,20 @@ describe('Admin Reports panel: targetType branching', () => {
       reporterId: 'gina-1',
       reportedUser: { id: 'u5', name: 'Hank', email: 'hank@example.com', isBanned: false },
     }]);
-    vi.spyOn(window, 'prompt').mockReturnValue('Kept messaging the reporter after the report was filed');
+    // window.prompt/confirm must NOT be used any more -- they're the root
+    // cause this modal replaced (some browsers permanently suppress further
+    // confirm/prompt calls after a few fire on one page, which silently
+    // no-ops them with no error and no network request). Spying and
+    // asserting zero calls proves the modal path is what's actually used.
+    const promptSpy = vi.spyOn(window, 'prompt');
+    const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restrict user' })).toBeInTheDocument());
 
-    screen.getByRole('button', { name: 'Restrict user' }).click();
+    await user.click(screen.getByRole('button', { name: 'Restrict user' }));
+    const dialog = await screen.findByRole('dialog', { name: /Restrict Hank from messaging Gina/ });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Kept messaging the reporter after the report was filed');
+    await user.click(within(dialog).getByRole('button', { name: 'Restrict user' }));
 
     await waitFor(() => expect(postMock).toHaveBeenCalledWith('/admin/users/u5/restrict', {
       protectedUserId: 'gina-1',
@@ -193,6 +204,37 @@ describe('Admin Reports panel: targetType branching', () => {
     }));
     expect(patchMock).not.toHaveBeenCalledWith('/admin/users/u5/ban', expect.anything());
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r5', { status: 'RESOLVED', resolution: 'User restricted from messaging reporter' }));
+    expect(promptSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Restrict Hank/ })).not.toBeInTheDocument());
+  });
+
+  it('the reason modal disables its confirm button until at least 5 characters are entered', async () => {
+    mockReports([{
+      id: 'r5b',
+      targetType: 'USER',
+      reason: 'Impersonation',
+      reporter: { id: 'gina-1b', name: 'Gina' },
+      reporterId: 'gina-1b',
+      reportedUser: { id: 'u5b', name: 'Hank', email: 'hank@example.com', isBanned: false },
+    }]);
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restrict user' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Restrict user' }));
+    const dialog = await screen.findByRole('dialog');
+    const confirmBtn = within(dialog).getByRole('button', { name: 'Restrict user' });
+    expect(confirmBtn).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText(/Reason/), 'hi');
+    expect(confirmBtn).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText(/Reason/), ' there now');
+    expect(confirmBtn).not.toBeDisabled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(postMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('shows "Unrestrict user" once a restriction is already active, and lifting it calls /unrestrict', async () => {
@@ -214,7 +256,7 @@ describe('Admin Reports panel: targetType branching', () => {
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u6/unrestrict', { protectedUserId: 'gina-2' }));
   });
 
-  it('Ban user requires confirmation, then calls /ban and resolves the report from Pending', async () => {
+  it('Ban user opens the in-app danger modal with a warning, requires a reason, then calls /ban and resolves the report from Pending', async () => {
     mockReports([{
       id: 'r7',
       targetType: 'USER',
@@ -223,21 +265,61 @@ describe('Admin Reports panel: targetType branching', () => {
       reporterId: 'gina-3',
       reportedUser: { id: 'u7', name: 'Jake', email: 'jake@example.com', isBanned: false },
     }]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    vi.spyOn(window, 'prompt').mockReturnValue('Serious, repeated harassment');
+    // Root-cause regression test: Ban previously used window.confirm() then
+    // window.prompt(), which some browsers silently suppress after a few
+    // fire on one page -- confirm() returns false, prompt() returns null,
+    // with zero network requests and no visible error. Proving neither is
+    // called any more, while the ban flow still completes end-to-end via
+    // the in-app modal, is the actual regression coverage for that bug.
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    const promptSpy = vi.spyOn(window, 'prompt');
+    const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument());
 
-    screen.getByRole('button', { name: 'Ban user' }).click();
-    expect(confirmSpy).toHaveBeenCalled();
-    await Promise.resolve();
-    expect(patchMock).not.toHaveBeenCalledWith('/admin/users/u7/ban', expect.anything());
+    await user.click(screen.getByRole('button', { name: 'Ban user' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ban Jake?' });
+    expect(within(dialog).getByText(/more serious than a restriction/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Ban user' })).toBeDisabled();
 
-    confirmSpy.mockReturnValue(true);
-    screen.getByRole('button', { name: 'Ban user' }).click();
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Serious, repeated harassment');
+    await user.click(within(dialog).getByRole('button', { name: 'Ban user' }));
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/users/u7/ban', { reason: 'Serious, repeated harassment' }));
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/r7', { status: 'RESOLVED', resolution: 'Account banned' }));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(promptSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Ban Jake?' })).not.toBeInTheDocument());
+  });
+
+  it('shows a destructive toast instead of failing silently when the ban request fails', async () => {
+    mockReports([{
+      id: 'r7b',
+      targetType: 'USER',
+      reason: 'Impersonation',
+      reporter: { id: 'gina-3b', name: 'Gina' },
+      reporterId: 'gina-3b',
+      reportedUser: { id: 'u7b', name: 'Jake', email: 'jake@example.com', isBanned: false },
+    }]);
+    patchMock.mockImplementation((endpoint: string) =>
+      endpoint === '/admin/users/u7b/ban' ? Promise.reject(new Error('Insufficient permissions.')) : Promise.resolve({}));
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Ban user' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ban Jake?' });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Serious, repeated harassment');
+    await user.click(within(dialog).getByRole('button', { name: 'Ban user' }));
+
+    // The dialog stays open (the action didn't silently "succeed") and the
+    // failure is surfaced via a destructive toast, rather than the button
+    // just appearing to do nothing (the original bug's exact symptom).
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
+      variant: 'destructive',
+      description: 'Insufficient permissions.',
+    })));
+    expect(screen.getByRole('dialog', { name: 'Ban Jake?' })).toBeInTheDocument();
   });
 
   it('a MODERATOR sees Restrict/Unrestrict but not Ban (ADMIN-only)', async () => {
@@ -334,15 +416,18 @@ describe('Admin Reports panel: messageSnapshot retention hold', () => {
     };
   }
 
-  it('offers "Place retention hold" for a MESSAGE report with no hold yet, and places it with a reason', async () => {
+  it('offers "Place retention hold" for a MESSAGE report with no hold yet, and places it with a reason via the in-app modal', async () => {
     mockReports([messageReport()]);
-    vi.spyOn(window, 'prompt').mockReturnValue('Active police investigation');
+    const promptSpy = vi.spyOn(window, 'prompt');
     const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
 
     expect(screen.queryByText(/Retention hold active/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Place retention hold' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Place retention hold' });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'Active police investigation');
+    await user.click(within(dialog).getByRole('button', { name: 'Place hold' }));
 
     await waitFor(() => expect(patchMock).toHaveBeenCalledWith('/admin/reports/rm-hold', {
       retentionHold: true,
@@ -350,17 +435,23 @@ describe('Admin Reports panel: messageSnapshot retention hold', () => {
     }));
     await waitFor(() => expect(screen.getByText(/Retention hold active: Active police investigation/)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Remove retention hold' })).toBeInTheDocument();
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 
   it('does not place a hold if the moderator cancels or leaves too short a reason', async () => {
     mockReports([messageReport()]);
-    vi.spyOn(window, 'prompt').mockReturnValue('no');
     const user = userEvent.setup();
     render(<AdminPage />);
     await waitFor(() => expect(screen.getByText('Message')).toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: 'Place retention hold' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Place retention hold' });
+    await user.type(within(dialog).getByLabelText(/Reason/), 'no');
+    expect(within(dialog).getByRole('button', { name: 'Place hold' })).toBeDisabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
     expect(patchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Place retention hold' })).not.toBeInTheDocument());
   });
 
   it('shows the existing hold and lets a moderator remove it', async () => {

@@ -51,7 +51,43 @@ export default function AdminPage() {
   // views: still-open, or closed. The Resolved tab merges both backend
   // statuses into one list so there's no separate Dismissed view to check.
   const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('PENDING');
+  // Reason-collecting confirmations (Ban, Restrict, place-hold) used to go
+  // through window.confirm()/window.prompt(). Root-caused as unreliable for
+  // a must-work moderation action: some browsers permanently suppress
+  // further confirm/prompt calls after a few have fired on the same page
+  // (Chrome's "Prevent this page from creating additional dialogs"), which
+  // silently no-ops them -- confirm() returns false, prompt() returns null
+  // -- with no error and no network request, exactly matching "Ban does
+  // nothing." An in-app modal can't be suppressed that way and lets us
+  // surface a real error if the follow-up request still fails.
+  const [reasonPrompt, setReasonPrompt] = useState<{
+    title: string;
+    warning?: string;
+    confirmLabel: string;
+    danger?: boolean;
+    onConfirm: (reason: string) => Promise<void>;
+  } | null>(null);
+  const [reasonInput, setReasonInput] = useState('');
+  const [reasonSubmitting, setReasonSubmitting] = useState(false);
   const { toast } = useToast();
+
+  function openReasonPrompt(prompt: typeof reasonPrompt) {
+    setReasonInput('');
+    setReasonPrompt(prompt);
+  }
+
+  async function submitReasonPrompt() {
+    if (!reasonPrompt || reasonInput.trim().length < 5) return;
+    setReasonSubmitting(true);
+    try {
+      await reasonPrompt.onConfirm(reasonInput.trim());
+      setReasonPrompt(null);
+    } catch (err: any) {
+      toast({ title: 'Action failed', description: err?.message || 'Please try again.', variant: 'destructive' });
+    } finally {
+      setReasonSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     if (user && user.role === 'USER') { router.push('/'); return; }
@@ -200,9 +236,13 @@ export default function AdminPage() {
                           {statusFilter === 'PENDING' && (
                             <button
                               onClick={async () => {
-                                await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Reviewed and dismissed' });
-                                setReports(prev => prev.filter(rep => rep.id !== r.id));
-                                toast({ title: 'Report dismissed' });
+                                try {
+                                  await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Reviewed and dismissed' });
+                                  setReports(prev => prev.filter(rep => rep.id !== r.id));
+                                  toast({ title: 'Report dismissed' });
+                                } catch (err: any) {
+                                  toast({ title: 'Could not dismiss report', description: err?.message, variant: 'destructive' });
+                                }
                               }}
                               className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
                               Dismiss
@@ -226,15 +266,24 @@ export default function AdminPage() {
                             <button
                               onClick={async () => {
                                 if (r.retentionHold) {
-                                  await api.patch(`/admin/reports/${r.id}`, { retentionHold: false });
-                                  setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: false, retentionHoldReason: undefined } : rep));
-                                  toast({ title: 'Retention hold removed' });
+                                  try {
+                                    await api.patch(`/admin/reports/${r.id}`, { retentionHold: false });
+                                    setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: false, retentionHoldReason: undefined } : rep));
+                                    toast({ title: 'Retention hold removed' });
+                                  } catch (err: any) {
+                                    toast({ title: 'Could not remove hold', description: err?.message, variant: 'destructive' });
+                                  }
                                 } else {
-                                  const reason = window.prompt('Reason for the retention hold (active investigation, dispute, or legal preservation):');
-                                  if (!reason || reason.trim().length < 5) return;
-                                  await api.patch(`/admin/reports/${r.id}`, { retentionHold: true, retentionHoldReason: reason.trim() });
-                                  setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: true, retentionHoldReason: reason.trim() } : rep));
-                                  toast({ title: 'Retention hold placed' });
+                                  openReasonPrompt({
+                                    title: 'Place retention hold',
+                                    warning: 'Pauses the 90-day message-snapshot retention clock for an active investigation, dispute, or legal-preservation need.',
+                                    confirmLabel: 'Place hold',
+                                    onConfirm: async (reason) => {
+                                      await api.patch(`/admin/reports/${r.id}`, { retentionHold: true, retentionHoldReason: reason });
+                                      setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, retentionHold: true, retentionHoldReason: reason } : rep));
+                                      toast({ title: 'Retention hold placed' });
+                                    },
+                                  });
                                 }
                               }}
                               className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
@@ -245,10 +294,14 @@ export default function AdminPage() {
                             <button
                               onClick={async () => {
                                 if (!r.listing) return;
-                                await api.delete(`/admin/listings/${r.listing.id}`);
-                                await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Listing removed' });
-                                setReports(prev => prev.filter(rep => rep.id !== r.id));
-                                toast({ title: 'Listing removed' });
+                                try {
+                                  await api.delete(`/admin/listings/${r.listing.id}`);
+                                  await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Listing removed' });
+                                  setReports(prev => prev.filter(rep => rep.id !== r.id));
+                                  toast({ title: 'Listing removed' });
+                                } catch (err: any) {
+                                  toast({ title: 'Could not remove listing', description: err?.message, variant: 'destructive' });
+                                }
                               }}
                               className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
                               Remove listing
@@ -263,11 +316,15 @@ export default function AdminPage() {
                             user?.role === 'ADMIN' && (
                               <button
                                 onClick={async () => {
-                                  await api.patch(`/admin/users/${r.reportedUser.id}/unban`, {});
-                                  setReports(prev => prev.map(rep => rep.id === r.id
-                                    ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: false, banReason: null } }
-                                    : rep));
-                                  toast({ title: 'User unbanned' });
+                                  try {
+                                    await api.patch(`/admin/users/${r.reportedUser.id}/unban`, {});
+                                    setReports(prev => prev.map(rep => rep.id === r.id
+                                      ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: false, banReason: null } }
+                                      : rep));
+                                    toast({ title: 'User unbanned' });
+                                  } catch (err: any) {
+                                    toast({ title: 'Could not unban user', description: err?.message, variant: 'destructive' });
+                                  }
                                 }}
                                 className="px-3 py-1.5 text-xs font-semibold bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
                                 Unban user
@@ -278,53 +335,57 @@ export default function AdminPage() {
                               {r.restriction ? (
                                 <button
                                   onClick={async () => {
-                                    await api.patch(`/admin/users/${r.reportedUser.id}/unrestrict`, { protectedUserId: r.reporterId });
-                                    setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, restriction: null } : rep));
-                                    toast({ title: 'Restriction removed' });
+                                    try {
+                                      await api.patch(`/admin/users/${r.reportedUser.id}/unrestrict`, { protectedUserId: r.reporterId });
+                                      setReports(prev => prev.map(rep => rep.id === r.id ? { ...rep, restriction: null } : rep));
+                                      toast({ title: 'Restriction removed' });
+                                    } catch (err: any) {
+                                      toast({ title: 'Could not remove restriction', description: err?.message, variant: 'destructive' });
+                                    }
                                   }}
                                   className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
                                   Unrestrict user
                                 </button>
                               ) : (
                                 <button
-                                  onClick={async () => {
-                                    const reason = window.prompt(`Reason for restricting ${r.reportedUser.name} from messaging ${r.reporter?.name || 'the reporter'} again:`);
-                                    if (!reason || reason.trim().length < 5) return;
-                                    await api.post(`/admin/users/${r.reportedUser.id}/restrict`, { protectedUserId: r.reporterId, reason: reason.trim() });
-                                    const shouldResolve = statusFilter === 'PENDING';
-                                    if (shouldResolve) {
-                                      await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'User restricted from messaging reporter' });
-                                    }
-                                    setReports(prev => shouldResolve
-                                      ? prev.filter(rep => rep.id !== r.id)
-                                      : prev.map(rep => rep.id === r.id ? { ...rep, restriction: { reason: reason.trim() } } : rep));
-                                    toast({ title: 'User restricted' });
-                                  }}
+                                  onClick={() => openReasonPrompt({
+                                    title: `Restrict ${r.reportedUser.name} from messaging ${r.reporter?.name || 'the reporter'}`,
+                                    confirmLabel: 'Restrict user',
+                                    onConfirm: async (reason) => {
+                                      await api.post(`/admin/users/${r.reportedUser.id}/restrict`, { protectedUserId: r.reporterId, reason });
+                                      const shouldResolve = statusFilter === 'PENDING';
+                                      if (shouldResolve) {
+                                        await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'User restricted from messaging reporter' });
+                                      }
+                                      setReports(prev => shouldResolve
+                                        ? prev.filter(rep => rep.id !== r.id)
+                                        : prev.map(rep => rep.id === r.id ? { ...rep, restriction: { reason } } : rep));
+                                      toast({ title: 'User restricted' });
+                                    },
+                                  })}
                                   className="px-3 py-1.5 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full hover:bg-amber-100 transition-colors">
                                   Restrict user
                                 </button>
                               )}
                               {user?.role === 'ADMIN' && (
                                 <button
-                                  onClick={async () => {
-                                    const confirmed = window.confirm(
-                                      `Ban ${r.reportedUser.name}? This is more serious than a restriction: it immediately suspends their ` +
-                                      `whole account -- they're logged out, cannot log back in, and cannot send any messages or create ` +
-                                      `listings. Their existing listings remain visible. Continue?`
-                                    );
-                                    if (!confirmed) return;
-                                    const reason = window.prompt(`Reason for banning ${r.reportedUser.name}:`);
-                                    if (!reason || reason.trim().length < 5) return;
-                                    await api.patch(`/admin/users/${r.reportedUser.id}/ban`, { reason: reason.trim() });
-                                    const shouldResolve = statusFilter === 'PENDING';
-                                    if (shouldResolve) {
-                                      await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Account banned' });
-                                    }
-                                    setReports(prev => shouldResolve
-                                      ? prev.filter(rep => rep.id !== r.id)
-                                      : prev.map(rep => rep.id === r.id ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: true, banReason: reason.trim() } } : rep));
-                                    toast({ title: 'User banned' });
-                                  }}
+                                  onClick={() => openReasonPrompt({
+                                    title: `Ban ${r.reportedUser.name}?`,
+                                    warning: "This is more serious than a restriction: it immediately suspends their whole account -- they're logged out, cannot log back in, and cannot send any messages or create listings. Their existing listings remain visible.",
+                                    confirmLabel: 'Ban user',
+                                    danger: true,
+                                    onConfirm: async (reason) => {
+                                      await api.patch(`/admin/users/${r.reportedUser.id}/ban`, { reason });
+                                      const shouldResolve = statusFilter === 'PENDING';
+                                      if (shouldResolve) {
+                                        await api.patch(`/admin/reports/${r.id}`, { status: 'RESOLVED', resolution: 'Account banned' });
+                                      }
+                                      setReports(prev => shouldResolve
+                                        ? prev.filter(rep => rep.id !== r.id)
+                                        : prev.map(rep => rep.id === r.id ? { ...rep, reportedUser: { ...rep.reportedUser, isBanned: true, banReason: reason } } : rep));
+                                      toast({ title: 'User banned' });
+                                    },
+                                  })}
                                   className="px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors">
                                   Ban user
                                 </button>
@@ -383,6 +444,53 @@ export default function AdminPage() {
             <button onClick={() => setMessageDetail(null)} className="btn-ghost w-full min-h-[44px] py-2.5 text-sm">
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {reasonPrompt && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reason-prompt-title"
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget && !reasonSubmitting) setReasonPrompt(null); }}
+        >
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-elevated p-6">
+            <h3 id="reason-prompt-title" className="font-serif text-xl mb-2">{reasonPrompt.title}</h3>
+            {reasonPrompt.warning && (
+              <p className={cn('text-sm rounded-lg px-3 py-2 mb-3', reasonPrompt.danger ? 'text-red-700 bg-red-50' : 'text-amber-800 bg-amber-50')}>
+                {reasonPrompt.warning}
+              </p>
+            )}
+            <label htmlFor="reason-prompt-input" className="block text-xs font-semibold text-muted mb-1">
+              Reason (minimum 5 characters)
+            </label>
+            <textarea
+              id="reason-prompt-input"
+              value={reasonInput}
+              onChange={e => setReasonInput(e.target.value)}
+              rows={3}
+              autoFocus
+              className="w-full border border-ink/15 rounded-xl px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-brand-700/30"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { if (!reasonSubmitting) setReasonPrompt(null); }}
+                disabled={reasonSubmitting}
+                className="btn-ghost flex-1 min-h-[44px] py-2.5 text-sm">
+                Cancel
+              </button>
+              <button
+                onClick={submitReasonPrompt}
+                disabled={reasonSubmitting || reasonInput.trim().length < 5}
+                className={cn(
+                  'flex-1 min-h-[44px] py-2.5 text-sm font-semibold rounded-full transition-colors disabled:opacity-50',
+                  reasonPrompt.danger ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-brand-700 text-white hover:bg-brand-800'
+                )}>
+                {reasonSubmitting ? 'Working…' : reasonPrompt.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}

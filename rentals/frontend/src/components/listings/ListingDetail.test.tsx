@@ -257,6 +257,31 @@ describe('ListingDetail image gallery', () => {
   });
 });
 
+describe('ListingDetail approximate-location disclosure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the "approximate location" caption when the listing carries locationApproximate', async () => {
+    mockDetailFetch([]);
+    const listing = { ...makeListing([]), locationApproximate: true, locationPrecisionRadiusM: 250 };
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+    expect(screen.getByText(/exact address is hidden for privacy/i)).toBeInTheDocument();
+  });
+
+  it('does not show the approximate-location caption for a listing without it (owner/staff view)', async () => {
+    mockDetailFetch([]);
+    const listing = makeListing([]); // locationApproximate left unset, as the owner/staff response shape does
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText(/approximate location/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('ListingDetail report flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -19,7 +19,7 @@ import { authenticate, optionalAuth, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
-import { distKm } from '../utils/geo';
+import { distKm, toPublicListingLocation } from '../utils/geo';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -114,8 +114,13 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
       savedIds = new Set(saved.map(s => s.listingId));
     }
 
+    // Public browse/search/map results never carry a listing's real
+    // address or precise coordinates -- see utils/geo.ts's
+    // toPublicListingLocation for what "approximate" means here. The
+    // radius filter above already ran against the real lat/lng before this
+    // point, so filtering accuracy is unaffected.
     const result = listings.map(l => ({
-      ...l,
+      ...toPublicListingLocation(l),
       isSaved:      savedIds.has(l.id),
       amenities:    l.amenities.map(a => a.name),
       thumbnailUrl: l.images[0]?.url || null,
@@ -156,7 +161,14 @@ router.get('/:id', validateUuidParam('id'), optionalAuth, async (req: AuthReques
       isSaved = !!saved;
     }
 
-    res.json({ success: true, data: { ...listing, isSaved, amenities: listing.amenities.map(a => a.name) } });
+    // The owner (viewing their own listing) and staff (moderation context)
+    // see the real address/coordinates; every other viewer -- including an
+    // unauthenticated one -- gets the same privacy-safe approximate
+    // location the public browse/map results already use.
+    const isOwnerOrStaff = !!req.user && (req.user.id === listing.userId || req.user.role !== 'USER');
+    const locationSafeListing = isOwnerOrStaff ? listing : toPublicListingLocation(listing);
+
+    res.json({ success: true, data: { ...locationSafeListing, isSaved, amenities: listing.amenities.map(a => a.name) } });
   } catch (err) { next(err); }
 });
 

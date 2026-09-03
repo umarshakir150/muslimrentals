@@ -211,3 +211,48 @@
   0%   { transform: scale(0.4); opacity: 0.8; }
   100% { transform: scale(1.8); opacity: 0; }
 }
+
+/* Approximate-location privacy zone label -- same unlayered reasoning as
+   above: .approx-zone-label only ever appears inside a template string in
+   src/lib/mapMarkers.ts's buildApproxZoneTooltipHtml(). Strips Leaflet's
+   default tooltip chrome (background/border/arrow) so what's left reads as
+   a small floating disclosure pinned to the CENTER of the privacy circle,
+   not a leftover tooltip-widget artifact. */
+.leaflet-tooltip.approx-zone-tooltip {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.leaflet-tooltip.approx-zone-tooltip::before {
+  display: none;
+}
+
+.approx-zone-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(10, 92, 66, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-family: var(--font-outfit), sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.approx-zone-label strong {
+  font-size: 10px;
+  font-weight: 700;
+  color: #0a5c42;
+  line-height: 1.3;
+}
+
+.approx-zone-label span {
+  font-size: 9px;
+  color: #5a6e63;
+  line-height: 1.3;
+}

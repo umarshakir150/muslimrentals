@@ -269,7 +269,7 @@ describe('ListingDetail approximate-location disclosure', () => {
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
-    expect(screen.getByText(/exact address is hidden for privacy/i)).toBeInTheDocument();
+    expect(screen.getByText(/exact address hidden for privacy/i)).toBeInTheDocument();
   });
 
   it('does not show the approximate-location caption for a listing without it (owner/staff view)', async () => {
@@ -279,6 +279,15 @@ describe('ListingDetail approximate-location disclosure', () => {
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.queryByText(/approximate location/i)).not.toBeInTheDocument();
+  });
+
+  it('never renders a street address, even if one were present on the listing object (defense in depth -- this modal has no address UI for any viewer)', async () => {
+    const listingWithAddress = { ...makeListing([]), address: '123 Real Street, Unit 4', locationApproximate: true, locationPrecisionRadiusM: 250 };
+    mockDetailFetch([], listingWithAddress);
+    render(<ListingDetail listing={listingWithAddress} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText('123 Real Street, Unit 4')).not.toBeInTheDocument();
   });
 });
 

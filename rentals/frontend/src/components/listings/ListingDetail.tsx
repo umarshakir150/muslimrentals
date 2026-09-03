@@ -167,8 +167,9 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                   <span>{[listing.neighbourhood, listing.city, listing.province].filter(Boolean).join(', ')}</span>
                 </div>
                 {listing.locationApproximate && (
-                  <p className="text-xs text-muted italic mt-1">
-                    Approximate location &middot; exact address is hidden for privacy
+                  <p className="text-xs text-muted mt-1">
+                    <span className="font-semibold text-ink/70">Approximate location.</span>{' '}
+                    <span className="italic">Exact address hidden for privacy.</span>
                   </p>
                 )}
               </div>

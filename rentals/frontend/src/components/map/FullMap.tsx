@@ -21,6 +21,7 @@ import {
   formatMarkerLocationLabel,
   formatApproxRadiusLabel,
   APPROX_LOCATION_CIRCLE_STYLE,
+  buildApproxZoneTooltipHtml,
 } from '@/lib/mapMarkers';
 
 interface FullMapProps {
@@ -225,10 +226,21 @@ export default function FullMap({
       // Privacy-area circle: only drawn while this specific listing's
       // popup is open (not for all 200 listings at once, which would just
       // be visual noise) -- makes clear the property is somewhere within
-      // this area, not exactly at the pin. Only relevant when the backend
-      // actually sent an approximate point (owner/staff viewing their own
-      // map would get exact coordinates and no radius -- not applicable on
-      // this public map page today, but the marker code doesn't assume).
+      // this area, not exactly at the pin. Drawn around listing.lat/lng --
+      // the SAME already-redacted point the marker itself sits on -- so
+      // this never needs, and never receives, a separate real coordinate.
+      // Only relevant when the backend actually sent an approximate point
+      // (owner/staff viewing their own map get exact coordinates and no
+      // radius -- not applicable on this public map page today, but the
+      // marker code doesn't assume).
+      //
+      // A dashed outline alone still puts a solid price pill dead center
+      // of "the area", which reads as an exact pin with a decorative ring
+      // around it rather than "somewhere in this whole zone" (founder
+      // feedback after reviewing the first version of this feature). The
+      // permanent tooltip bound to the circle -- not the marker's own
+      // popup -- puts the privacy disclosure directly on the zone itself,
+      // visible for exactly as long as the zone is on screen.
       let approxCircle: any = null;
       if (listing.locationApproximate && listing.locationPrecisionRadiusM) {
         marker.on('popupopen', () => {
@@ -236,6 +248,12 @@ export default function FullMap({
             radius: listing.locationPrecisionRadiusM,
             ...APPROX_LOCATION_CIRCLE_STYLE,
           }).addTo(map);
+          approxCircle.bindTooltip(buildApproxZoneTooltipHtml(), {
+            permanent: true,
+            direction: 'center',
+            className: 'approx-zone-tooltip',
+            interactive: false,
+          }).openTooltip();
         });
         marker.on('popupclose', () => {
           if (approxCircle) { map.removeLayer(approxCircle); approxCircle = null; }
@@ -243,8 +261,9 @@ export default function FullMap({
       }
 
       const approxNote = listing.locationApproximate
-        ? `<div style="color:#5a6e63;font-size:10px;margin-top:4px;font-style:italic;">
-            Approximate location &middot; exact address hidden for privacy${listing.locationPrecisionRadiusM ? ` (±${formatApproxRadiusLabel(listing.locationPrecisionRadiusM)})` : ''}
+        ? `<div style="color:#5a6e63;font-size:10px;margin-top:4px;">
+            <strong style="color:#3d4f46;">Approximate location</strong><br/>
+            Exact address hidden for privacy${listing.locationPrecisionRadiusM ? ` (±${formatApproxRadiusLabel(listing.locationPrecisionRadiusM)})` : ''}
           </div>`
         : '';
 

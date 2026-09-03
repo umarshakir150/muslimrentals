@@ -77,3 +77,19 @@ export const APPROX_LOCATION_CIRCLE_STYLE = {
 export function formatApproxRadiusLabel(radiusM: number): string {
   return radiusM >= 1000 ? `${(radiusM / 1000).toFixed(1)} km` : `${radiusM} m`;
 }
+
+// A dashed circle alone still centers a solid price pill exactly in the
+// middle of it, which reads as "the pill is a decorated exact pin" rather
+// than "the property is somewhere in this whole area" -- a real, founder-
+// flagged UX gap, not just a copy problem. This permanent map-level label
+// (bound to the circle itself via Leaflet's tooltip API, independent of the
+// marker's own popup) is the fix: it puts the privacy disclosure directly
+// on the zone being drawn, visible for as long as the zone is, rather than
+// buried at the bottom of an unrelated price/photo popup someone might not
+// scroll to.
+export function buildApproxZoneTooltipHtml(): string {
+  return `<div class="approx-zone-label">
+    <strong>Approximate location</strong>
+    <span>Exact address hidden for privacy</span>
+  </div>`;
+}

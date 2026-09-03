@@ -55,6 +55,8 @@ model User {
   notifications     Notification[]
   messageRestrictionsImposed  UserMessageRestriction[] @relation("MessageRestrictionsImposed")
   messageRestrictionsReceived UserMessageRestriction[] @relation("MessageRestrictionsProtecting")
+  listingRemovalsPerformed    Listing[] @relation("ListingModerationRemovedBy")
+  listingRestoresPerformed    Listing[] @relation("ListingModerationRestoredBy")
 
   @@index([email])
   @@index([googleId])
@@ -114,14 +116,44 @@ model Listing {
   updatedAt       DateTime        @updatedAt
   expiresAt       DateTime?
 
-  userId          String
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): permanent ADMIN account deletion
+  // (distinct from the self-service DELETE /users/me, which anonymizes
+  // rather than deletes the row) removes the User row outright, and this
+  // listing must survive that as historical/moderation record rather than
+  // being destroyed by a cascade. `userId: null` means "owner account
+  // permanently deleted" -- distinct from every other way a listing can be
+  // hidden (REMOVED/BANNED/INACTIVE all leave userId intact).
+  userId          String?
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   images          ListingImage[]
   amenities       ListingAmenity[]
   savedBy         SavedListing[]
   conversations   Conversation[]
   reports         Report[]
+
+  // Admin/moderator "Remove listing" moderation action (distinct from an
+  // owner's own DELETE /listings/:id, from BANNED set by /admin/users/:id/ban,
+  // and from REMOVED set by account deletion) -- these fields are the only
+  // way to tell those apart, since all of them land on the same `status`
+  // value or a status the ban flow also uses. Restore is only ever offered
+  // when moderationRemovedAt is set and moderationRestoredAt is not (i.e.
+  // "currently in a moderator-removed state, not yet restored") -- mirrors
+  // UserMessageRestriction.liftedAt's already-established pattern for a
+  // reversible moderation action. A restore does not clear the removedAt/
+  // removedBy/reason fields, so who removed it and when stays on record
+  // even after the listing is restored; a later re-removal clears
+  // moderationRestoredAt/By again so restore-eligibility is re-armed.
+  // SetNull (not Cascade) on both moderator relations: the moderator who
+  // performed the action might later have their own account deleted, but
+  // that must never take this listing's moderation history down with it.
+  moderationRemovedAt      DateTime?
+  moderationRemovedById    String?
+  moderationRemovedBy      User?           @relation("ListingModerationRemovedBy", fields: [moderationRemovedById], references: [id], onDelete: SetNull)
+  moderationRemovalReason  String?
+  moderationRestoredAt     DateTime?
+  moderationRestoredById   String?
+  moderationRestoredBy     User?           @relation("ListingModerationRestoredBy", fields: [moderationRestoredById], references: [id], onDelete: SetNull)
 
   @@index([city])
   @@index([userId])
@@ -231,8 +263,14 @@ model Message {
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  senderId       String
-  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): a permanently-deleted sender's own
+  // account is gone, but their messages must survive for the *other*
+  // participant's conversation history -- a real row delete must never
+  // silently blow holes in it. `senderId: null` reads as "Deleted user" on
+  // the client, the same label the self-service delete flow already uses
+  // for its anonymized row.
+  senderId       String?
+  sender         User?        @relation("SentMessages", fields: [senderId], references: [id], onDelete: SetNull)
 
   reports        Report[]
 
@@ -285,8 +323,13 @@ model Report {
   // keeps its correct meaning with zero backfill required.
   targetType  ReportTargetType? @default(LISTING)
 
-  reporterId  String
-  reporter    User             @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: Cascade)
+  // Nullable + SetNull (not Cascade): a permanently-deleted reporter's own
+  // account is gone, but a report they filed against someone else is
+  // moderation evidence that has nothing to do with their own deletion --
+  // it must survive, not vanish along with them. Mirrors listingId/
+  // reportedUserId/messageId's existing SetNull pattern below.
+  reporterId  String?
+  reporter    User?            @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: SetNull)
   listingId   String?
   listing     Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
 

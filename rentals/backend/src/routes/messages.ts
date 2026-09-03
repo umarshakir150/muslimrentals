@@ -116,6 +116,10 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
       select: { id: true, userId: true, title: true },
     });
     if (!listing) throw new AppError('Listing not found.', 404);
+    // A permanently-deleted owner (Listing.userId nulled by ADMIN account
+    // deletion) leaves no one to message -- treat exactly like the listing
+    // itself being gone, rather than exposing the null onward.
+    if (!listing.userId) throw new AppError('Listing not found.', 404);
     if (listing.userId === req.user!.id) throw new AppError('You cannot message yourself.', 400);
     if (await isRestrictedFromMessaging(req.user!.id, listing.userId)) {
       throw new AppError('You are not able to message this user.', 403);

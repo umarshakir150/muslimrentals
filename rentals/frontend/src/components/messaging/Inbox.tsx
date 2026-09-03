@@ -428,7 +428,11 @@ export default function Inbox({ initialConvId }: InboxProps) {
                     {dateLabel}
                     {isNewGroup && (
                       <p className={cn('text-[11px] font-semibold text-muted mb-1', isSide1 ? 'text-right' : 'text-left')}>
-                        {msg.sender?.name || 'Unknown'}
+                        {/* sender is null when that account has since been
+                            permanently deleted (senderId nulled) -- distinct
+                            from "Unknown", which no longer has a real cause
+                            now that every message always had a sender. */}
+                        {msg.sender?.name || 'Deleted user'}
                       </p>
                     )}
                     <div className={cn('flex mb-1', isSide1 ? 'justify-end' : 'justify-start')}>

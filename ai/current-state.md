@@ -29,8 +29,14 @@ drift into fiction.
 - Email/password and Google OAuth registration/login, JWT refresh rotation,
   forgot/reset password, and change-email (both with real, verified
   transactional email delivery via Resend).
-- Admin panel: stats, user search, ban/unban, role change, listing removal,
-  report triage.
+- Reporting a listing, a user, or a message directly, with a server-enforced
+  reason taxonomy per target type and (for user reports) a required
+  prior-interaction gate.
+- Admin panel: stats, user search (ADMIN-only directory search separate from
+  the Reports panel) with ban/unban and permanent account deletion, role
+  change, per-report Restrict-from-messaging (narrower than ban), listing
+  soft-remove/restore with a moderation audit trail, report triage branching
+  on target type (listing/user/message), messageSnapshot retention policy.
 - Static policy pages: Safety, Terms, Privacy, Content & Community
   Guidelines, Contact.
 - User-initiated account deletion (Settings), anonymizing rather than
@@ -42,8 +48,6 @@ drift into fiction.
 - **Roommate profiles and roommate matching** — mentioned in the product
   vision but not implemented anywhere in the codebase (no schema, no
   routes, no UI). See `company/product.md`.
-- **Reporting a user or a message directly** — only listings can be
-  reported today.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 

@@ -39,8 +39,6 @@ living document, not a commitment.
   tests" workflow step stops being manual-only.
 - Add a basic CI check (lint + type-check + build, then tests once they
   exist) so regressions are caught before merge.
-- Add a report path for users/messages (not just listings), closing the
-  Trust & Safety gap noted in `company/architecture.md`.
 - Decide on and, if approved, implement a user-initiated account/data
   deletion path (Legal + Backend + founder).
 

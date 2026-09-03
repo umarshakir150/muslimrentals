@@ -164,6 +164,3 @@ No `RoommateProfile` (or similar) model exists.
   in-memory-only token would be. The backend's CSP (`script-src 'self'`)
   and global input sanitization mitigate but don't eliminate this class of
   risk.
-- **Only listings are reportable** — no report path for a user or a message
-  directly, which limits Trust & Safety's tooling for harassment-via-
-  messaging today.

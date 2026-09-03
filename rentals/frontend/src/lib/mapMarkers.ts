@@ -10,7 +10,7 @@
 // 14, which turns clustering off entirely beyond that zoom -- meaning any
 // markers still close enough to visually overlap past zoom 14 (identical
 // or near-identical coordinates, now routine under the privacy-approximate
-// location model: several real listings within the same ~250m privacy
+// location model: several real listings within the same ~200m privacy
 // radius can legitimately land on the exact same public point) were shown
 // as raw, unclustered, pixel-overlapping markers with no way to reach the
 // ones underneath -- the actual "overlapping markers" bug this option

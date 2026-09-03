@@ -264,7 +264,7 @@ describe('ListingDetail approximate-location disclosure', () => {
 
   it('shows the "approximate location" caption when the listing carries locationApproximate', async () => {
     mockDetailFetch([]);
-    const listing = { ...makeListing([]), locationApproximate: true, locationPrecisionRadiusM: 250 };
+    const listing = { ...makeListing([]), locationApproximate: true, locationPrecisionRadiusM: 200 };
     render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
@@ -290,7 +290,7 @@ describe('ListingDetail approximate-location disclosure', () => {
       ...makeListing([]),
       neighbourhood: null,
       locationApproximate: true,
-      locationPrecisionRadiusM: 250,
+      locationPrecisionRadiusM: 200,
     };
     render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
 
@@ -301,7 +301,7 @@ describe('ListingDetail approximate-location disclosure', () => {
   });
 
   it('never renders a street address, even if one were present on the listing object (defense in depth -- this modal has no address UI for any viewer)', async () => {
-    const listingWithAddress = { ...makeListing([]), address: '123 Real Street, Unit 4', locationApproximate: true, locationPrecisionRadiusM: 250 };
+    const listingWithAddress = { ...makeListing([]), address: '123 Real Street, Unit 4', locationApproximate: true, locationPrecisionRadiusM: 200 };
     mockDetailFetch([], listingWithAddress);
     render(<ListingDetail listing={listingWithAddress} onClose={vi.fn()} onMessage={vi.fn()} />);
 

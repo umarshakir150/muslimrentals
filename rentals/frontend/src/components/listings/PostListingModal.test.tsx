@@ -28,8 +28,8 @@ vi.mock('@/components/auth/AuthModal', () => ({ default: () => null }));
 // its own test file. Here we only need to simulate picking a value, exposed
 // as a plain button so tests don't need a real backend.
 vi.mock('@/components/ui/CityAutocomplete', () => ({
-  default: ({ onChange }: { onChange: (city: string) => void }) => (
-    <button type="button" onClick={() => onChange('Toronto')}>
+  default: ({ onChange }: { onChange: (city: string, coords?: [number, number], province?: string) => void }) => (
+    <button type="button" onClick={() => onChange('Toronto', [43.6532, -79.3832], 'ON')}>
       Pick Toronto
     </button>
   ),
@@ -122,6 +122,18 @@ describe('PostListingModal', () => {
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
+  });
+
+  it('includes the selected city\'s province in the create payload, tightening the server-side geocoding query', async () => {
+    const user = userEvent.setup();
+    render(<PostListingModal open onClose={vi.fn()} />);
+
+    await goToStep3(user);
+    await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ city: 'Toronto', province: 'ON', address: '456 Spadina Avenue' })
+    ));
   });
 
   it('does not attempt an image upload when no images were selected', async () => {

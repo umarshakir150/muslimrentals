@@ -23,7 +23,7 @@ function MapPageInner() {
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [messageTarget, setMessageTarget] = useState<Listing | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const { filters, mapCenter, setMapCenter } = useFilterStore();
+  const { mapCenter, setMapCenter } = useFilterStore();
   const isAuth = useIsAuthenticated();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -137,7 +137,6 @@ function MapPageInner() {
           <FullMap
             listings={listings}
             center={mapCenter}
-            radiusKm={filters.radiusKm || 80}
             onCentreChange={setMapCenter}
             onListingClick={setSelectedListing}
           />

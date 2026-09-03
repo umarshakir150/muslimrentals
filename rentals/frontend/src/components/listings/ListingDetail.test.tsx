@@ -257,6 +257,59 @@ describe('ListingDetail image gallery', () => {
   });
 });
 
+describe('ListingDetail approximate-location disclosure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the "approximate location" caption when the listing carries locationApproximate', async () => {
+    mockDetailFetch([]);
+    const listing = { ...makeListing([]), locationApproximate: true, locationPrecisionRadiusM: 250 };
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+    expect(screen.getByText(/exact address hidden for privacy/i)).toBeInTheDocument();
+  });
+
+  it('does not show the approximate-location caption for a listing without it (owner/staff view)', async () => {
+    mockDetailFetch([]);
+    const listing = makeListing([]); // locationApproximate left unset, as the owner/staff response shape does
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText(/approximate location/i)).not.toBeInTheDocument();
+  });
+
+  it('renders cleanly on a null neighbourhood (routine now that new listings are address-based, not neighbourhood-based), falling back to city + the approximate-location caption', async () => {
+    mockDetailFetch([]);
+    // makeListing's own city/province ('Mississauga' / null) -- with
+    // neighbourhood also null, the location line should fall back to just
+    // the city, never a literal "null" or a dangling comma.
+    const listing = {
+      ...makeListing([]),
+      neighbourhood: null,
+      locationApproximate: true,
+      locationPrecisionRadiusM: 250,
+    };
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getByText('Mississauga')).toBeInTheDocument();
+    expect(screen.queryByText(/null/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+  });
+
+  it('never renders a street address, even if one were present on the listing object (defense in depth -- this modal has no address UI for any viewer)', async () => {
+    const listingWithAddress = { ...makeListing([]), address: '123 Real Street, Unit 4', locationApproximate: true, locationPrecisionRadiusM: 250 };
+    mockDetailFetch([], listingWithAddress);
+    render(<ListingDetail listing={listingWithAddress} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText('123 Real Street, Unit 4')).not.toBeInTheDocument();
+  });
+});
+
 describe('ListingDetail report flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();

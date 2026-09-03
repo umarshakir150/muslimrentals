@@ -80,7 +80,6 @@ describe('FullMap unmount-before-init race', () => {
       createElement(FullMap, {
         listings: [],
         center: [43, -79],
-        radiusKm: 10,
         onCentreChange: vi.fn(),
         onListingClick: vi.fn(),
       })
@@ -124,7 +123,6 @@ describe('FullMap unmount-before-init race', () => {
       createElement(FullMap, {
         listings: [],
         center: [43, -79],
-        radiusKm: 10,
         onCentreChange: vi.fn(),
         onListingClick: vi.fn(),
       })

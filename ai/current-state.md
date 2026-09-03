@@ -1,14 +1,25 @@
 # Current State
 
-Last verified against the repository: 2026-09-01, commit `49d4bb7` on
-`main` — this is also the commit now live in **production** (Netlify
-deploy `6a972323ac04d013c488bc29`, published 19:16:20Z, founder-approved
-after a release-readiness audit found no blockers). The multi-feature
-milestone (Gallery/lightbox, Settings/Account, Messaging, Legal/Policy
-Pages, Forgot Password + Change Email) is fully merged to `main` and now
-fully live — production is no longer frozen/decoupled from `main`.
-Update this file whenever the picture materially changes — don't let it
-drift into fiction.
+Last verified against the repository: 2026-09-03. **`main` and production
+are decoupled again, deliberately.** Production Netlify (deploy
+`6a972323ac04d013c488bc29`, published 2026-09-01 19:16:20Z) is still
+serving commit `49d4bb7` — the multi-feature milestone (Gallery/lightbox,
+Settings/Account, Messaging, Legal/Policy Pages, Forgot Password + Change
+Email). `main` has since advanced through PR #7 (report-a-user/report-a-
+message, merged 2026-09-02, commit `c771c07`) and PR #8 (admin Remove/
+Restore Listing, ADMIN-only permanent account deletion, ADMIN-only User
+Search, merged 2026-09-03, commit `83ff9417`) — see `ai/decisions.md` for
+both. That work is implementation-complete, founder-approved via its own
+Netlify Deploy Previews, merged to `main`, its schema migrations are live
+on the production Supabase database, and the Render backend is deployed
+and healthy on it — but **the production Netlify frontend has not been
+redeployed to pick it up**, at the founder's explicit request: the
+production deploy is being saved for the end of a larger batch of
+still-in-progress future work. Until that deploy happens, do not describe
+report-a-user/message or the admin moderation toolkit below as
+"in production" — they are real and live in `main`/Render, not yet on
+`muslimrentals.ca`. Update this file whenever the picture materially
+changes — don't let it drift into fiction.
 
 ## Tech stack
 
@@ -29,8 +40,19 @@ drift into fiction.
 - Email/password and Google OAuth registration/login, JWT refresh rotation,
   forgot/reset password, and change-email (both with real, verified
   transactional email delivery via Resend).
-- Admin panel: stats, user search, ban/unban, role change, listing removal,
-  report triage.
+- Admin panel — **live in production**: stats, user search, ban/unban,
+  role change, listing soft-removal, report triage (listings only).
+  **Merged to `main` + Render, NOT yet in production** (see the note at
+  the top of this file): reporting a listing, a user, or a message
+  directly (server-enforced reason taxonomy per target type, a required
+  prior-interaction gate for user reports); the admin Reports panel
+  branching on target type (listing/user/message) with per-report
+  Restrict-from-messaging and messageSnapshot retention policy; a
+  moderation audit trail (who/when/why) plus Restore on listing removal;
+  ADMIN-only permanent account deletion, distinct from ban; and the
+  ADMIN-only directory-search-driven User Search section itself (the
+  production user search above is the older, simpler admin/moderator
+  search, not this one).
 - Static policy pages: Safety, Terms, Privacy, Content & Community
   Guidelines, Contact.
 - User-initiated account deletion (Settings), anonymizing rather than
@@ -42,8 +64,6 @@ drift into fiction.
 - **Roommate profiles and roommate matching** — mentioned in the product
   vision but not implemented anywhere in the codebase (no schema, no
   routes, no UI). See `company/product.md`.
-- **Reporting a user or a message directly** — only listings can be
-  reported today.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 

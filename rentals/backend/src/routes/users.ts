@@ -23,6 +23,7 @@ import { writeRateLimiter } from '../middleware/rateLimiter';
 import { logger } from '../utils/logger';
 import { sendEmail, emailChangeVerificationEmail, emailChangeVerificationEmailText } from '../utils/email';
 import { userReportSchema } from '../validation/reportSchemas';
+import { toPublicListingLocation } from '../utils/geo';
 
 const router = Router();
 
@@ -102,7 +103,13 @@ router.get('/:id', validateUuidParam('id'), async (req, res: Response, next: Nex
       },
     });
     if (!user) throw new AppError('User not found.', 404);
-    res.json({ success: true, data: user });
+    // Fully public, unauthenticated route -- never expose a listing's real
+    // address/precise coordinates here, same privacy-safe approximate
+    // location the public browse/map/detail responses already use.
+    res.json({
+      success: true,
+      data: { ...user, listings: user.listings.map(toPublicListingLocation) },
+    });
   } catch (err) { next(err); }
 });
 
@@ -240,8 +247,11 @@ router.get('/me/saved', authenticate, async (req: AuthRequest, res: Response, ne
       success: true,
       // Every row here is, by definition, saved by the current user — set isSaved
       // explicitly so ListingCard's heart toggle renders correctly on first paint.
+      // Saving a listing doesn't make it "yours" (it's someone else's, browsed
+      // and bookmarked) so, like GET /listings, its real address/coordinates
+      // stay redacted here regardless of who's viewing.
       data: saved.map(s => ({
-        ...s.listing,
+        ...toPublicListingLocation(s.listing),
         amenities: s.listing.amenities.map(a => a.name),
         thumbnailUrl: s.listing.images[0]?.url || null,
         isSaved: true,

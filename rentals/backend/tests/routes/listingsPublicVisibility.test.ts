@@ -93,6 +93,7 @@ describe('GET /listings/:id (detail page)', () => {
   it('still serves an ACTIVE listing normally (control case, unaffected by the BANNED status)', async () => {
     findUniqueMock.mockResolvedValue({
       id: LISTING_ID, status: 'ACTIVE', images: [], amenities: [],
+      lat: 43.6532, lng: -79.3832, userId: 'owner-1',
       user: { id: 'owner-1', name: 'Owner', avatarUrl: null, createdAt: new Date() },
       _count: { savedBy: 0 },
     });

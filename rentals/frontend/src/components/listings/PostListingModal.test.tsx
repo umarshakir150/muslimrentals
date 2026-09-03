@@ -24,21 +24,13 @@ vi.mock('@/components/ui/use-toast', () => ({
 
 vi.mock('@/components/auth/AuthModal', () => ({ default: () => null }));
 
-// Stub the city/neighbourhood autocompletes -- their own fetch/search
-// behavior is covered by their own test files. Here we only need to
-// simulate picking a value, exposed as a plain button so tests don't need
-// a real backend.
+// Stub the city autocomplete -- its own fetch/search behavior is covered by
+// its own test file. Here we only need to simulate picking a value, exposed
+// as a plain button so tests don't need a real backend.
 vi.mock('@/components/ui/CityAutocomplete', () => ({
-  default: ({ onChange }: { onChange: (city: string, coords?: [number, number]) => void }) => (
-    <button type="button" onClick={() => onChange('Toronto', [43.6532, -79.3832])}>
+  default: ({ onChange }: { onChange: (city: string) => void }) => (
+    <button type="button" onClick={() => onChange('Toronto')}>
       Pick Toronto
-    </button>
-  ),
-}));
-vi.mock('@/components/ui/NeighbourhoodAutocomplete', () => ({
-  default: ({ onChange }: { onChange: (n: string, coords?: [number, number]) => void }) => (
-    <button type="button" onClick={() => onChange('Downtown', [43.6511, -79.3806])}>
-      Pick Downtown
     </button>
   ),
 }));
@@ -69,7 +61,7 @@ describe('PostListingModal', () => {
   async function goToStep3(user: ReturnType<typeof userEvent.setup>) {
     await goToStep2(user);
     await user.click(screen.getByText('Pick Toronto'));
-    await user.click(screen.getByText('Pick Downtown'));
+    await user.type(screen.getByPlaceholderText(/123 Main Street/), '456 Spadina Avenue');
     await user.type(screen.getByPlaceholderText(/Phone, WhatsApp/), '555-0100');
     await user.click(screen.getByRole('button', { name: /Continue/ }));
     await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());

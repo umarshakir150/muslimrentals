@@ -42,9 +42,27 @@ export interface Listing {
   town?: string | null;
   province?: string | null;
   neighbourhood?: string | null;
+  // Present only when the viewer is the listing's own owner or ADMIN/
+  // MODERATOR staff -- every other viewer never receives this field at
+  // all (see rentals/backend/src/utils/geo.ts's toPublicListingLocation).
   address?: string | null;
+  // Unit/apartment number -- same owner/staff-only visibility as `address`,
+  // and likewise stripped (not just hidden) from every other viewer.
+  unit?: string | null;
+  // For most viewers this is a stable, privacy-safe *approximate* point
+  // (see locationApproximate/locationPrecisionRadiusM below), not the
+  // listing's real coordinates -- only the owner/staff ever get the real
+  // lat/lng in this same field.
   lat: number;
   lng: number;
+  // True when `lat`/`lng` above are the approximate public point rather
+  // than the listing's real coordinates. Absent (not `false`) for an
+  // owner/staff response carrying the real location.
+  locationApproximate?: boolean;
+  // The radius (in meters) within which the real location is guaranteed
+  // to fall around the approximate point above -- only present alongside
+  // locationApproximate. Render this as the "approximate area" circle.
+  locationPrecisionRadiusM?: number;
   contactInfo: string;
   status: ListingStatus;
   isActive: boolean;

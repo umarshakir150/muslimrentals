@@ -4,15 +4,25 @@
  * regression-tested without mounting a real Leaflet map in a browser.
  */
 
-// leaflet.markercluster options. spiderfyOnMaxZoom is what makes markers
-// sharing (near-)identical coordinates branch outward on click/tap once
-// zoomed as far as the map allows clusters to separate naturally
-// (disableClusteringAtZoom); maxClusterRadius controls how close markers
-// must be (in pixels) to collapse into one cluster at lower zoom.
+// leaflet.markercluster options.
+//
+// disableClusteringAtZoom is deliberately NOT set. It used to be pinned to
+// 14, which turns clustering off entirely beyond that zoom -- meaning any
+// markers still close enough to visually overlap past zoom 14 (identical
+// or near-identical coordinates, now routine under the privacy-approximate
+// location model: several real listings within the same ~250m privacy
+// radius can legitimately land on the exact same public point) were shown
+// as raw, unclustered, pixel-overlapping markers with no way to reach the
+// ones underneath -- the actual "overlapping markers" bug this option
+// exists to fix. Leaving it unset keeps clustering (and therefore
+// spiderfyOnMaxZoom below) active at every zoom level; maxClusterRadius is
+// a *pixel* radius, so at high zoom the same real-world distance covers
+// far more pixels and stops clustering on its own -- only markers that are
+// still genuinely close together on screen ever cluster/spiderfy,
+// regardless of how far in the map is zoomed.
 export const CLUSTER_OPTIONS = {
   showCoverageOnHover: false,
   spiderfyOnMaxZoom: true,
-  disableClusteringAtZoom: 14,
   maxClusterRadius: 50,
   animate: true,
 } as const;
@@ -36,4 +46,50 @@ export function buildClusterHtml(count: number): string {
 // Presentation-only label -- never mutates/derives the stored lat/lng.
 export function formatMarkerLocationLabel(city: string, neighbourhood?: string | null): string {
   return neighbourhood ? `${neighbourhood}, ${city}` : city;
+}
+
+// ─── "You are here" (Locate me) marker ─────────────────────────────────────
+// Deliberately nothing like a listing marker/price bubble (not a pill, no
+// price, no click target opening a listing) -- a small blue dot with a
+// pulsing ring, the same visual language most map products use for "this
+// is you", so it can never be mistaken for a rental.
+export const USER_LOCATION_ICON_SIZE: [number, number] = [22, 22];
+export const USER_LOCATION_ICON_ANCHOR: [number, number] = [11, 11];
+
+export function buildUserLocationMarkerHtml(): string {
+  return `<div class="user-location-marker" role="img" aria-label="Your current location">
+    <div class="user-location-marker-pulse"></div>
+    <div class="user-location-marker-dot"></div>
+  </div>`;
+}
+
+// ─── Approximate-location privacy circle ───────────────────────────────────
+// Drawn around a listing's public marker (see FullMap.tsx) to make clear
+// the property is somewhere within this area, not exactly at the pin.
+export const APPROX_LOCATION_CIRCLE_STYLE = {
+  color: '#0a5c42',
+  fillColor: '#0a5c42',
+  fillOpacity: 0.08,
+  weight: 1.5,
+  dashArray: '4 6',
+} as const;
+
+export function formatApproxRadiusLabel(radiusM: number): string {
+  return radiusM >= 1000 ? `${(radiusM / 1000).toFixed(1)} km` : `${radiusM} m`;
+}
+
+// A dashed circle alone still centers a solid price pill exactly in the
+// middle of it, which reads as "the pill is a decorated exact pin" rather
+// than "the property is somewhere in this whole area" -- a real, founder-
+// flagged UX gap, not just a copy problem. This permanent map-level label
+// (bound to the circle itself via Leaflet's tooltip API, independent of the
+// marker's own popup) is the fix: it puts the privacy disclosure directly
+// on the zone being drawn, visible for as long as the zone is, rather than
+// buried at the bottom of an unrelated price/photo popup someone might not
+// scroll to.
+export function buildApproxZoneTooltipHtml(): string {
+  return `<div class="approx-zone-label">
+    <strong>Approximate location</strong>
+    <span>Exact address hidden for privacy</span>
+  </div>`;
 }

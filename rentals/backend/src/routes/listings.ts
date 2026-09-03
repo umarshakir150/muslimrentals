@@ -174,26 +174,49 @@ router.get('/:id', validateUuidParam('id'), optionalAuth, async (req: AuthReques
 });
 
 // ─── POST /listings ───────────────────────────────────────────────────────────
-// Location pipeline: real address -> geocode (server-side, never trusts a
-// client-supplied coordinate) -> precise private lat/lng, stored here.
-// Public reads later run these through toPublicListingLocation() for the
-// privacy-safe approximate point -- this route only ever deals with the
-// real, precise one.
+// Location pipeline (NEW shape): real address -> geocode (server-side,
+// never trusts a client-supplied coordinate) -> precise private lat/lng,
+// stored here. Public reads later run these through
+// toPublicListingLocation() for the privacy-safe approximate point -- this
+// route only ever deals with the real, precise one.
+//
+// The LEGACY shape (neighbourhood + client lat/lng) is accepted
+// transitionally -- see the comment on legacyListingCreateSchema in
+// listingSchemas.ts for exactly why and when to delete this branch.
 router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = listingCreateSchema.parse(req.body);
-    const { amenities = [], imageUrls = [], ...rest } = data;
+    const amenities = data.amenities ?? [];
+    const imageUrls = data.imageUrls ?? [];
+    const common = {
+      title:       data.title,
+      description: data.description,
+      price:       data.price,
+      bedrooms:    data.bedrooms,
+      bathrooms:   data.bathrooms,
+      audience:    data.audience,
+      city:        data.city,
+      town:        data.town,
+      province:    data.province,
+      contactInfo: data.contactInfo,
+    };
 
-    const geocoded = await geocodeAddress(data.address, data.city, data.province);
-    if (!geocoded) {
-      throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+    let location: { address?: string; unit?: string; neighbourhood?: string; lat: number; lng: number };
+    if ('address' in data) {
+      const geocoded = await geocodeAddress(data.address, data.city, data.province);
+      if (!geocoded) {
+        throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+      }
+      location = { address: data.address, unit: data.unit, lat: geocoded.lat, lng: geocoded.lng };
+    } else {
+      // Transitional legacy path -- see listingSchemas.ts.
+      location = { neighbourhood: data.neighbourhood, lat: data.lat, lng: data.lng };
     }
 
     const listing = await prisma.listing.create({
       data: {
-        ...rest,
-        lat:       geocoded.lat,
-        lng:       geocoded.lng,
+        ...common,
+        ...location,
         userId:    req.user!.id,
         amenities: { create: amenities.map(name => ({ name })) },
         images:    { create: imageUrls.map((url, i) => ({ url, key: url, order: i })) },
@@ -223,25 +246,50 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     const data = listingUpdateSchema.parse(req.body);
     const { amenities, imageUrls, ...rest } = data;
 
-    // Re-geocode only when something that could change the real-world
-    // location actually changed -- editing just the unit, price, title,
-    // etc. must never trigger (or need) a new geocoding lookup. Comparing
-    // against the currently stored values (not just "was address sent")
-    // also avoids a needless re-geocode when a client resubmits the same
-    // address unchanged.
-    const addressChanging  = rest.address  !== undefined && rest.address  !== listing.address;
-    const cityChanging     = rest.city     !== undefined && rest.city     !== listing.city;
-    const provinceChanging = rest.province !== undefined && rest.province !== listing.province;
-
+    // Which of the two shapes (see listingSchemas.ts) this particular PATCH
+    // is using, if either -- a request touching neither is common (e.g.
+    // editing only price/title) and needs no location handling at all.
+    // Checked with inline `in` narrowing (not a hoisted boolean) so
+    // TypeScript actually narrows `rest`'s union type within each branch.
     let geocoded: { lat: number; lng: number } | undefined;
-    if (addressChanging || cityChanging || provinceChanging) {
-      const nextAddress  = rest.address  !== undefined ? rest.address  : listing.address;
+
+    if ('address' in rest && rest.address !== undefined) {
+      // Re-geocode only when something that could change the real-world
+      // location actually changed -- editing just the unit, price, title,
+      // etc. must never trigger (or need) a new geocoding lookup. Comparing
+      // against the currently stored values (not just "was address sent")
+      // also avoids a needless re-geocode when a client resubmits the same
+      // address unchanged.
+      const addressChanging  = rest.address  !== listing.address;
+      const cityChanging     = rest.city     !== undefined && rest.city     !== listing.city;
+      const provinceChanging = rest.province !== undefined && rest.province !== listing.province;
+      if (addressChanging || cityChanging || provinceChanging) {
+        const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
+        const nextProvince = rest.province !== undefined ? rest.province : listing.province;
+        geocoded = await geocodeAddress(rest.address, nextCity, nextProvince) ?? undefined;
+        if (!geocoded) {
+          throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+        }
+      }
+    } else if (
+      'neighbourhood' in rest && rest.neighbourhood !== undefined ||
+      'lat' in rest && rest.lat !== undefined ||
+      'lng' in rest && rest.lng !== undefined
+    ) {
+      // Transitional legacy path -- trusts the client-supplied lat/lng
+      // directly (matching pre-geocoding behavior). Values are already in
+      // `rest` and applied via the spread below; nothing more to do here.
+    } else if ((rest.city !== undefined || rest.province !== undefined) && listing.address) {
+      // Neither shape's location fields were sent, but city/province still
+      // changed on a listing that already has a real (NEW-shape) address on
+      // file -- re-resolve its coordinates against that existing address so
+      // renaming the city doesn't silently leave a stale coordinate behind.
+      // A legacy (address-less) listing falls through untouched instead:
+      // there is nothing to re-geocode from, and forcing an address just to
+      // rename a city would be a regression for those rows.
       const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
       const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-      if (!nextAddress) {
-        throw new AppError('An address is required to update this listing\'s location.', 422);
-      }
-      geocoded = await geocodeAddress(nextAddress, nextCity, nextProvince) ?? undefined;
+      geocoded = await geocodeAddress(listing.address, nextCity, nextProvince) ?? undefined;
       if (!geocoded) {
         throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
       }

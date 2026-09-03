@@ -154,6 +154,87 @@ describe('POST /listings — server-side geocoding', () => {
   });
 });
 
+describe('POST /listings — TRANSITIONAL legacy shape (old production Post Listing contract)', () => {
+  function legacyPayload(overrides: Record<string, any> = {}) {
+    const { address, ...rest } = validPayload();
+    return { ...rest, neighbourhood: 'Kensington Market', lat: 43.6532, lng: -79.3832, ...overrides };
+  }
+
+  it('accepts the old production shape (neighbourhood + client lat/lng, no address) and stores it verbatim', async () => {
+    createMock.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
+    );
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(legacyPayload());
+
+    expect(res.status).toBe(201);
+    // The whole point of the legacy path: no geocoding call at all, and the
+    // client-supplied coordinates are trusted directly -- exactly the
+    // pre-existing production behavior this preserves.
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ neighbourhood: 'Kensington Market', lat: 43.6532, lng: -79.3832 }),
+    }));
+  });
+
+  it('never stores an address for a legacy-shape submission (none was ever provided)', async () => {
+    createMock.mockImplementation((args: any) => Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(legacyPayload());
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ address: expect.anything() }),
+    }));
+  });
+
+  it('rejects a request mixing the legacy shape with a real address (modes cannot mix)', async () => {
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ ...legacyPayload(), address: '123 Main Street' });
+
+    expect(res.status).toBe(422);
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a legacy-shape request missing lat (an incomplete legacy payload is not accepted as a fallback)', async () => {
+    const { lat, ...incomplete } = legacyPayload();
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(incomplete);
+
+    expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request with neither an address nor a complete legacy triple (no location info at all)', async () => {
+    const { address, ...rest } = validPayload();
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(rest);
+
+    expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('PATCH /listings/:id — re-geocodes only when the location actually changes', () => {
   function existingListing(overrides: Record<string, any> = {}) {
     return {
@@ -236,6 +317,64 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
       .patch(`/api/v1/listings/${LISTING_ID}`)
       .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
       .send({ address: 'Not A Real Address Whatsoever' });
+
+    expect(res.status).toBe(422);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('a city-only edit on a legacy (address-less) listing does not force a geocode or throw', async () => {
+    findUniqueMock.mockResolvedValue(existingListing({ address: null, neighbourhood: 'Kensington Market' }));
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ city: 'Vancouver' });
+
+    expect(res.status).toBe(200);
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ city: 'Vancouver' }),
+    }));
+  });
+});
+
+describe('PATCH /listings/:id — TRANSITIONAL legacy shape', () => {
+  function legacyExistingListing(overrides: Record<string, any> = {}) {
+    return {
+      id: LISTING_ID, userId: OWNER_ID, status: 'ACTIVE',
+      title: 'Old title', city: 'Toronto', province: 'ON', address: null, unit: null,
+      neighbourhood: 'Kensington Market', lat: 43.6532, lng: -79.3832,
+      ...overrides,
+    };
+  }
+
+  it('accepts a legacy-shape lat/lng update and trusts it directly, no geocoding', async () => {
+    findUniqueMock.mockResolvedValue(legacyExistingListing());
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ lat: 45.4215, lng: -75.6972 });
+
+    expect(res.status).toBe(200);
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: 45.4215, lng: -75.6972 }),
+    }));
+  });
+
+  it('rejects a PATCH mixing address with a legacy field', async () => {
+    findUniqueMock.mockResolvedValue(legacyExistingListing());
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '999 New Street', neighbourhood: 'Downtown' });
 
     expect(res.status).toBe(422);
     expect(updateMock).not.toHaveBeenCalled();

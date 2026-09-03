@@ -65,21 +65,16 @@ describe('listingCreateSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  // lat/lng are no longer part of this schema at all -- the route resolves
-  // them itself via server-side geocoding (utils/geocode.ts) and would
-  // reject them outright as unknown fields under .strict(), same as any
-  // other unexpected field. A client can no longer submit a coordinate
-  // detached from the address it claims to be for.
-  it('rejects a client-supplied lat/lng as unknown fields', () => {
+  // A request supplying a real `address` (the NEW shape) can never also
+  // carry lat/lng or neighbourhood -- see the "dual-shape" describe block
+  // below for the full transitional-compatibility contract this schema
+  // now supports.
+  it('rejects a client-supplied lat/lng alongside an address (cannot spoof coordinates)', () => {
     const result = listingCreateSchema.safeParse({ ...validListing, lat: 43.6532, lng: -79.3832 });
     expect(result.success).toBe(false);
   });
 
-  // Likewise, neighbourhood is no longer collected at listing creation --
-  // the dropdown and its centroid-based positioning were removed. The
-  // Listing.neighbourhood DB column and its display uses elsewhere are
-  // unaffected; it's just not part of this schema/the create flow now.
-  it('rejects a client-supplied neighbourhood as an unknown field', () => {
+  it('rejects a client-supplied neighbourhood alongside an address (modes cannot mix)', () => {
     const result = listingCreateSchema.safeParse({ ...validListing, neighbourhood: 'Downtown' });
     expect(result.success).toBe(false);
   });
@@ -238,6 +233,103 @@ describe('listingCreateSchema — unit (private, optional, never used for geocod
 
   it('rejects a unit over 50 characters', () => {
     const result = listingCreateSchema.safeParse({ ...baseListing, unit: 'a'.repeat(51) });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listingCreateSchema — TRANSITIONAL dual-shape support (new address-based vs. legacy neighbourhood-based)', () => {
+  // The legacy shape mirrors exactly what the still-undeployed production
+  // Netlify frontend submits today (see listingSchemas.ts's comment on
+  // legacyListingCreateSchema for why this exists at all and when it goes
+  // away): a neighbourhood name plus client-supplied coordinates, no
+  // address at all.
+  const { address: _unusedAddress, ...baseWithoutAddress } = baseListing;
+  const legacyShapeListing = {
+    ...baseWithoutAddress,
+    neighbourhood: 'Kensington Market',
+    lat: 43.6532,
+    lng: -79.3832,
+  };
+
+  it('accepts the NEW shape: a real address, no neighbourhood/lat/lng required at all', () => {
+    const result = listingCreateSchema.safeParse(baseListing);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts the LEGACY shape: neighbourhood + client lat/lng, no address (old production contract still works)', () => {
+    const result = listingCreateSchema.safeParse(legacyShapeListing);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a payload with neither shape fully present (e.g. only city/price, no location info at all)', () => {
+    const { address, ...rest } = baseListing;
+    const result = listingCreateSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects the legacy shape missing lat (partial legacy payload is not a valid fallback)', () => {
+    const { lat, ...rest } = legacyShapeListing;
+    const result = listingCreateSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects the legacy shape missing lng', () => {
+    const { lng, ...rest } = legacyShapeListing;
+    const result = listingCreateSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects the legacy shape missing neighbourhood', () => {
+    const { neighbourhood, ...rest } = legacyShapeListing;
+    const result = listingCreateSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects legacy lat/lng out of range, same bounds as before', () => {
+    expect(listingCreateSchema.safeParse({ ...legacyShapeListing, lat: 200 }).success).toBe(false);
+    expect(listingCreateSchema.safeParse({ ...legacyShapeListing, lng: -200 }).success).toBe(false);
+  });
+
+  it('rejects mixing address with any legacy field (neighbourhood, lat, or lng individually)', () => {
+    expect(listingCreateSchema.safeParse({ ...baseListing, neighbourhood: 'Downtown' }).success).toBe(false);
+    expect(listingCreateSchema.safeParse({ ...baseListing, lat: 43.6532 }).success).toBe(false);
+    expect(listingCreateSchema.safeParse({ ...baseListing, lng: -79.3832 }).success).toBe(false);
+  });
+
+  it('rejects mixing unit (a NEW-shape-only field) into a legacy-shape payload', () => {
+    const result = listingCreateSchema.safeParse({ ...legacyShapeListing, unit: 'Unit 4B' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects the fully-mixed payload (address AND neighbourhood/lat/lng all present at once)', () => {
+    const result = listingCreateSchema.safeParse({ ...baseListing, ...legacyShapeListing, address: baseListing.address });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listingUpdateSchema — TRANSITIONAL dual-shape support on PATCH', () => {
+  it('accepts a NEW-shape partial update (address alone)', () => {
+    const result = listingUpdateSchema.safeParse({ address: '999 New Street' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a LEGACY-shape partial update (lat/lng alone, or neighbourhood alone)', () => {
+    expect(listingUpdateSchema.safeParse({ lat: 43.6532, lng: -79.3832 }).success).toBe(true);
+    expect(listingUpdateSchema.safeParse({ neighbourhood: 'Downtown' }).success).toBe(true);
+  });
+
+  it('accepts an update touching neither shape at all (e.g. price/title only)', () => {
+    const result = listingUpdateSchema.safeParse({ price: 1800, title: 'Updated title here' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects mixing address with a legacy field in the same PATCH', () => {
+    expect(listingUpdateSchema.safeParse({ address: '999 New Street', neighbourhood: 'Downtown' }).success).toBe(false);
+    expect(listingUpdateSchema.safeParse({ address: '999 New Street', lat: 43.6532 }).success).toBe(false);
+  });
+
+  it('rejects mixing unit with a legacy-only field', () => {
+    const result = listingUpdateSchema.safeParse({ unit: 'Unit 4B', neighbourhood: 'Downtown' });
     expect(result.success).toBe(false);
   });
 });

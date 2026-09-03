@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon, Home } from 'lucide-react';
 import { useAuthStore, useUser } from '@/store/authStore';
@@ -20,6 +20,7 @@ export default function Navbar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [scrolled, setScrolled] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 10);
@@ -35,6 +36,33 @@ export default function Navbar() {
     }, 30000);
     return () => clearInterval(interval);
   }, [user]);
+
+  // The account dropdown used to close on mere onMouseLeave, so simply
+  // moving the mouse off it (not clicking anything) would dismiss it --
+  // reported as unwanted. It now closes only on an explicit outside
+  // click/tap, Escape, the trigger being clicked again (already handled by
+  // its own onClick toggle below), or selecting a menu item (each item's
+  // own onClick already calls setUserMenuOpen(false)). Scoped to only run
+  // while the menu is actually open, and to the wrapping ref (trigger +
+  // panel together) so clicking the trigger itself is never mistaken for
+  // an "outside" click.
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function handleOutsideClick(e: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setUserMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [userMenuOpen]);
 
   const handleLogout = async () => {
     try { await authApi.logout(); } catch {}
@@ -111,7 +139,7 @@ export default function Navbar() {
                 </button>
 
                 {/* User menu */}
-                <div className="relative">
+                <div className="relative" ref={userMenuRef}>
                   <button
                     onClick={() => setUserMenuOpen(!userMenuOpen)}
                     className="flex items-center gap-2.5 bg-white border border-ink/10 rounded-full pl-2 pr-4 py-1.5 hover:border-brand-400 transition-colors shadow-card"
@@ -134,7 +162,6 @@ export default function Navbar() {
                         exit={{ opacity: 0, y: 6, scale: 0.97 }}
                         transition={{ duration: 0.12 }}
                         className="absolute right-0 top-full mt-2 w-52 bg-white border border-ink/8 rounded-2xl shadow-elevated overflow-hidden z-50"
-                        onMouseLeave={() => setUserMenuOpen(false)}
                       >
                         <div className="px-4 py-3 border-b border-ink/6">
                           <p className="font-semibold text-sm">{user.name}</p>

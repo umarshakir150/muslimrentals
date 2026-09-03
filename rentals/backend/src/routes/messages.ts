@@ -10,11 +10,14 @@
  */
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { ReportTargetType } from '@prisma/client';
 import { prisma } from '../prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
+import { messageReportSchema } from '../validation/reportSchemas';
+import { isRestrictedFromMessaging } from '../utils/moderation';
 
 const router = Router();
 
@@ -76,18 +79,28 @@ router.get('/conversations/:id', validateUuidParam('id'), authenticate, async (r
 
     if (!conv) throw new AppError('Conversation not found.', 404);
 
-    // OWASP A01: verify the requester is a participant
+    // OWASP A01: a participant can always open their own conversation.
+    // ADMIN/MODERATOR can additionally open ANY conversation strictly for
+    // moderation review (e.g. investigating a filed MESSAGE report via the
+    // admin panel's "Full conversation" action) -- an ordinary USER who
+    // isn't a participant is still fully denied, unchanged from before.
     const isParticipant = conv.participants.some(p => p.userId === req.user!.id);
-    if (!isParticipant) throw new AppError('Not authorized.', 403);
+    const isModerator   = req.user!.role === 'ADMIN' || req.user!.role === 'MODERATOR';
+    if (!isParticipant && !isModerator) throw new AppError('Not authorized.', 403);
 
-    await prisma.message.updateMany({
-      where: { conversationId: conv.id, senderId: { not: req.user!.id }, isRead: false },
-      data:  { isRead: true },
-    });
-    await prisma.conversationParticipant.updateMany({
-      where: { conversationId: conv.id, userId: req.user!.id },
-      data:  { lastReadAt: new Date() },
-    });
+    // Only a real participant's own view marks messages read / advances
+    // their own lastReadAt -- a moderator reviewing someone else's
+    // conversation must never mutate the actual participants' read state.
+    if (isParticipant) {
+      await prisma.message.updateMany({
+        where: { conversationId: conv.id, senderId: { not: req.user!.id }, isRead: false },
+        data:  { isRead: true },
+      });
+      await prisma.conversationParticipant.updateMany({
+        where: { conversationId: conv.id, userId: req.user!.id },
+        data:  { lastReadAt: new Date() },
+      });
+    }
 
     res.json({ success: true, data: conv });
   } catch (err) { next(err); }
@@ -104,6 +117,9 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
     });
     if (!listing) throw new AppError('Listing not found.', 404);
     if (listing.userId === req.user!.id) throw new AppError('You cannot message yourself.', 400);
+    if (await isRestrictedFromMessaging(req.user!.id, listing.userId)) {
+      throw new AppError('You are not able to message this user.', 403);
+    }
 
     const existing = await prisma.conversation.findFirst({
       where: {
@@ -166,6 +182,13 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
     if (!conv) throw new AppError('Conversation not found.', 404);
     if (!conv.participants.some(p => p.userId === req.user!.id)) throw new AppError('Not authorized.', 403);
 
+    const otherParticipantIds = conv.participants.filter(p => p.userId !== req.user!.id).map(p => p.userId);
+    for (const otherId of otherParticipantIds) {
+      if (await isRestrictedFromMessaging(req.user!.id, otherId)) {
+        throw new AppError('You are not able to message this user.', 403);
+      }
+    }
+
     const message = await prisma.message.create({
       data: { conversationId: conv.id, senderId: req.user!.id, body },
       include: { sender: { select: { id: true, name: true, avatarUrl: true } } },
@@ -177,6 +200,54 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
     io?.to(`conv:${conv.id}`).emit('message:new', message);
 
     res.status(201).json({ success: true, data: message });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /messages/:id/report ────────────────────────────────────────────────
+// Object-level authorization:
+//  - Who can create it? Any authenticated conversation participant, except
+//    the message's own sender (self-report blocked below).
+//  - Who can read it? Nobody via this route -- only {success, message} is
+//    returned, matching the existing listing-report response shape so a
+//    caller can never enumerate whether a report already exists.
+//  - Ownership/manipulation: :id is validated as a UUID and looked up
+//    server-side; participant membership is re-verified against the DB
+//    (never trusted from the client), same pattern as every other
+//    messages.ts route.
+//  - Data integrity: body + senderId are snapshotted into the Report row at
+//    creation time (not a live FK lookup done later), since the message can
+//    be edited or deleted after the report is filed and messages have no
+//    edit/delete audit trail of their own.
+router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { reason, description } = messageReportSchema.parse(req.body);
+
+    const message = await prisma.message.findUnique({
+      where:   { id: req.params.id },
+      include: { conversation: { include: { participants: true } } },
+    });
+    if (!message) throw new AppError('Message not found.', 404);
+
+    const isParticipant = message.conversation.participants.some(p => p.userId === req.user!.id);
+    if (!isParticipant) throw new AppError('Not authorized.', 403);
+
+    if (message.senderId === req.user!.id) {
+      throw new AppError('You cannot report your own message.', 400);
+    }
+
+    await prisma.report.create({
+      data: {
+        reporterId:      req.user!.id,
+        targetType:      ReportTargetType.MESSAGE,
+        messageId:       message.id,
+        messageSnapshot: message.body,
+        reportedUserId:  message.senderId,
+        reason,
+        description,
+      },
+    });
+
+    res.json({ success: true, message: 'Report submitted. Our team reviews reports as soon as possible.' });
   } catch (err) { next(err); }
 });
 

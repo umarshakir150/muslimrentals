@@ -82,8 +82,8 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response, next:
 
     // OWASP: same error message for "not found" and "wrong password" to prevent enumeration
     if (!user || !user.passwordHash) throw new AppError('Invalid email or password.', 401);
-    if (!user.isActive)               throw new AppError('Account is inactive.', 401);
-    if (user.isBanned)                throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403);
+    if (!user.isActive)               throw new AppError('Account is inactive.', 401, 'ACCOUNT_INACTIVE');
+    if (user.isBanned)                throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403, 'ACCOUNT_SUSPENDED');
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw new AppError('Invalid email or password.', 401);
@@ -138,8 +138,8 @@ router.post('/google', authRateLimiter, async (req: Request, res: Response, next
       // -- without this, a deleted (isActive: false) or banned account could
       // still mint a fresh session via Google, since googleId/email survive
       // account deletion by design (see the Settings delete-account flow).
-      if (!user.isActive) throw new AppError('Account is inactive.', 401);
-      if (user.isBanned)  throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403);
+      if (!user.isActive) throw new AppError('Account is inactive.', 401, 'ACCOUNT_INACTIVE');
+      if (user.isBanned)  throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403, 'ACCOUNT_SUSPENDED');
 
       hasPassword = Boolean(user.passwordHash);
       await prisma.user.update({ where: { id: user.id }, data: { googleId: payload.sub, avatarUrl: payload.picture } });
@@ -172,7 +172,8 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
 
     // Validate stored token matches — prevents reuse of rotated tokens
     if (!user || user.refreshToken !== token) throw new AppError('Invalid refresh token.', 401);
-    if (!user.isActive || user.isBanned)      throw new AppError('Account suspended.', 403);
+    if (!user.isActive) throw new AppError('Account suspended.', 403, 'ACCOUNT_INACTIVE');
+    if (user.isBanned)  throw new AppError('Account suspended.', 403, 'ACCOUNT_SUSPENDED');
 
     const { refreshToken: _, ...safeUser } = user;
     const accessToken    = signAccessToken(safeUser);

@@ -13,7 +13,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { ListingStatus } from '@prisma/client';
+import { ListingStatus, ReportTargetType } from '@prisma/client';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
@@ -22,6 +22,7 @@ import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { logger } from '../utils/logger';
 import { sendEmail, emailChangeVerificationEmail, emailChangeVerificationEmailText } from '../utils/email';
+import { userReportSchema } from '../validation/reportSchemas';
 
 const router = Router();
 
@@ -102,6 +103,81 @@ router.get('/:id', validateUuidParam('id'), async (req, res: Response, next: Nex
     });
     if (!user) throw new AppError('User not found.', 404);
     res.json({ success: true, data: user });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /users/:id/report ───────────────────────────────────────────────────
+// Object-level authorization:
+//  - Who can create it? Any authenticated user EXCEPT the target themselves
+//    (self-report blocked), and only if a real prior marketplace
+//    interaction exists (mandatory founder constraint, not optional
+//    hardening -- see task record appr_ab411474-e4d4-4742-9ed8-f28a463d1d5d).
+//    This is NOT an open report-any-user endpoint.
+//  - Qualifying interaction (checked server-side against the DB, never
+//    inferred from the request): (a) reporter and target already share a
+//    Conversation as participants, OR (b) the target owns a Listing that
+//    the reporter has a real interaction with -- an existing conversation
+//    about that listing, or the reporter has saved it.
+//  - Who can read it? Nobody via this route -- {success, message} only,
+//    matching the existing listing-report shape (no enumeration of
+//    existing reports against a target).
+//  - Ownership/manipulation: :id is UUID-validated; the target's existence
+//    and every interaction check are re-verified server-side.
+router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { reason, description } = userReportSchema.parse(req.body);
+    const targetId = req.params.id;
+
+    if (targetId === req.user!.id) {
+      throw new AppError('You cannot report yourself.', 400);
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true } });
+    if (!targetUser) throw new AppError('User not found.', 404);
+
+    const [sharedConversation, listingInteraction] = await Promise.all([
+      // (a) reporter and target already share a conversation
+      prisma.conversation.findFirst({
+        where: {
+          AND: [
+            { participants: { some: { userId: req.user!.id } } },
+            { participants: { some: { userId: targetId } } },
+          ],
+        },
+        select: { id: true },
+      }),
+      // (b) target owns a listing the reporter has interacted with --
+      // an existing conversation about it, or the reporter saved it.
+      prisma.listing.findFirst({
+        where: {
+          userId: targetId,
+          OR: [
+            { conversations: { some: { participants: { some: { userId: req.user!.id } } } } },
+            { savedBy: { some: { userId: req.user!.id } } },
+          ],
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!sharedConversation && !listingInteraction) {
+      throw new AppError(
+        'You can only report a user you have interacted with on the marketplace (a shared conversation or a listing of theirs you messaged about or saved).',
+        403
+      );
+    }
+
+    await prisma.report.create({
+      data: {
+        reporterId:     req.user!.id,
+        targetType:     ReportTargetType.USER,
+        reportedUserId: targetId,
+        reason,
+        description,
+      },
+    });
+
+    res.json({ success: true, message: 'Report submitted. Our team reviews reports as soon as possible.' });
   } catch (err) { next(err); }
 });
 

@@ -159,6 +159,13 @@ const sections: PolicySection[] = [
           the other participant; the deleted user's name is replaced with "Deleted user."
         </p>
         <p>Reports may be retained after account deletion for moderation, security, or legal record-keeping purposes.</p>
+        <p>
+          When a message is reported, the content of the reported message is retained as part of the report record
+          so it can be reviewed. Once that report is resolved or dismissed, the message content is retained for a
+          further 90 days, after which it is permanently removed while the report's other details (status, reason,
+          and resolution) continue to be retained for record-keeping purposes. This 90-day period may be paused for
+          a report that is subject to an active investigation, dispute, or legal preservation obligation.
+        </p>
       </>
     ),
   },

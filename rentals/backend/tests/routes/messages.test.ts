@@ -34,11 +34,13 @@ const messageCountMock           = vi.fn();
 const messageUpdateManyMock      = vi.fn();
 const participantUpdateManyMock  = vi.fn();
 const notificationCreateMock     = vi.fn();
+const restrictionFindUniqueMock  = vi.fn().mockResolvedValue(null); // no active restriction by default
 
 vi.mock('../../src/prisma/client', () => ({
   prisma: {
     user:     { findUnique: (...args: any[]) => userFindUniqueMock(...args) },
     listing:  { findUnique: (...args: any[]) => listingFindUniqueMock(...args) },
+    userMessageRestriction: { findUnique: (...args: any[]) => restrictionFindUniqueMock(...args) },
     conversation: {
       findFirst:  (...args: any[]) => conversationFindFirstMock(...args),
       findUnique: (...args: any[]) => conversationFindUniqueMock(...args),
@@ -60,6 +62,13 @@ vi.mock('../../src/prisma/client', () => ({
 
 function signToken(userId: string) {
   return jwt.sign({ userId, email: `${userId}@example.com`, role: 'USER' }, process.env.JWT_SECRET!, {
+    algorithm: 'HS256',
+    expiresIn: '15m',
+  });
+}
+
+function signTokenWithRole(userId: string, role: string) {
+  return jwt.sign({ userId, email: `${userId}@example.com`, role }, process.env.JWT_SECRET!, {
     algorithm: 'HS256',
     expiresIn: '15m',
   });
@@ -103,6 +112,7 @@ beforeEach(() => {
   messageUpdateManyMock.mockReset();
   participantUpdateManyMock.mockReset();
   notificationCreateMock.mockReset();
+  restrictionFindUniqueMock.mockReset().mockResolvedValue(null);
 });
 
 describe('POST /messages/conversations (start a conversation)', () => {
@@ -205,6 +215,43 @@ describe('POST /messages/conversations (start a conversation)', () => {
     expect(conversationCreateMock).not.toHaveBeenCalled();
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
   });
+
+  it('blocks starting a conversation with a listing owner who has restricted this sender from messaging them again', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_A));
+    listingFindUniqueMock.mockResolvedValue({ id: LISTING_ID, userId: USER_B, title: 'Cozy 2BR' });
+    restrictionFindUniqueMock.mockResolvedValue({ restrictedUserId: USER_A, protectedUserId: USER_B, reason: 'x', liftedAt: null });
+
+    const io = fakeIo();
+    const app = await buildApp(io);
+
+    const res = await request(app)
+      .post('/api/v1/messages/conversations')
+      .set('Authorization', `Bearer ${signToken(USER_A)}`)
+      .send({ listingId: LISTING_ID, body: "I'm interested!" });
+
+    expect(res.status).toBe(403);
+    expect(conversationCreateMock).not.toHaveBeenCalled();
+    expect(conversationFindFirstMock).not.toHaveBeenCalled();
+  });
+
+  it('a LIFTED restriction no longer blocks starting a conversation', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_A));
+    listingFindUniqueMock.mockResolvedValue({ id: LISTING_ID, userId: USER_B, title: 'Cozy 2BR' });
+    restrictionFindUniqueMock.mockResolvedValue({ restrictedUserId: USER_A, protectedUserId: USER_B, reason: 'x', liftedAt: new Date('2026-01-01') });
+    conversationFindFirstMock.mockResolvedValue({ id: CONV_ID });
+    messageCreateMock.mockResolvedValue({ id: 'm3', conversationId: CONV_ID, senderId: USER_A, body: 'hi again' });
+    conversationUpdateMock.mockResolvedValue({});
+
+    const io = fakeIo();
+    const app = await buildApp(io);
+
+    const res = await request(app)
+      .post('/api/v1/messages/conversations')
+      .set('Authorization', `Bearer ${signToken(USER_A)}`)
+      .send({ listingId: LISTING_ID, body: 'hi again' });
+
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('POST /messages/conversations/:id/messages (reply)', () => {
@@ -228,6 +275,24 @@ describe('POST /messages/conversations/:id/messages (reply)', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.senderId).toBe(USER_B);
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
+  });
+
+  it('blocks a reply from a participant restricted from messaging the other participant again', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_B));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+    });
+    restrictionFindUniqueMock.mockResolvedValue({ restrictedUserId: USER_B, protectedUserId: USER_A, reason: 'x', liftedAt: null });
+
+    const app = await buildApp(fakeIo());
+    const res = await request(app)
+      .post(`/api/v1/messages/conversations/${CONV_ID}/messages`)
+      .set('Authorization', `Bearer ${signToken(USER_B)}`)
+      .send({ body: 'still trying to reach you' });
+
+    expect(res.status).toBe(403);
+    expect(messageCreateMock).not.toHaveBeenCalled();
   });
 
   it('rejects a reply from a user who is not a participant (OWASP A01)', async () => {
@@ -313,6 +378,65 @@ describe('GET /messages/conversations/:id (open a thread)', () => {
     expect(participantUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { conversationId: CONV_ID, userId: USER_A },
     }));
+  });
+
+  // Regression coverage for the admin "Full conversation" deep-link bug:
+  // clicking it from a MESSAGE report in /admin landed on the generic
+  // inbox instead of the reported thread, root-caused to this endpoint
+  // flatly 403ing any non-participant -- including the ADMIN/MODERATOR
+  // reviewing the report, who is essentially never a participant in a
+  // conversation between two other users.
+  it('lets an ADMIN open a conversation they are not a participant in, for moderation review, without marking the real participants\' messages read', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C, { role: 'ADMIN' }));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [{ id: 'm1', senderId: USER_B, body: 'Pay me outside the app', isRead: false }],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signTokenWithRole(USER_C, 'ADMIN')}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(CONV_ID);
+    // A moderator merely reviewing someone else's conversation must never
+    // mutate the real participants' read state or lastReadAt.
+    expect(messageUpdateManyMock).not.toHaveBeenCalled();
+    expect(participantUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('also lets a MODERATOR open a conversation they are not a participant in', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C, { role: 'MODERATOR' }));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signTokenWithRole(USER_C, 'MODERATOR')}`);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('still 403s an ordinary USER who is not a participant, unchanged -- the moderator bypass never widens to regular users', async () => {
+    userFindUniqueMock.mockResolvedValue(activeUser(USER_C));
+    conversationFindUniqueMock.mockResolvedValue({
+      id: CONV_ID,
+      participants: [{ userId: USER_A }, { userId: USER_B }],
+      messages: [],
+    });
+    const app = await buildApp(fakeIo());
+
+    const res = await request(app)
+      .get(`/api/v1/messages/conversations/${CONV_ID}`)
+      .set('Authorization', `Bearer ${signToken(USER_C)}`);
+
+    expect(res.status).toBe(403);
   });
 });
 

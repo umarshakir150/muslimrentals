@@ -48,10 +48,12 @@ vi.mock('@/lib/socket', () => ({
   disconnectSocket: vi.fn(),
 }));
 
-const { getConversationsMock, getConversationMock, sendMessageMock } = vi.hoisted(() => ({
+const { getConversationsMock, getConversationMock, sendMessageMock, reportMessageMock, reportUserMock } = vi.hoisted(() => ({
   getConversationsMock: vi.fn(),
   getConversationMock: vi.fn(),
   sendMessageMock: vi.fn(),
+  reportMessageMock: vi.fn().mockResolvedValue({ success: true }),
+  reportUserMock: vi.fn().mockResolvedValue({ success: true }),
 }));
 vi.mock('@/lib/api', () => ({
   messagesApi: {
@@ -60,6 +62,10 @@ vi.mock('@/lib/api', () => ({
     startConversation: vi.fn(),
     sendMessage: sendMessageMock,
     getUnreadCount: vi.fn().mockResolvedValue({ data: { count: 0 } }),
+    report: reportMessageMock,
+  },
+  usersApi: {
+    report: reportUserMock,
   },
 }));
 
@@ -104,6 +110,8 @@ beforeEach(() => {
   getConversationMock.mockReset();
   sendMessageMock.mockReset();
   toastMock.mockReset();
+  reportMessageMock.mockReset().mockResolvedValue({ success: true });
+  reportUserMock.mockReset().mockResolvedValue({ success: true });
 });
 
 describe('Inbox: sending a message never shows a client-side duplicate', () => {
@@ -257,5 +265,269 @@ describe('Inbox: socket listener lifecycle', () => {
     // Belt and suspenders: even a single delivered event only renders once.
     socket.serverPush('message:new', message({ id: 'post-remount', body: 'still just once' }));
     await waitFor(() => expect(within(screen.getByTestId('message-thread')).getAllByText('still just once')).toHaveLength(1));
+  });
+});
+
+describe('Inbox: reporting a user or a message', () => {
+  it('offers a "Report {name}" action in the thread header that reports the other participant, never the current user', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({ data: { ...conversation(), messages: [] } });
+
+    const user = userEvent.setup();
+    render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: `Report ${OTHER.name}` }));
+    expect(screen.getByText('Report this user')).toBeInTheDocument();
+    await user.click(screen.getByText('Harassment or abusive behavior'));
+    await user.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(reportUserMock).toHaveBeenCalledWith(OTHER.id, 'Harassment or abusive behavior', undefined));
+    // The header action must never file a MESSAGE report -- regression
+    // coverage for a founder test session where every report attempt
+    // (intended as reporting one specific message) actually hit
+    // POST /users/:id/report both times, confirmed via Render's request
+    // logs and a direct check of the Report rows in the database.
+    expect(reportMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('offers a tap-triggered "Report message" action only on the other participant\'s messages, never on the user\'s own', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({
+      data: {
+        ...conversation(),
+        messages: [
+          message({ id: 'mine', body: 'my own message', sender: { ...ME, avatarUrl: null } }),
+          message({ id: 'theirs', body: 'their message', sender: { ...OTHER, avatarUrl: null } }),
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByText('their message')).toBeInTheDocument());
+
+    // Exactly one "Report message" action exists -- for the other participant's
+    // message -- never one attached to the user's own message.
+    const reportButtons = screen.getAllByRole('button', { name: 'Report message' });
+    expect(reportButtons).toHaveLength(1);
+
+    await user.click(reportButtons[0]);
+    // Regression: this must open the message-report modal (title literally
+    // says "Report this message" and previews the reported text), never
+    // silently reuse the header's user-report flow.
+    expect(screen.getByText('Report this message')).toBeInTheDocument();
+    expect(screen.getByText('their message', { selector: 'p' })).toBeInTheDocument();
+    await user.click(screen.getByText('Spam'));
+    await user.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(reportMessageMock).toHaveBeenCalledWith('theirs', 'Spam', undefined));
+    // The individual-message action must create a MESSAGE report, never a
+    // USER report -- this is the exact regression a founder test session
+    // hit: both of their report attempts (intended as reporting a specific
+    // message) resulted in POST /users/:id/report, confirmed via Render's
+    // request logs and the actual Report rows in the database (both
+    // targetType USER, messageId null). This assertion fails if that ever
+    // regresses again.
+    expect(reportUserMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('Inbox: deep-linking into a specific conversation via initialConvId', () => {
+  it('opens the exact conversation a deep link points to, even when it is absent from the viewer\'s own conversation list', async () => {
+    // This is the moderator "Full conversation" scenario from an admin
+    // MESSAGE report: the admin is not a participant in the reported
+    // conversation, so it will never be in *their* own inbox list --
+    // simulated here by having getConversationsMock resolve to an
+    // unrelated conversation the deep link's id doesn't match at all.
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation({ id: 'conv-unrelated' })] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-reported',
+        messages: [message({ id: 'reported-msg', conversationId: 'conv-reported', body: 'Pay me outside the app', sender: { ...OTHER, avatarUrl: null } })],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-reported" />);
+
+    // Proves the Messages page actually consumed the deep-link id (fetched
+    // by it directly), not merely rendered with it unused.
+    await waitFor(() => expect(getConversationMock).toHaveBeenCalledWith('conv-reported'));
+    // Proves the specific reported thread opened -- not just the general
+    // inbox with nothing selected: the other participant's name is in the
+    // thread header and the reported message's own body is in the thread.
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('Pay me outside the app')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: `Report ${OTHER.name}` })).toBeInTheDocument();
+  });
+
+  it('never marks the participants\' unread messages as read when a non-participant (moderator) deep-links in -- the backend enforces this, but the frontend must still request it for the right id', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({ id: 'conv-reported', unreadCount: 3, messages: [message({ id: 'm1', conversationId: 'conv-reported' })] }),
+    });
+
+    render(<Inbox initialConvId="conv-reported" />);
+
+    await waitFor(() => expect(getConversationMock).toHaveBeenCalledWith('conv-reported'));
+    // The socket 'messages:read' emit is fired regardless (the server-side
+    // handler is the actual enforcement point, independently verified to
+    // no-op for a non-participant) -- asserting it's still emitted for the
+    // correct conversation id, not silently skipped or sent for the wrong one.
+    await waitFor(() => expect(socket.emitted.some(e => e.event === 'messages:read' && e.payload?.conversationId === 'conv-reported')).toBe(true));
+  });
+
+  it('renders participant A and participant B as visually distinct sides/groups in moderator (non-participant) mode', async () => {
+    // Neither participant is the mocked viewer (ME) -- this is the genuine
+    // moderator scenario a founder test session hit: "isMe" (sender id ===
+    // viewer id) is false for BOTH real participants, which previously
+    // rendered every message identically and made it look like one person
+    // sent the entire conversation.
+    const PERSON_A = { id: 'person-a-1', name: 'Alice', avatarUrl: null };
+    const PERSON_B = { id: 'person-b-1', name: 'Bob', avatarUrl: null };
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-mod',
+        participants: [
+          { userId: PERSON_A.id, user: PERSON_A },
+          { userId: PERSON_B.id, user: PERSON_B },
+        ],
+        messages: [
+          message({ id: 'a1', conversationId: 'conv-mod', body: 'Hi, is this still available?', sender: PERSON_A }),
+          message({ id: 'b1', conversationId: 'conv-mod', body: 'Yes it is!', sender: PERSON_B }),
+        ],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-mod" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('Yes it is!')).toBeInTheDocument());
+
+    // Both real senders' names are shown as distinct group labels -- not
+    // derived from (and never equal to) the viewer's own identity.
+    const aliceLabel = screen.getByText('Alice');
+    const bobLabel = screen.getByText('Bob');
+    expect(aliceLabel).toBeInTheDocument();
+    expect(bobLabel).toBeInTheDocument();
+
+    // Distinct sides: opposite alignment, derived from each sender's real
+    // position in the conversation's own participants array.
+    expect(aliceLabel.className).toMatch(/text-left/);
+    expect(bobLabel.className).toMatch(/text-right/);
+
+    // Distinct styling on the message bubbles themselves too, not just
+    // position -- so the two sides remain visually distinguishable even at
+    // a glance, matching the founder's "obvious who sent each message" ask.
+    const aliceBubble = screen.getByText('Hi, is this still available?').closest('div')!;
+    const bobBubble = screen.getByText('Yes it is!').closest('div')!;
+    expect(aliceBubble.className).toMatch(/bg-gray-100/);
+    expect(bobBubble.className).toMatch(/bg-purple-50/);
+
+    // Strictly read-only: no compose box, and no report affordances --
+    // neither the header's "Report {name}" nor a per-message action --
+    // since a moderator reviewing a filed report acts on the report, not
+    // by messing with this thread.
+    expect(screen.queryByPlaceholderText('Write a message...')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/read-only/i).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^Report/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('Inbox: normal participant view attributes every message to its real sender', () => {
+  // Founder concern: some old messages "may have looked attributed to the
+  // recipient instead of the sender." isMe is `msg.sender?.id === user?.id`
+  // -- a direct identity comparison, never inferred from array position or
+  // alternating order -- so this proves it against a shape that mirrors a
+  // real production conversation: non-strictly-alternating senders (not a
+  // neat back-and-forth), a historical run of two-in-a-row from the same
+  // person, and a brand-new socket-delivered message, all attributed
+  // correctly in one continuous thread.
+  const ME_SENDER = { ...ME, avatarUrl: null };
+  const OTHER_SENDER = { ...OTHER, avatarUrl: null };
+
+  it('alternating historical messages (including a same-sender run) are each rendered on the correct side, not by position', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-real-shape',
+        messages: [
+          message({ id: 'm1', conversationId: 'conv-real-shape', body: 'hey i like ur listing', sender: OTHER_SENDER }),
+          message({ id: 'm2', conversationId: 'conv-real-shape', body: 'thank u broooo', sender: ME_SENDER }),
+          message({ id: 'm3', conversationId: 'conv-real-shape', body: 'why message double send', sender: ME_SENDER }),
+          message({ id: 'm4', conversationId: 'conv-real-shape', body: 'yoooooo', sender: OTHER_SENDER }),
+          message({ id: 'm5', conversationId: 'conv-real-shape', body: 'whys it double sending', sender: OTHER_SENDER }),
+          message({ id: 'm6', conversationId: 'conv-real-shape', body: 'is it now', sender: ME_SENDER }),
+        ],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-real-shape" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('is it now')).toBeInTheDocument());
+
+    // isMe -> justify-end + brand-colored bubble; not-me -> justify-start + gray.
+    function bubbleSideOf(text: string) {
+      const bubble = screen.getByText(text).closest('div')!;
+      const row = bubble.parentElement!; // the flex row wrapping the bubble
+      return row.className.includes('justify-end') ? 'me' : 'other';
+    }
+    function bubbleColorOf(text: string) {
+      const bubble = screen.getByText(text).closest('div')!;
+      return bubble.className.includes('bg-brand-600') ? 'me' : 'gray';
+    }
+
+    expect(bubbleSideOf('hey i like ur listing')).toBe('other');
+    expect(bubbleSideOf('thank u broooo')).toBe('me');
+    expect(bubbleSideOf('why message double send')).toBe('me');
+    expect(bubbleSideOf('yoooooo')).toBe('other');
+    expect(bubbleSideOf('whys it double sending')).toBe('other');
+    expect(bubbleSideOf('is it now')).toBe('me');
+
+    expect(bubbleColorOf('hey i like ur listing')).toBe('gray');
+    expect(bubbleColorOf('thank u broooo')).toBe('me');
+    expect(bubbleColorOf('yoooooo')).toBe('gray');
+  });
+
+  it('a brand-new message delivered live over the socket is attributed to its real sender, not appended as "me" by default', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-live',
+        messages: [message({ id: 'm1', conversationId: 'conv-live', body: 'first message', sender: ME_SENDER })],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-live" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('first message')).toBeInTheDocument());
+
+    // The server pushes a message OTHER just sent -- Inbox must trust its
+    // real sender field, not assume "new incoming message = from the other
+    // participant" or any other positional shortcut.
+    socket.serverPush('message:new', message({ id: 'm2', conversationId: 'conv-live', body: 'their live reply', sender: OTHER_SENDER }));
+    await waitFor(() => expect(screen.getByText('their live reply')).toBeInTheDocument());
+
+    const bubble = screen.getByText('their live reply').closest('div')!;
+    const row = bubble.parentElement!;
+    expect(row.className).toContain('justify-start');
+    expect(bubble.className).not.toContain('bg-brand-600');
+
+    // And a live message genuinely from ME (e.g. delivered back via the
+    // sender's own room, per the existing dedupe logic) still renders as "me".
+    socket.serverPush('message:new', message({ id: 'm3', conversationId: 'conv-live', body: 'my own live message', sender: ME_SENDER }));
+    await waitFor(() => expect(screen.getByText('my own live message')).toBeInTheDocument());
+    const myBubble = screen.getByText('my own live message').closest('div')!;
+    expect(myBubble.className).toContain('bg-brand-600');
   });
 });

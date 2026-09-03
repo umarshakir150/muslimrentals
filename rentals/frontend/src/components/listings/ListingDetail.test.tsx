@@ -4,10 +4,13 @@ import userEvent from '@testing-library/user-event';
 import ListingDetail from './ListingDetail';
 import { Listing, ListingImage } from '@/types';
 
-const { getByIdMock } = vi.hoisted(() => ({ getByIdMock: vi.fn() }));
+const { getByIdMock, reportMock } = vi.hoisted(() => ({
+  getByIdMock: vi.fn(),
+  reportMock: vi.fn().mockResolvedValue({ success: true }),
+}));
 
 vi.mock('@/lib/api', () => ({
-  listingsApi: { save: vi.fn(), report: vi.fn(), deletePermanent: vi.fn(), getById: getByIdMock },
+  listingsApi: { save: vi.fn(), report: reportMock, deletePermanent: vi.fn(), getById: getByIdMock },
 }));
 
 vi.mock('@/store/authStore', () => ({
@@ -251,5 +254,31 @@ describe('ListingDetail image gallery', () => {
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.getAllByAltText('testing photos')[0]).toBeInTheDocument();
+  });
+});
+
+describe('ListingDetail report flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    reportMock.mockResolvedValue({ success: true });
+  });
+
+  it('opens the shared ReportModal (LISTING target) from the flag button and submits via listingsApi.report', async () => {
+    mockDetailFetch([]);
+    const listing = makeListing([]);
+    const user = userEvent.setup();
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: 'Report listing' }));
+    expect(screen.getByText('Report this listing')).toBeInTheDocument();
+    expect(screen.getAllByText(listing.title).length).toBeGreaterThan(0);
+
+    await user.click(screen.getByText('Misleading or fraudulent listing'));
+    await user.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() =>
+      expect(reportMock).toHaveBeenCalledWith(listing.id, 'Misleading or fraudulent listing', undefined)
+    );
   });
 });

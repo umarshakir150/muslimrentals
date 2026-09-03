@@ -142,7 +142,7 @@ router.get('/:id', validateUuidParam('id'), optionalAuth, async (req: AuthReques
       },
     });
 
-    if (!listing || listing.status === ListingStatus.REMOVED) {
+    if (!listing || listing.status === ListingStatus.REMOVED || listing.status === ListingStatus.BANNED) {
       throw new AppError('Listing not found.', 404);
     }
 

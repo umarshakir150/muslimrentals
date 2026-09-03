@@ -371,7 +371,7 @@ export default function AdminPage() {
                                 <button
                                   onClick={() => openReasonPrompt({
                                     title: `Ban ${r.reportedUser.name}?`,
-                                    warning: "This is more serious than a restriction: it immediately suspends their whole account -- they're logged out, cannot log back in, and cannot send any messages or create listings. Their existing listings remain visible.",
+                                    warning: "This is more serious than a restriction: it immediately suspends their whole account -- they're logged out, cannot log back in, and cannot send any messages or create listings. Their existing active listings will also be immediately hidden from public view (restored automatically if unbanned).",
                                     confirmLabel: 'Ban user',
                                     danger: true,
                                     onConfirm: async (reason) => {

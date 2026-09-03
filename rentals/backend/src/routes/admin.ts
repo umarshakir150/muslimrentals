@@ -108,24 +108,46 @@ router.get('/users', async (req, res: Response, next: NextFunction) => {
 });
 
 // ─── PATCH /admin/users/:id/ban ───────────────────────────────────────────────
+// Also hides every currently-ACTIVE listing this user owns from public view
+// (status -> BANNED), in the same transaction as the account ban so the two
+// can never end up out of sync. Only ACTIVE listings are touched -- one
+// that was already INACTIVE/PENDING/REMOVED for an unrelated reason is left
+// exactly as it was, so /unban knows to leave it alone too (see below).
 router.patch('/users/:id/ban', validateUuidParam('id'), requireRole(UserRole.ADMIN), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
   try {
     const { reason } = banSchema.parse(req.body);
-    const user = await prisma.user.update({
-      where: { id: req.params.id },
-      data: { isBanned: true, banReason: reason, refreshToken: null },
-    });
+    const [user] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id: req.params.id },
+        data: { isBanned: true, banReason: reason, refreshToken: null },
+      }),
+      prisma.listing.updateMany({
+        where: { userId: req.params.id, status: ListingStatus.ACTIVE },
+        data:  { status: ListingStatus.BANNED },
+      }),
+    ]);
     res.json({ success: true, message: `User ${user.email} banned.` });
   } catch (err) { next(err); }
 });
 
 // ─── PATCH /admin/users/:id/unban ────────────────────────────────────────────
+// Restores only the listings this ban itself hid (status === BANNED) back
+// to ACTIVE. A listing that was already INACTIVE/PENDING/REMOVED before the
+// ban was never moved to BANNED in the first place, so it's untouched here
+// too -- and one a moderator explicitly REMOVED while the owner was banned
+// also stays REMOVED, since by then it's no longer at BANNED status either.
 router.patch('/users/:id/unban', validateUuidParam('id'), requireRole(UserRole.ADMIN), writeRateLimiter, async (req, res: Response, next: NextFunction) => {
   try {
-    const user = await prisma.user.update({
-      where: { id: req.params.id },
-      data: { isBanned: false, banReason: null },
-    });
+    const [user] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id: req.params.id },
+        data: { isBanned: false, banReason: null },
+      }),
+      prisma.listing.updateMany({
+        where: { userId: req.params.id, status: ListingStatus.BANNED },
+        data:  { status: ListingStatus.ACTIVE },
+      }),
+    ]);
     res.json({ success: true, message: `User ${user.email} unbanned.` });
   } catch (err) { next(err); }
 });

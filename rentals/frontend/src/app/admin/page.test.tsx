@@ -280,6 +280,10 @@ describe('Admin Reports panel: targetType branching', () => {
     await user.click(screen.getByRole('button', { name: 'Ban user' }));
     const dialog = await screen.findByRole('dialog', { name: 'Ban Jake?' });
     expect(within(dialog).getByText(/more serious than a restriction/)).toBeInTheDocument();
+    // Accurately discloses the listing-hiding side effect introduced
+    // alongside this feature, not just the account-suspension part.
+    expect(within(dialog).getByText(/active listings will also be immediately hidden from public view/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/restored automatically if unbanned/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Ban user' })).toBeDisabled();
 
     await user.type(within(dialog).getByLabelText(/Reason/), 'Serious, repeated harassment');

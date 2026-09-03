@@ -142,6 +142,13 @@ enum ListingStatus {
   INACTIVE
   PENDING
   REMOVED
+  // Set only by /admin/users/:id/ban on a listing that was ACTIVE at ban
+  // time, and reverted to ACTIVE only by /unban -- never applied to a
+  // listing that was already INACTIVE/PENDING/REMOVED, so those stay
+  // exactly as they were through a ban/unban cycle. Distinct from REMOVED
+  // (a moderator's own, independent decision on one specific listing) so
+  // the two don't get confused when a listing accumulates both over time.
+  BANNED
 }
 
 // ─── Listing Images ───────────────────────────────────────────────────────────

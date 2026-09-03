@@ -31,14 +31,24 @@ const restrictionUpsertMock = vi.fn();
 const restrictionUpdateMock = vi.fn();
 const restrictionFindManyMock = vi.fn();
 const userUpdateMock = vi.fn();
+const listingUpdateManyMock = vi.fn();
 const reportFindManyMock = vi.fn();
 const reportGroupByMock = vi.fn();
+// Real $transaction([opA, opB]) receives two already-invoked mocked-Prisma
+// promises (the individual mocks above already ran); this just awaits both
+// together and returns their results in order, matching Prisma's own shape
+// closely enough to test that /ban and /unban update the user and their
+// listings atomically, in one transaction, not as two independent calls.
+const transactionMock = vi.fn((ops: Promise<any>[]) => Promise.all(ops));
 
 vi.mock('../../src/prisma/client', () => ({
   prisma: {
     user: {
       findUnique: (...args: any[]) => userFindUniqueMock(...args),
       update:     (...args: any[]) => userUpdateMock(...args),
+    },
+    listing: {
+      updateMany: (...args: any[]) => listingUpdateManyMock(...args),
     },
     userMessageRestriction: {
       findUnique: (...args: any[]) => restrictionFindUniqueMock(...args),
@@ -50,6 +60,7 @@ vi.mock('../../src/prisma/client', () => ({
       findMany: (...args: any[]) => reportFindManyMock(...args),
       groupBy:  (...args: any[]) => reportGroupByMock(...args),
     },
+    $transaction: (...args: any[]) => transactionMock(...args),
   },
 }));
 
@@ -82,8 +93,10 @@ beforeEach(() => {
   restrictionUpdateMock.mockReset().mockResolvedValue({});
   restrictionFindManyMock.mockReset().mockResolvedValue([]);
   userUpdateMock.mockReset().mockResolvedValue({ email: 'target@example.com' });
+  listingUpdateManyMock.mockReset().mockResolvedValue({ count: 0 });
   reportFindManyMock.mockReset().mockResolvedValue([]);
   reportGroupByMock.mockReset().mockResolvedValue([]);
+  transactionMock.mockReset().mockImplementation((ops: Promise<any>[]) => Promise.all(ops));
 });
 
 // The `authenticate` middleware re-fetches the acting user by id on every
@@ -258,6 +271,110 @@ describe('/ban and /unban authorization (pre-existing endpoints, previously unte
 
     expect(res.status).toBe(403);
     expect(userUpdateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('/ban and /unban: hiding and restoring the banned user\'s listings', () => {
+  it('banning hides every currently-ACTIVE listing owned by that user, in the same transaction as the account ban', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Repeated scam listings' });
+
+    expect(res.status).toBe(200);
+    expect(listingUpdateManyMock).toHaveBeenCalledWith({
+      where: { userId: RESTRICTED_USER_ID, status: 'ACTIVE' },
+      data:  { status: 'BANNED' },
+    });
+    // Both writes went through the same $transaction call, not two
+    // independent requests that could partially fail.
+    expect(transactionMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it('unban restores only listings the ban itself hid (status BANNED), not ones already non-public before the ban', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`);
+
+    expect(res.status).toBe(200);
+    // Scoped to status: 'BANNED' only -- a listing that was already
+    // INACTIVE/PENDING/REMOVED before the ban was never moved to BANNED,
+    // so this query can never touch it and accidentally "revive" it.
+    expect(listingUpdateManyMock).toHaveBeenCalledWith({
+      where: { userId: RESTRICTED_USER_ID, status: 'BANNED' },
+      data:  { status: 'ACTIVE' },
+    });
+  });
+
+  it('repeated ban/unban stays idempotent: a second ban only re-targets ACTIVE listings, a second unban only BANNED ones', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp();
+
+    for (let i = 0; i < 2; i++) {
+      await request(app)
+        .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+        .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+        .send({ reason: 'Repeated scam listings, second look' });
+    }
+    for (let i = 0; i < 2; i++) {
+      await request(app)
+        .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unban`)
+        .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`);
+    }
+
+    // Every call used the same fixed where/data shape -- a real (unmocked)
+    // updateMany against a set of already-BANNED (or already-ACTIVE) rows
+    // is a no-op, not an error or a state corruption, so calling it twice
+    // in a row is safe by construction.
+    for (const call of listingUpdateManyMock.mock.calls) {
+      expect(['ACTIVE', 'BANNED']).toContain(call[0].where.status);
+      expect(['ACTIVE', 'BANNED']).toContain(call[0].data.status);
+      expect(call[0].where.status).not.toBe(call[0].data.status);
+    }
+    expect(listingUpdateManyMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('actually simulating a mixed listing set: ban only flips the ACTIVE one, and unban only restores that same one -- INACTIVE/PENDING/REMOVED listings never move', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    // A real in-memory "table" (not just an assertion on the call shape) so
+    // this test can't pass on a where-clause typo the way an args-only
+    // assertion could -- updateMany here actually filters and mutates rows.
+    const listings = [
+      { id: 'l-active',  userId: RESTRICTED_USER_ID, status: 'ACTIVE' },
+      { id: 'l-inactive', userId: RESTRICTED_USER_ID, status: 'INACTIVE' },
+      { id: 'l-pending', userId: RESTRICTED_USER_ID, status: 'PENDING' },
+      { id: 'l-removed', userId: RESTRICTED_USER_ID, status: 'REMOVED' },
+    ];
+    listingUpdateManyMock.mockImplementation(({ where, data }: any) => {
+      let count = 0;
+      for (const l of listings) {
+        if (l.userId === where.userId && l.status === where.status) { l.status = data.status; count++; }
+      }
+      return Promise.resolve({ count });
+    });
+
+    const app = await buildApp();
+    await request(app).patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Repeated scam listings' });
+
+    expect(listings.find(l => l.id === 'l-active')!.status).toBe('BANNED');
+    expect(listings.find(l => l.id === 'l-inactive')!.status).toBe('INACTIVE');
+    expect(listings.find(l => l.id === 'l-pending')!.status).toBe('PENDING');
+    expect(listings.find(l => l.id === 'l-removed')!.status).toBe('REMOVED');
+
+    await request(app).patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/unban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`);
+
+    expect(listings.find(l => l.id === 'l-active')!.status).toBe('ACTIVE');
+    expect(listings.find(l => l.id === 'l-inactive')!.status).toBe('INACTIVE');
+    expect(listings.find(l => l.id === 'l-pending')!.status).toBe('PENDING');
+    expect(listings.find(l => l.id === 'l-removed')!.status).toBe('REMOVED');
   });
 });
 

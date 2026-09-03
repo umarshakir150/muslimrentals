@@ -20,7 +20,7 @@ export interface User {
 
 // ─── Listings ─────────────────────────────────────────────────────────────────
 export type ListingAudience = 'BROTHERS' | 'SISTERS' | 'COUPLES' | 'FAMILIES' | 'ALL';
-export type ListingStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'REMOVED';
+export type ListingStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'REMOVED' | 'BANNED';
 
 export interface ListingImage {
   id: string;

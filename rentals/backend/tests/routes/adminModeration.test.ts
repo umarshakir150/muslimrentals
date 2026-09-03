@@ -75,11 +75,12 @@ function actingUser(id: string, role: string) {
   return { id, email: `${id}@example.com`, role, name: 'Staff', isActive: true, isBanned: false };
 }
 
-async function buildApp() {
+async function buildApp(io?: any) {
   vi.resetModules();
   const { default: adminRoutes } = await import('../../src/routes/admin');
   const { errorHandler } = await import('../../src/middleware/errorHandler');
   const app = express();
+  if (io) app.set('io', io);
   app.use(express.json());
   app.use('/api/v1/admin', adminRoutes);
   app.use(errorHandler);
@@ -292,6 +293,41 @@ describe('/ban and /unban: hiding and restoring the banned user\'s listings', ()
     // independent requests that could partially fail.
     expect(transactionMock).toHaveBeenCalledTimes(1);
     expect(transactionMock.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it('force-disconnects any live Socket.IO session the banned user already has open, not just future connection attempts', async () => {
+    // Founder-reported gap: Socket.IO's own auth middleware only runs at
+    // connect time (socketServer.ts), so a session opened before the ban
+    // would otherwise sit connected indefinitely -- marking messages read,
+    // seeing typing indicators, receiving pushes -- until it happened to
+    // reconnect on its own. /ban must actively close it, the same instant
+    // the account is banned, not wait for that.
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const disconnectSocketsMock = vi.fn();
+    const inMock = vi.fn(() => ({ disconnectSockets: disconnectSocketsMock }));
+    const fakeIo = { in: inMock };
+
+    const app = await buildApp(fakeIo);
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Repeated scam listings' });
+
+    expect(res.status).toBe(200);
+    expect(inMock).toHaveBeenCalledWith(`user:${RESTRICTED_USER_ID}`);
+    expect(disconnectSocketsMock).toHaveBeenCalledWith(true);
+  });
+
+  it('does not error when no io instance is registered on the app (e.g. in a context without sockets)', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    const app = await buildApp(); // no io set
+
+    const res = await request(app)
+      .patch(`/api/v1/admin/users/${RESTRICTED_USER_ID}/ban`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Repeated scam listings' });
+
+    expect(res.status).toBe(200);
   });
 
   it('unban restores only listings the ban itself hid (status BANNED), not ones already non-public before the ban', async () => {

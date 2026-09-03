@@ -78,3 +78,33 @@ describe('GET /auth/me', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('GET /auth/me: an already-authenticated user banned mid-session', () => {
+  it('403s with code ACCOUNT_SUSPENDED on the very next request after a ban -- the access token itself is still cryptographically valid, but authenticate() re-reads the DB every time', async () => {
+    // Same signed, unexpired token as before the ban -- nothing about the
+    // JWT itself changes. What changes is the DB row authenticate() looks
+    // up on this request, simulating an admin banning this user between
+    // this request and their last one.
+    findUniqueMock.mockResolvedValueOnce({
+      id: USER_ID, email: 'u@example.com', role: 'USER', name: 'Test User', isActive: true, isBanned: true,
+    });
+
+    const app = await buildApp();
+    const res = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${signToken(USER_ID)}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ACCOUNT_SUSPENDED');
+  });
+
+  it('401s with code ACCOUNT_INACTIVE for a deactivated/deleted account, same "already had a valid token" scenario', async () => {
+    findUniqueMock.mockResolvedValueOnce({
+      id: USER_ID, email: 'u@example.com', role: 'USER', name: 'Test User', isActive: false, isBanned: false,
+    });
+
+    const app = await buildApp();
+    const res = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${signToken(USER_ID)}`);
+
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('ACCOUNT_INACTIVE');
+  });
+});

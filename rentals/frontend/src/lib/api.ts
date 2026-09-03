@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/store/authStore';
+import { disconnectSocket } from '@/lib/socket';
 
 // ─── Base URL normalisation ───────────────────────────────────────────────────
 // NEXT_PUBLIC_API_URL may be set as either:
@@ -28,6 +29,20 @@ const PUBLIC_AUTH_ENDPOINTS = new Set([
   '/auth/forgot-password',
   '/auth/reset-password',
 ]);
+
+// Tears down the client-side session completely and sends the user
+// somewhere that will show them as logged out -- used both when a 401
+// couldn't be silently refreshed (token expired/invalid, or the account
+// went inactive) and when any response carries an explicit
+// ACCOUNT_SUSPENDED/ACCOUNT_INACTIVE code. A full navigation (rather than
+// relying on whichever component happens to be mounted to notice the
+// store changed) guarantees every page's UI actually reflects the logout,
+// not just the ones that happen to re-render.
+function forceLogoutAndRedirect() {
+  useAuthStore.getState().clearAuth();
+  disconnectSocket();
+  if (typeof window !== 'undefined') window.location.href = '/';
+}
 
 // ─── Safe JSON parser ─────────────────────────────────────────────────────────
 // Never crashes on HTML/non-JSON responses (e.g. Render cold-start page, 404 HTML).
@@ -96,7 +111,7 @@ class ApiClient {
         if (user) useAuthStore.getState().setAuth(user, newToken);
         return this.request<T>(endpoint, options, false);
       } else {
-        useAuthStore.getState().clearAuth();
+        forceLogoutAndRedirect();
         throw new Error('Session expired. Please log in again.');
       }
     }
@@ -105,6 +120,21 @@ class ApiClient {
 
     if (!res.ok) {
       let message = data.message || 'Request failed';
+
+      // The backend flags an account that can no longer be used at all
+      // (banned or deactivated) with a machine-readable code, on ANY
+      // endpoint that happens to hit the check first -- not just /auth/me.
+      // Force a full, consistent logout right here rather than leaving it
+      // to each individual caller to notice and react (most don't; they
+      // just show their own generic error toast and leave the stale
+      // logged-in UI in place). Skipped for the public auth endpoints: a
+      // banned account failing to log IN isn't an active session to tear
+      // down, and forcibly navigating away from the login form on top of
+      // the inline error it already shows would just be a confusing extra
+      // redirect.
+      if ((data.code === 'ACCOUNT_SUSPENDED' || data.code === 'ACCOUNT_INACTIVE') && !PUBLIC_AUTH_ENDPOINTS.has(endpoint)) {
+        forceLogoutAndRedirect();
+      }
 
       // Sanitise - never expose raw HTML to users
       if (message.includes('<!DOCTYPE') || message.includes('<html')) {

@@ -441,3 +441,93 @@ describe('Inbox: deep-linking into a specific conversation via initialConvId', (
     expect(screen.queryByRole('button', { name: /^Report/i })).not.toBeInTheDocument();
   });
 });
+
+describe('Inbox: normal participant view attributes every message to its real sender', () => {
+  // Founder concern: some old messages "may have looked attributed to the
+  // recipient instead of the sender." isMe is `msg.sender?.id === user?.id`
+  // -- a direct identity comparison, never inferred from array position or
+  // alternating order -- so this proves it against a shape that mirrors a
+  // real production conversation: non-strictly-alternating senders (not a
+  // neat back-and-forth), a historical run of two-in-a-row from the same
+  // person, and a brand-new socket-delivered message, all attributed
+  // correctly in one continuous thread.
+  const ME_SENDER = { ...ME, avatarUrl: null };
+  const OTHER_SENDER = { ...OTHER, avatarUrl: null };
+
+  it('alternating historical messages (including a same-sender run) are each rendered on the correct side, not by position', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-real-shape',
+        messages: [
+          message({ id: 'm1', conversationId: 'conv-real-shape', body: 'hey i like ur listing', sender: OTHER_SENDER }),
+          message({ id: 'm2', conversationId: 'conv-real-shape', body: 'thank u broooo', sender: ME_SENDER }),
+          message({ id: 'm3', conversationId: 'conv-real-shape', body: 'why message double send', sender: ME_SENDER }),
+          message({ id: 'm4', conversationId: 'conv-real-shape', body: 'yoooooo', sender: OTHER_SENDER }),
+          message({ id: 'm5', conversationId: 'conv-real-shape', body: 'whys it double sending', sender: OTHER_SENDER }),
+          message({ id: 'm6', conversationId: 'conv-real-shape', body: 'is it now', sender: ME_SENDER }),
+        ],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-real-shape" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('is it now')).toBeInTheDocument());
+
+    // isMe -> justify-end + brand-colored bubble; not-me -> justify-start + gray.
+    function bubbleSideOf(text: string) {
+      const bubble = screen.getByText(text).closest('div')!;
+      const row = bubble.parentElement!; // the flex row wrapping the bubble
+      return row.className.includes('justify-end') ? 'me' : 'other';
+    }
+    function bubbleColorOf(text: string) {
+      const bubble = screen.getByText(text).closest('div')!;
+      return bubble.className.includes('bg-brand-600') ? 'me' : 'gray';
+    }
+
+    expect(bubbleSideOf('hey i like ur listing')).toBe('other');
+    expect(bubbleSideOf('thank u broooo')).toBe('me');
+    expect(bubbleSideOf('why message double send')).toBe('me');
+    expect(bubbleSideOf('yoooooo')).toBe('other');
+    expect(bubbleSideOf('whys it double sending')).toBe('other');
+    expect(bubbleSideOf('is it now')).toBe('me');
+
+    expect(bubbleColorOf('hey i like ur listing')).toBe('gray');
+    expect(bubbleColorOf('thank u broooo')).toBe('me');
+    expect(bubbleColorOf('yoooooo')).toBe('gray');
+  });
+
+  it('a brand-new message delivered live over the socket is attributed to its real sender, not appended as "me" by default', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [] });
+    getConversationMock.mockResolvedValue({
+      data: conversation({
+        id: 'conv-live',
+        messages: [message({ id: 'm1', conversationId: 'conv-live', body: 'first message', sender: ME_SENDER })],
+      }),
+    });
+
+    render(<Inbox initialConvId="conv-live" />);
+    await waitFor(() => expect(within(screen.getByTestId('message-thread')).getByText('first message')).toBeInTheDocument());
+
+    // The server pushes a message OTHER just sent -- Inbox must trust its
+    // real sender field, not assume "new incoming message = from the other
+    // participant" or any other positional shortcut.
+    socket.serverPush('message:new', message({ id: 'm2', conversationId: 'conv-live', body: 'their live reply', sender: OTHER_SENDER }));
+    await waitFor(() => expect(screen.getByText('their live reply')).toBeInTheDocument());
+
+    const bubble = screen.getByText('their live reply').closest('div')!;
+    const row = bubble.parentElement!;
+    expect(row.className).toContain('justify-start');
+    expect(bubble.className).not.toContain('bg-brand-600');
+
+    // And a live message genuinely from ME (e.g. delivered back via the
+    // sender's own room, per the existing dedupe logic) still renders as "me".
+    socket.serverPush('message:new', message({ id: 'm3', conversationId: 'conv-live', body: 'my own live message', sender: ME_SENDER }));
+    await waitFor(() => expect(screen.getByText('my own live message')).toBeInTheDocument());
+    const myBubble = screen.getByText('my own live message').closest('div')!;
+    expect(myBubble.className).toContain('bg-brand-600');
+  });
+});

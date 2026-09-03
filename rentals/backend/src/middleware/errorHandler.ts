@@ -16,11 +16,19 @@ import { ZodError } from 'zod';
 export class AppError extends Error {
   statusCode: number;
   isOperational: boolean;
+  // Optional machine-readable discriminator, for the rare case a client
+  // needs to react to *which* error this is rather than just its status
+  // code -- e.g. ACCOUNT_SUSPENDED/ACCOUNT_INACTIVE, which the frontend
+  // uses to force a logout on ANY endpoint, not just the ones it happens
+  // to string-match today. Omitted (undefined, not serialized) for every
+  // other AppError, so this is purely additive to the response shape.
+  code?: string;
 
-  constructor(message: string, statusCode: number) {
+  constructor(message: string, statusCode: number, code?: string) {
     super(message);
     this.statusCode = statusCode;
     this.isOperational = true;
+    this.code = code;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -81,7 +89,7 @@ export function errorHandler(
 
   // ── Operational errors (AppError) ─────────────────────────────────────────
   if (err instanceof AppError) {
-    return res.status(err.statusCode).json({ success: false, message: err.message });
+    return res.status(err.statusCode).json({ success: false, message: err.message, ...(err.code && { code: err.code }) });
   }
 
   // ── JWT errors ────────────────────────────────────────────────────────────

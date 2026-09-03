@@ -126,6 +126,16 @@ router.patch('/users/:id/ban', validateUuidParam('id'), requireRole(UserRole.ADM
         data:  { status: ListingStatus.BANNED },
       }),
     ]);
+
+    // Force-close any live connection this user already has open -- the
+    // DB re-check on every REST request already blocks them from doing
+    // anything further, but Socket.IO's own auth only runs at connect
+    // time (see socketServer.ts), so a session opened before this ban
+    // would otherwise sit connected indefinitely (marking messages read,
+    // seeing typing indicators, receiving new-message pushes) until it
+    // happens to reconnect on its own.
+    req.app.get('io')?.in(`user:${req.params.id}`).disconnectSockets(true);
+
     res.json({ success: true, message: `User ${user.email} banned.` });
   } catch (err) { next(err); }
 });

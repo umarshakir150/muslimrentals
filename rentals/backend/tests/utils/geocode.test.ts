@@ -94,18 +94,26 @@ describe('geocodeAddress', () => {
   });
 });
 
-// The listing address pipeline's precision gate -- POST/PATCH /listings pass
-// { requirePreciseMatch: true } (see routes/listings.ts); the renter-facing
-// free-text location search (routes/geocode.ts) never does, and is fully
-// covered by the tests above with the option omitted (defaulting to false),
-// which must keep behaving exactly as before.
+// The listing address pipeline's match-quality gate -- POST/PATCH /listings
+// pass { requirePreciseMatch: true } (see routes/listings.ts); the
+// renter-facing free-text location search (routes/geocode.ts) never does,
+// and is fully covered by the tests above with the option omitted
+// (defaulting to false), which must keep behaving exactly as before.
+//
+// This gate compares the REQUESTED street/city/province against Nominatim's
+// address breakdown for the result -- not Nominatim's own precision
+// metadata (class/type/place_rank), which penalizes a real address purely
+// for OSM not having house-number-level data for it. A result is accepted
+// whenever it resolves to the right street, in the right city, in the right
+// province, whether or not it also carries a house_number; rejected only
+// for a wrong street, wrong city, wrong province, or no street at all.
 describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   function preciseResult(overrides: Record<string, any> = {}) {
     return {
       lat: '43.6532', lon: '-79.3832',
       class: 'building', type: 'house', place_rank: 30, importance: 0.31,
       display_name: '123 Main Street, Toronto, Ontario, Canada',
-      address: { house_number: '123', road: 'Main Street' },
+      address: { house_number: '123', road: 'Main Street', city: 'Toronto', state: 'Ontario' },
       ...overrides,
     };
   }
@@ -135,46 +143,79 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
-    expect(callCount()).toBe(1); // precise on the first (structured) try -- no fallback needed
+    expect(callCount()).toBe(1); // right street/city/province on the first (structured) try -- no fallback needed
   });
 
-  it('accepts a legitimate building/address result that has NO house_number, based on class=building', async () => {
-    const { callCount } = mockFetchSequence(jsonResponse([
-      preciseResult({ address: { road: 'Main Street' } }), // class=building, but no house_number field
+  // The exact regression this pass exists to fix: a real address (732 Mill
+  // St, Windsor, ON N9C 2S2) whose Nominatim result never carries a
+  // house_number -- OSM simply doesn't have that building mapped -- but
+  // clearly resolves to the correct street, city, and province. Fixture is
+  // the ACTUAL response captured from the live backend's own diagnostic
+  // logs while investigating this address (see the geo.ts commit message);
+  // not a hypothetical.
+  it('accepts a real address whose result has no house_number but the correct street/city/province (732 Mill St, Windsor, ON regression)', async () => {
+    const { callCount } = mockFetchSequence(jsonResponse([{
+      lat: '42.3023085', lon: '-83.0764497',
+      type: 'residential', place_rank: 26, importance: 0.0534,
+      address: { road: 'Mill Street', suburb: 'Sandwich', city: 'Windsor', state: 'Ontario', postcode: 'N9C 1A6', country: 'Canada' },
+      display_name: 'Mill Street, Sandwich, Windsor, Southwestern Ontario, Ontario, N9C 1A6, Canada',
+    }]));
+
+    const result = await geocodeAddress('732 Mill St, N9C 2S2', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 42.3023085, lng: -83.0764497 });
+    expect(callCount()).toBe(1); // accepted on the structured attempt -- no need to fall back at all
+  });
+
+  it('accepts a street match using a Canadian street-type abbreviation on either side ("St" vs "Street")', async () => {
+    mockFetchSequence(jsonResponse([
+      preciseResult({ address: { road: 'Main Street', city: 'Toronto', state: 'Ontario' } }), // no house_number
     ]));
 
-    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
-
+    // Requested with the abbreviation -- result has the spelled-out form.
+    const result = await geocodeAddress('123 Main St', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
-    expect(callCount()).toBe(1);
   });
 
-  it('accepts a legitimate address/POI result with no house_number and class != building, based on a high place_rank alone', async () => {
-    const { callCount } = mockFetchSequence(jsonResponse([
-      preciseResult({ class: 'amenity', type: 'restaurant', place_rank: 30, address: { road: 'Main Street' } }),
-    ]));
-
-    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
-
-    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
-    expect(callCount()).toBe(1);
-  });
-
-  it('rejects a street-only broad match (class=highway, place_rank below the precision threshold), even though Nominatim returned a result', async () => {
+  it('rejects a result on a completely unrelated street', async () => {
     const { callCount } = mockFetchSequence(
-      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'highway', type: 'residential', place_rank: 26, importance: 0.2, display_name: 'Main Street, Toronto, Ontario, Canada' }]),
-      jsonResponse([]), // free-text fallback also finds nothing precise
+      jsonResponse([{ lat: '43.7', lon: '-79.4', address: { road: 'Yonge Street', city: 'Toronto', state: 'Ontario' } }]),
+      jsonResponse([{ lat: '43.7', lon: '-79.4', address: { road: 'Yonge Street', city: 'Toronto', state: 'Ontario' } }]),
     );
 
-    const result = await geocodeAddress('99999 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
     expect(result).toBeNull();
-    expect(callCount()).toBe(2); // structured rejected -> free-text fallback attempted -> also rejected
+    expect(callCount()).toBe(2); // structured rejected (wrong street) -> free-text fallback tried -> also wrong street
   });
 
-  it('rejects a city/place-level match (class=place, low place_rank)', async () => {
+  it('rejects a result in the wrong city, even though the street name matches', async () => {
+    mockFetchSequence(
+      jsonResponse([{ lat: '45.4', lon: '-75.7', address: { road: 'Main Street', city: 'Ottawa', state: 'Ontario' } }]),
+      jsonResponse([{ lat: '45.4', lon: '-75.7', address: { road: 'Main Street', city: 'Ottawa', state: 'Ontario' } }]),
+    );
+
+    // A same-named "Main Street" exists in many Ontario cities -- must not
+    // accept Ottawa's when Toronto was requested.
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+    expect(result).toBeNull();
+  });
+
+  it('rejects a result in the wrong province, even though the street and city names match', async () => {
+    mockFetchSequence(
+      jsonResponse([{ lat: '49.9', lon: '-97.1', address: { road: 'Main Street', city: 'Winnipeg', state: 'Ontario' } }]),
+      jsonResponse([{ lat: '49.9', lon: '-97.1', address: { road: 'Main Street', city: 'Winnipeg', state: 'Ontario' } }]),
+    );
+
+    // Requesting Winnipeg, Manitoba but the result resolved to a
+    // (fictitious, for this test) "Winnipeg, Ontario" -- province mismatch.
+    const result = await geocodeAddress('123 Main Street', 'Winnipeg', 'MB', { requirePreciseMatch: true });
+    expect(result).toBeNull();
+  });
+
+  it('rejects a bare city-level result (no street in the address breakdown at all)', async () => {
     const { callCount } = mockFetchSequence(
-      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'city', place_rank: 16, importance: 0.9, display_name: 'Toronto, Ontario, Canada' }]),
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'city', place_rank: 16, address: { city: 'Toronto', state: 'Ontario' } }]),
       jsonResponse([]),
     );
 
@@ -184,9 +225,9 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     expect(callCount()).toBe(2);
   });
 
-  it('rejects a neighbourhood/suburb-level match (class=place, mid place_rank)', async () => {
+  it('rejects a bare neighbourhood/suburb-level result (no street in the address breakdown)', async () => {
     mockFetchSequence(
-      jsonResponse([{ lat: '43.6547', lon: '-79.4005', class: 'place', type: 'neighbourhood', place_rank: 22, importance: 0.4, display_name: 'Kensington Market, Toronto, Ontario, Canada' }]),
+      jsonResponse([{ lat: '43.6547', lon: '-79.4005', class: 'place', type: 'neighbourhood', place_rank: 22, address: { neighbourhood: 'Kensington Market', city: 'Toronto', state: 'Ontario' } }]),
       jsonResponse([]),
     );
 
@@ -194,9 +235,9 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     expect(result).toBeNull();
   });
 
-  it('rejects a province/state-level match (class=boundary, very low place_rank)', async () => {
+  it('rejects a bare province/state-level result (no street, no city)', async () => {
     mockFetchSequence(
-      jsonResponse([{ lat: '51.2538', lon: '-85.3232', class: 'boundary', type: 'administrative', place_rank: 8, importance: 0.7, display_name: 'Ontario, Canada' }]),
+      jsonResponse([{ lat: '51.2538', lon: '-85.3232', class: 'boundary', type: 'administrative', place_rank: 8, address: { state: 'Ontario' } }]),
       jsonResponse([]),
     );
 
@@ -204,11 +245,11 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     expect(result).toBeNull();
   });
 
-  it('falls back to a free-text query when the structured query is too broad, and accepts a precise free-text result', async () => {
+  it('falls back to a free-text query when the structured query resolves to the wrong street, and accepts a correct free-text result', async () => {
     const { callCount, capturedUrls } = mockFetchSequence(
-      // Structured attempt: only resolves to the street.
-      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'highway', type: 'residential', place_rank: 26, display_name: 'Main Street, Toronto, Ontario, Canada' }]),
-      // Free-text fallback: resolves precisely.
+      // Structured attempt: wrong street entirely.
+      jsonResponse([{ lat: '43.7', lon: '-79.4', address: { road: 'Yonge Street', city: 'Toronto', state: 'Ontario' } }]),
+      // Free-text fallback: correct street/city/province.
       jsonResponse([preciseResult({ lat: '43.65321', lon: '-79.38322' })]),
     );
 
@@ -222,7 +263,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     expect(new URL(capturedUrls[1]).searchParams.get('q')).toContain('123 Main Street');
   });
 
-  it('falls back to free-text when the structured query finds nothing at all (not just something too broad)', async () => {
+  it('falls back to free-text when the structured query finds nothing at all (not just something on the wrong street)', async () => {
     const { callCount } = mockFetchSequence(
       jsonResponse([]), // structured: no match
       jsonResponse([preciseResult()]),
@@ -234,20 +275,20 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
     expect(callCount()).toBe(2);
   });
 
-  it('rejects when neither the structured nor the free-text fallback resolves precisely', async () => {
+  it('rejects when neither the structured nor the free-text fallback resolves to the requested street', async () => {
     mockFetchSequence(
-      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20 }]),
-      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20 }]),
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20, address: { neighbourhood: 'Some Suburb', city: 'Toronto', state: 'Ontario' } }]),
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20, address: { neighbourhood: 'Some Suburb', city: 'Toronto', state: 'Ontario' } }]),
     );
 
     const result = await geocodeAddress('Nonexistent Street 99999', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(result).toBeNull();
   });
 
-  it('does NOT apply the precision gate when requirePreciseMatch is left off (default false) -- the renter free-text search path', async () => {
+  it('does NOT apply the street/city/province match gate when requirePreciseMatch is left off (default false) -- the renter free-text search path', async () => {
     mockFetchOnce(() => ({
       ok: true, status: 200,
-      // A city-level, house_number-less result -- would be rejected under
+      // A city-level, road-less result -- would be rejected under
       // requirePreciseMatch, but the renter location search legitimately
       // wants exactly this kind of area-level result.
       json: async () => [{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'city' }],
@@ -279,7 +320,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   });
 
   it('still works without a province in structured mode (state simply omitted)', async () => {
-    const { capturedUrls } = mockFetchSequence(jsonResponse([preciseResult()]));
+    const { capturedUrls } = mockFetchSequence(jsonResponse([preciseResult({ address: { house_number: '123', road: 'Main Street', city: 'Toronto' } })]));
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', undefined, { requirePreciseMatch: true });
 

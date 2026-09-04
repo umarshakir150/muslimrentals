@@ -14,6 +14,14 @@ import { logger } from './logger';
  * address text alone, makes the stored precise location actually mean what
  * it claims to.
  *
+ * The one narrow exception is the landlord-confirmed-pin flow below
+ * (`confidence: 'street'`): when the geocoder can only resolve a *street*,
+ * not a specific building on it, the landlord drags a pin to the actual
+ * property and that pin -- validated against the geocoder's own matched
+ * point, see MAX_STREET_PIN_CORRECTION_METERS -- becomes the precise
+ * coordinate instead. The client still never gets to supply a coordinate
+ * untethered from any geocoded address.
+ *
  * Uses OpenStreetMap's free Nominatim search API -- no API key/signup, and
  * consistent with this app already using OSM tiles for the map itself
  * (FullMap.tsx). Nominatim's usage policy requires a real identifying
@@ -26,6 +34,19 @@ import { logger } from './logger';
 const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
 const USER_AGENT = 'MuslimRentals/1.0 (https://muslimrentals.ca)';
 const REQUEST_TIMEOUT_MS = 8_000;
+
+// How many candidates to pull back per query for the listing-address
+// pipeline (requirePreciseMatch only -- the renter free-text location
+// search still asks for exactly 1, see below). Nominatim's own relevance
+// ranking sometimes puts a street-level result first even when a
+// house/building-level result for the SAME street/city/province exists
+// further down the list -- asking for one candidate and taking it meant
+// settling for the street-level result even when a better one was
+// available. 5 is enough headroom to surface a better match without
+// meaningfully increasing request cost against Nominatim's ~1req/s policy
+// (still exactly one HTTP request per query attempt -- this only changes
+// `limit=`, not the number of requests made).
+const PRECISE_CANDIDATE_LIMIT = 5;
 
 // Nominatim's structured `state=` field matches noticeably more reliably
 // against the full province/territory name than against the 2-letter code
@@ -44,7 +65,47 @@ const PROVINCE_NAMES: Record<string, string> = {
 export interface GeocodeResult {
   lat: number;
   lng: number;
+  // Only ever set when requirePreciseMatch was used (the listing-address
+  // pipeline). Absent for the renter free-text search, which has no
+  // per-result confidence concept.
+  //
+  //   'precise' -- the matched result carries a house_number (or is
+  //   otherwise an address/building-level point) on the correct
+  //   street/city/province. Safe to store as the listing's exact private
+  //   location automatically, no landlord confirmation needed.
+  //
+  //   'street' -- the best available result resolves to the correct
+  //   street/city/province, but no candidate carried building-level
+  //   precision (OSM simply has no house-number data for that block).
+  //   routes/listings.ts must NOT store this coordinate as the exact
+  //   private location by itself -- it's only precise to "somewhere along
+  //   this street", which can legitimately be a couple hundred meters from
+  //   the actual property. The caller must have the landlord confirm/move
+  //   a pin first (see MAX_STREET_PIN_CORRECTION_METERS).
+  confidence?: 'precise' | 'street';
 }
+
+// How far a landlord-confirmed pin (the manual-confirmation flow for a
+// 'street'-confidence match) may be moved from the geocoder's own matched
+// point before it's rejected as implausible. This is NOT a generic
+// "trust the client" allowance -- it exists only to let a landlord correct
+// a street-level point to the actual building on that SAME street, not to
+// accept an arbitrary coordinate.
+//
+// 2000m was chosen from the real-world case that motivated this feature: a
+// genuine Windsor address (732 Mill St) whose only available Nominatim
+// point sat roughly 600-700m from the actual property along the same
+// street. 2km gives real headroom above that observed displacement for a
+// long block/rural road, while still being far too small to cross into a
+// different city, or (other than in a handful of tiny communities) a
+// different province -- e.g. Windsor to Toronto is ~360km, Windsor to
+// Detroit's own nearest street is still >1km across the river/border. A
+// pin correction this large is still checked against the SAME
+// street/city/province the address was originally validated against
+// (evaluateAddressMatch already ran before a 'street' result is ever
+// returned), so this constant only needs to rule out "wrong spot on the
+// right street," not "wrong city entirely."
+export const MAX_STREET_PIN_CORRECTION_METERS = 2000;
 
 interface NominatimAddressDetails {
   house_number?: string;
@@ -79,7 +140,7 @@ interface NominatimResult {
 }
 
 interface MatchEvaluation {
-  precise: boolean;
+  status: 'precise' | 'street' | 'rejected';
   // Sanitized, log-safe reasoning -- class/type/rank/importance, an address
   // breakdown, and display_name (all data Nominatim already returns for the
   // address as typed; never the resolved lat/lon, and never surfaced in any
@@ -94,13 +155,11 @@ interface MatchEvaluation {
 // certify house-number-level building data against OSM. So instead of
 // gating on Nominatim's own precision metadata (class/type/place_rank --
 // which penalizes a real address purely because OSM hasn't mapped that
-// specific building), this compares the REQUESTED street/city/province
-// against what Nominatim's address breakdown actually resolved to. A result
-// is accepted whenever it resolves to the right street, in the right city,
-// in the right province -- whether or not it also happens to carry a
-// house_number -- and rejected only when it resolves to a different
-// street/city/province, or to no street at all (a bare city/neighbourhood/
-// province centroid).
+// specific building) to decide ACCEPT/REJECT, that metadata is used only to
+// grade an already-accepted (right street/city/province) result into
+// 'precise' vs 'street' -- see evaluateAddressMatch. A result is rejected
+// only when it resolves to a different street/city/province, or to no
+// street at all (a bare city/neighbourhood/province centroid).
 const STREET_TYPE_ALIASES: Record<string, string> = {
   st: 'street', ave: 'avenue', av: 'avenue', rd: 'road', dr: 'drive',
   blvd: 'boulevard', ct: 'court', crt: 'court', cres: 'crescent', cresc: 'crescent',
@@ -153,12 +212,13 @@ function extractCanadianFsa(input: string): string | null {
 }
 
 // Judges whether a Nominatim result resolves to the requested address's
-// street, in the requested city, in the requested province -- the tiered
-// strategy: an exact house-number/building match is accepted (and noted),
-// but so is a plain street-level match, as long as street+city+province
-// all check out. Rejects only a wrong street, a wrong city, a wrong
-// province, or a result with no street at all (city/neighbourhood/province
-// centroid).
+// street, in the requested city, in the requested province, and if so how
+// precisely: 'precise' when the address breakdown carries a house_number
+// (a real building-level point), 'street' when street+city+province match
+// but no house_number is present (OSM has no building data for that
+// address, only the road itself). Rejects only a wrong street, a wrong
+// city, a wrong province, or a result with no street at all (a
+// city/neighbourhood/province centroid).
 function evaluateAddressMatch(
   result: NominatimResult,
   requestedStreet: string,
@@ -179,47 +239,89 @@ function evaluateAddressMatch(
     `display_name="${result.display_name ?? 'unknown'}"`;
 
   if (!addr.road) {
-    return { precise: false, reason: `no street in the result's address breakdown -- only a city/neighbourhood/province-level match (${meta})` };
+    return { status: 'rejected', reason: `no street in the result's address breakdown -- only a city/neighbourhood/province-level match (${meta})` };
   }
   if (normalizeStreetName(addr.road) !== normalizeStreetName(requestedStreet)) {
-    return { precise: false, reason: `resolved street does not match the requested street (${meta})` };
+    return { status: 'rejected', reason: `resolved street does not match the requested street (${meta})` };
   }
   if (resultCity && normalizePlaceName(resultCity) !== normalizePlaceName(requestedCity)) {
-    return { precise: false, reason: `resolved city does not match the requested city (${meta})` };
+    return { status: 'rejected', reason: `resolved city does not match the requested city (${meta})` };
   }
   if (requestedProvince && addr.state && normalizeProvinceName(addr.state) !== normalizeProvinceName(requestedProvince)) {
-    return { precise: false, reason: `resolved province does not match the requested province (${meta})` };
+    return { status: 'rejected', reason: `resolved province does not match the requested province (${meta})` };
   }
 
-  const precisionNote = addr.house_number
-    ? `house_number "${addr.house_number}" present`
-    : 'street-level match (no house_number in OSM for this building -- accepted on street+city+province match)';
-  return { precise: true, reason: `${precisionNote} (${meta})` };
+  if (addr.house_number) {
+    return { status: 'precise', reason: `house_number "${addr.house_number}" present (${meta})` };
+  }
+  return { status: 'street', reason: `street-level match only -- no house_number in OSM for this building (${meta})` };
+}
+
+// Scans every candidate a query returned and picks the best one: any
+// 'precise' candidate beats any 'street' candidate, regardless of which
+// came first in Nominatim's own relevance ordering -- this is the
+// "candidate improvement": a query's #1 result being street-level no
+// longer means settling for street-level if a #3 or #4 result on the same
+// street/city/province turns out to carry a house_number. 'rejected'
+// candidates (wrong street/city/province, or no street at all) are never
+// considered, no matter how "precise" their own metadata looks -- a
+// building-level point on the wrong street is not a better answer than a
+// street-level point on the right one.
+interface BestCandidate {
+  candidate: NominatimResult;
+  status: 'precise' | 'street';
+  reason: string;
+}
+
+function pickBestCandidate(
+  candidates: NominatimResult[],
+  requestedStreet: string,
+  requestedCity: string,
+  requestedProvince: string | null | undefined
+): BestCandidate | null {
+  let best: BestCandidate | null = null;
+
+  for (const candidate of candidates) {
+    const evaluation = evaluateAddressMatch(candidate, requestedStreet, requestedCity, requestedProvince);
+    if (evaluation.status === 'rejected') continue;
+    if (!best) {
+      best = { candidate, status: evaluation.status, reason: evaluation.reason };
+    } else if (evaluation.status === 'precise' && best.status === 'street') {
+      best = { candidate, status: evaluation.status, reason: evaluation.reason }; // upgrade street -> precise; never downgrade
+    }
+  }
+
+  return best;
 }
 
 export interface GeocodeOptions {
   // When true:
   //   1. Uses Nominatim's STRUCTURED query fields (street/city/state/country)
-  //      instead of one free-text string. Nominatim's own docs note this
-  //      resolves more reliably than a single joined string when the caller
-  //      genuinely knows which part of the input is the street vs. the
-  //      city/region -- which the listing Post/Edit form does (separate
-  //      address/city/province fields), unlike a renter's free-text
-  //      location search.
-  //   2. Evaluates the result against the REQUESTED street/city/province
-  //      (see evaluateAddressMatch) and, if it resolves to somewhere else
-  //      entirely (or only to a bare city/neighbourhood/province centroid),
-  //      falls back to a carefully constructed free-text query and
-  //      evaluates THAT result the same way, rather than accepting the
-  //      wrong match or giving up after one attempt.
-  //   3. Rejects (returns null) if neither attempt resolves to the
+  //      instead of one free-text string, requesting several candidates
+  //      (see PRECISE_CANDIDATE_LIMIT) rather than just the top one.
+  //      Nominatim's own docs note structured fields resolve more reliably
+  //      than one joined string when the caller genuinely knows which part
+  //      of the input is the street vs. the city/region -- which the
+  //      listing Post/Edit form does (separate address/city/province
+  //      fields), unlike a renter's free-text location search.
+  //   2. Evaluates EVERY candidate against the REQUESTED street/city/
+  //      province (see evaluateAddressMatch/pickBestCandidate) and, if none
+  //      resolves there at all, falls back to a carefully constructed
+  //      free-text query (also asking for several candidates) and does the
+  //      same evaluation there.
+  //   3. Returns null if no candidate from either attempt resolves to the
   //      requested street/city/province -- a coordinate for the wrong
   //      street, wrong city, or a bare area centroid is not "this address."
+  //   4. Otherwise returns the best candidate found, tagged with
+  //      `confidence: 'precise'` (safe to use automatically) or
+  //      `confidence: 'street'` (the caller must get landlord confirmation
+  //      before treating it as the exact private location -- see
+  //      routes/listings.ts and MAX_STREET_PIN_CORRECTION_METERS).
   //
   // This does NOT require Nominatim to have building/house-number-level
-  // OSM data for the address -- a correctly-located street-level match is
-  // accepted. The goal is a geographically useful coordinate for the
-  // entered address, not certifying it against OSM's own coverage.
+  // OSM data for the address to return SOMETHING -- a correctly-located
+  // street-level match is still returned, just flagged as needing
+  // confirmation rather than silently trusted as exact.
   //
   // Left off (default false) for the renter-facing free-text location
   // search (routes/geocode.ts's GET /geocode), which searches for areas by
@@ -228,7 +330,7 @@ export interface GeocodeOptions {
   requirePreciseMatch?: boolean;
 }
 
-async function fetchNominatimTop(url: string, queryDescription: string): Promise<NominatimResult | null> {
+async function fetchNominatimCandidates(url: string, queryDescription: string): Promise<NominatimResult[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -240,14 +342,14 @@ async function fetchNominatimTop(url: string, queryDescription: string): Promise
     });
   } catch (err) {
     logger.error(`Geocoding request failed for ${queryDescription}:`, err);
-    return null;
+    return [];
   } finally {
     clearTimeout(timeout);
   }
 
   if (!response.ok) {
     logger.error(`Geocoding API returned ${response.status} for ${queryDescription}`);
-    return null;
+    return [];
   }
 
   let results: unknown;
@@ -255,25 +357,29 @@ async function fetchNominatimTop(url: string, queryDescription: string): Promise
     results = await response.json();
   } catch (err) {
     logger.error(`Geocoding response was not valid JSON for ${queryDescription}:`, err);
-    return null;
+    return [];
   }
 
   if (!Array.isArray(results) || results.length === 0) {
     logger.warn(`Geocoding found no match for ${queryDescription}`);
-    return null;
+    return [];
   }
 
-  return results[0] as NominatimResult;
+  return results as NominatimResult[];
 }
 
-function toGeocodeResult(top: NominatimResult, queryDescription: string): GeocodeResult | null {
+function toGeocodeResult(
+  top: NominatimResult,
+  queryDescription: string,
+  confidence?: 'precise' | 'street'
+): GeocodeResult | null {
   const lat = parseFloat(String(top.lat));
   const lng = parseFloat(String(top.lon));
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     logger.error(`Geocoding returned a non-numeric coordinate for ${queryDescription}`);
     return null;
   }
-  return { lat, lng };
+  return confidence ? { lat, lng, confidence } : { lat, lng };
 }
 
 // Deliberately takes address/city/province only -- never a unit/apartment
@@ -296,17 +402,18 @@ export async function geocodeAddress(
     const url = `${NOMINATIM_SEARCH_URL}?${params.toString()}`;
     const queryDescription = `q="${q}" (free-text)`;
 
-    const top = await fetchNominatimTop(url, queryDescription);
+    const [top] = await fetchNominatimCandidates(url, queryDescription);
     return top ? toGeocodeResult(top, queryDescription) : null;
   }
 
   // ── Listing address pipeline: structured query, then a free-text
-  // fallback, each evaluated against the requested street/city/province
-  // (not against Nominatim's own precision metadata). ─────────────────────
+  // fallback, each pulling multiple candidates and evaluated against the
+  // requested street/city/province (not against Nominatim's own precision
+  // metadata alone -- see pickBestCandidate). ───────────────────────────────
   const provinceName = province ? (PROVINCE_NAMES[province.trim().toUpperCase()] ?? province) : undefined;
 
   const structuredParams = new URLSearchParams({
-    format: 'jsonv2', limit: '1', countrycodes: 'ca', addressdetails: '1',
+    format: 'jsonv2', limit: String(PRECISE_CANDIDATE_LIMIT), countrycodes: 'ca', addressdetails: '1',
     street: address, country: 'Canada',
   });
   if (city) structuredParams.set('city', city);
@@ -314,37 +421,40 @@ export async function geocodeAddress(
   const structuredUrl = `${NOMINATIM_SEARCH_URL}?${structuredParams.toString()}`;
   const structuredDescription = `street="${address}", city="${city}", state="${provinceName ?? ''}", country="Canada" (structured)`;
 
-  const structuredTop = await fetchNominatimTop(structuredUrl, structuredDescription);
-  if (structuredTop) {
-    const evaluation = evaluateAddressMatch(structuredTop, address, city, province);
-    logger.info(`Geocoding (structured) for [${structuredDescription}]: ${evaluation.precise ? 'ACCEPTED' : 'no match, trying free-text fallback'} -- ${evaluation.reason}`);
-    if (evaluation.precise) {
-      return toGeocodeResult(structuredTop, structuredDescription);
-    }
+  const structuredCandidates = await fetchNominatimCandidates(structuredUrl, structuredDescription);
+  const structuredBest = pickBestCandidate(structuredCandidates, address, city, province);
+  if (structuredBest) {
+    logger.info(
+      `Geocoding (structured, ${structuredCandidates.length} candidate(s)) for [${structuredDescription}]: ` +
+      `ACCEPTED (${structuredBest.status}) -- ${structuredBest.reason}`
+    );
+    return toGeocodeResult(structuredBest.candidate, structuredDescription, structuredBest.status);
+  }
+  if (structuredCandidates.length > 0) {
+    logger.info(`Geocoding (structured, ${structuredCandidates.length} candidate(s)) for [${structuredDescription}]: no match, trying free-text fallback`);
   }
 
-  // Structured query returned nothing, or returned the wrong street/city/
-  // province -- try a free-text query built the same way the renter-search
-  // path builds one, in case Nominatim's structured-field matching missed
-  // an address its general search finds.
+  // Structured query returned nothing valid (every candidate rejected, or
+  // no candidates at all) -- try a free-text query built the same way the
+  // renter-search path builds one, in case Nominatim's structured-field
+  // matching missed an address its general search finds.
   const freeTextQuery = [address, city, provinceName ?? province, 'Canada'].filter(Boolean).join(', ');
-  const freeTextParams = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'ca', addressdetails: '1', q: freeTextQuery });
+  const freeTextParams = new URLSearchParams({
+    format: 'jsonv2', limit: String(PRECISE_CANDIDATE_LIMIT), countrycodes: 'ca', addressdetails: '1', q: freeTextQuery,
+  });
   const freeTextUrl = `${NOMINATIM_SEARCH_URL}?${freeTextParams.toString()}`;
   const freeTextDescription = `q="${freeTextQuery}" (free-text fallback)`;
 
-  const freeTextTop = await fetchNominatimTop(freeTextUrl, freeTextDescription);
-  if (!freeTextTop) {
-    logger.warn(`Geocoding rejected for "${address}, ${city}": no result from either structured or free-text fallback query.`);
+  const freeTextCandidates = await fetchNominatimCandidates(freeTextUrl, freeTextDescription);
+  const freeTextBest = pickBestCandidate(freeTextCandidates, address, city, province);
+  if (!freeTextBest) {
+    logger.warn(`Geocoding rejected for "${address}, ${city}": no candidate from either structured or free-text fallback query resolved to the requested street/city/province.`);
     return null;
   }
 
-  const fallbackEvaluation = evaluateAddressMatch(freeTextTop, address, city, province);
-  logger.info(`Geocoding (free-text fallback) for [${freeTextDescription}]: ${fallbackEvaluation.precise ? 'ACCEPTED' : 'REJECTED'} -- ${fallbackEvaluation.reason}`);
-  if (!fallbackEvaluation.precise) {
-    // Never silently accept a wrong-street/wrong-city/wrong-province match,
-    // or a bare city/neighbourhood/province centroid.
-    return null;
-  }
-
-  return toGeocodeResult(freeTextTop, freeTextDescription);
+  logger.info(
+    `Geocoding (free-text fallback, ${freeTextCandidates.length} candidate(s)) for [${freeTextDescription}]: ` +
+    `ACCEPTED (${freeTextBest.status}) -- ${freeTextBest.reason}`
+  );
+  return toGeocodeResult(freeTextBest.candidate, freeTextDescription, freeTextBest.status);
 }

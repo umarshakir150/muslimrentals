@@ -24,6 +24,10 @@ const LISTING_ID = '22222222-2222-4222-8222-222222222222';
 const geocodeAddressMock = vi.fn();
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
+  // Real value (not mocked) -- the landlord-confirmed-pin distance check in
+  // routes/listings.ts imports this constant directly, and these tests pick
+  // confirmed-pin fixtures that are deliberately near/far relative to it.
+  MAX_STREET_PIN_CORRECTION_METERS: 2000,
 }));
 
 const createMock = vi.fn();
@@ -151,6 +155,115 @@ describe('POST /listings — server-side geocoding', () => {
     expect(res.status).toBe(422); // Zod .strict() validation failure -- see errorHandler's ZodError mapping
     expect(geocodeAddressMock).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();
+  });
+});
+
+// Coverage for the landlord-confirmed-pin fallback: geocodeAddress tags a
+// result `confidence: 'street'` when it can only resolve the STREET (no
+// house/building-level OSM data), e.g. the real 732 Mill St, Windsor, ON
+// case. That coordinate must never be stored as the listing's exact
+// private location without the landlord confirming/moving a pin first.
+describe('POST /listings — landlord-confirmed-pin fallback for a street-level (confidence: "street") match', () => {
+  it('creates the listing automatically when the geocode is house/building-level precise (1051 Cedarglen Gate, Mississauga style) -- no confirmation needed', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    createMock.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
+    );
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '1051 Cedarglen Gate', city: 'Mississauga' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: 43.5789, lng: -79.6583 }),
+    }));
+  });
+
+  it('does NOT create the listing and returns needsLocationConfirmation when the geocode is only street-level (732 Mill St, Windsor style)', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON' }));
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 42.3023085, matchedLng: -83.0764497 });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('creates the listing with the landlord-confirmed pin as the exact private coordinates once confirmedLat/confirmedLng are resubmitted', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    createMock.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
+    );
+    const app = await buildApp();
+
+    // A pin the landlord dragged ~120m from the matched street point --
+    // comfortably within MAX_STREET_PIN_CORRECTION_METERS.
+    const confirmedLat = 42.3023085 + 0.0011;
+    const confirmedLng = -83.0764497;
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat, confirmedLng }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng }),
+    }));
+  });
+
+  it('rejects a confirmed pin that is implausibly far from the matched street (e.g. a different city) and creates nothing', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      // Toronto -- hundreds of km from the matched Windsor street point.
+      .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 43.6532, confirmedLng: -79.3832 }));
+
+    expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('never exposes the landlord-confirmed exact coordinate through the public listing response shape', async () => {
+    // toPublicListingLocation (utils/geo.ts) is exercised directly here
+    // since the create response returns the raw (owner-facing) listing --
+    // this proves the SAME private coordinate this flow stores is subject
+    // to the exact same public-redaction pipeline as any other listing,
+    // never a bypass. See listingsLocationPrivacy.test.ts for the broader
+    // GET / and GET /:id public-response guarantees.
+    const confirmedLat = 42.3023085 + 0.0011;
+    const confirmedLng = -83.0764497;
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    createMock.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
+    );
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat, confirmedLng }));
+
+    const { toPublicListingLocation } = await import('../../src/utils/geo');
+    const publicView = toPublicListingLocation(res.body.data);
+
+    expect(publicView.lat).not.toBe(confirmedLat);
+    expect(publicView.lng).not.toBe(confirmedLng);
+    expect((publicView as any).address).toBeUndefined();
+    expect(publicView.locationApproximate).toBe(true);
   });
 });
 
@@ -337,6 +450,73 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ city: 'Vancouver' }),
     }));
+  });
+});
+
+describe('PATCH /listings/:id — landlord-confirmed-pin fallback (same rules as POST)', () => {
+  function existingListing(overrides: Record<string, any> = {}) {
+    return {
+      id: LISTING_ID, userId: OWNER_ID, status: 'ACTIVE',
+      title: 'Old title', city: 'Toronto', province: 'ON', address: '123 Main Street', unit: null,
+      lat: 43.6532, lng: -79.3832,
+      ...overrides,
+    };
+  }
+
+  it('does not apply the edit and returns needsLocationConfirmation when the new address only geocodes to street-level', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '732 Mill St', city: 'Windsor', province: 'ON' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 42.3023085, matchedLng: -83.0764497 });
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('applies the edit using the landlord-confirmed pin once confirmedLat/confirmedLng are resubmitted', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const confirmedLat = 42.3023085 + 0.0011;
+    const confirmedLng = -83.0764497;
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat, confirmedLng });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng }),
+    }));
+    // confirmedLat/confirmedLng are not Listing columns -- must never leak
+    // into the Prisma update payload itself.
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ confirmedLat: expect.anything(), confirmedLng: expect.anything() }),
+    }));
+  });
+
+  it('rejects an implausibly-far confirmed pin on PATCH and applies no update', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 43.6532, confirmedLng: -79.3832 });
+
+    expect(res.status).toBe(422);
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });
 

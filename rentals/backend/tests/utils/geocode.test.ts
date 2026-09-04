@@ -142,18 +142,22 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
-    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'precise' });
     expect(callCount()).toBe(1); // right street/city/province on the first (structured) try -- no fallback needed
   });
 
-  // The exact regression this pass exists to fix: a real address (732 Mill
-  // St, Windsor, ON N9C 2S2) whose Nominatim result never carries a
-  // house_number -- OSM simply doesn't have that building mapped -- but
-  // clearly resolves to the correct street, city, and province. Fixture is
-  // the ACTUAL response captured from the live backend's own diagnostic
-  // logs while investigating this address (see the geo.ts commit message);
-  // not a hypothetical.
-  it('accepts a real address whose result has no house_number but the correct street/city/province (732 Mill St, Windsor, ON regression)', async () => {
+  // The real address (732 Mill St, Windsor, ON N9C 2S2) that originally
+  // motivated the street/city/province match gate: Nominatim's only result
+  // never carries a house_number -- OSM simply doesn't have that building
+  // mapped -- but it clearly resolves to the correct street, city, and
+  // province. Fixture is the ACTUAL response captured from the live
+  // backend's own diagnostic logs while investigating this address; not a
+  // hypothetical. Since it later turned out this class of match can sit a
+  // few hundred meters from the real building, it's now returned with
+  // `confidence: 'street'` rather than trusted outright -- routes/listings.ts
+  // requires landlord pin-confirmation before storing it as the exact
+  // private location (see MAX_STREET_PIN_CORRECTION_METERS).
+  it('returns a street-level (confidence: "street") result when no house_number exists in OSM, but does not reject it (732 Mill St, Windsor, ON regression)', async () => {
     const { callCount } = mockFetchSequence(jsonResponse([{
       lat: '42.3023085', lon: '-83.0764497',
       type: 'residential', place_rank: 26, importance: 0.0534,
@@ -163,18 +167,49 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     const result = await geocodeAddress('732 Mill St, N9C 2S2', 'Windsor', 'ON', { requirePreciseMatch: true });
 
-    expect(result).toEqual({ lat: 42.3023085, lng: -83.0764497 });
-    expect(callCount()).toBe(1); // accepted on the structured attempt -- no need to fall back at all
+    expect(result).toEqual({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    expect(callCount()).toBe(1); // a valid (if street-level) match on the structured attempt -- no need to fall back
   });
 
-  it('accepts a street match using a Canadian street-type abbreviation on either side ("St" vs "Street")', async () => {
+  it('accepts a street match using a Canadian street-type abbreviation on either side ("St" vs "Street"), tagged confidence: "street"', async () => {
     mockFetchSequence(jsonResponse([
       preciseResult({ address: { road: 'Main Street', city: 'Toronto', state: 'Ontario' } }), // no house_number
     ]));
 
     // Requested with the abbreviation -- result has the spelled-out form.
     const result = await geocodeAddress('123 Main St', 'Toronto', 'ON', { requirePreciseMatch: true });
-    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'street' });
+  });
+
+  // The "candidate improvement": a query returning several candidates
+  // (limit=5) must not settle for candidate #1 just because it came first
+  // -- if a later candidate on the same street/city/province carries a
+  // house_number, it should win over an earlier street-level-only one.
+  it('prefers a precise (house_number) candidate over an earlier street-level candidate from the same query', async () => {
+    const { capturedUrls } = mockFetchSequence(jsonResponse([
+      { lat: '42.30', lon: '-83.07', address: { road: 'Mill Street', city: 'Windsor', state: 'Ontario' } }, // street-level, listed first
+      preciseResult({ lat: '42.3025', lon: '-83.0766', address: { house_number: '732', road: 'Mill Street', city: 'Windsor', state: 'Ontario' } }), // precise, listed second
+    ]));
+
+    const result = await geocodeAddress('732 Mill Street', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 42.3025, lng: -83.0766, confidence: 'precise' });
+    expect(new URL(capturedUrls[0]).searchParams.get('limit')).toBe('5');
+  });
+
+  // Never trade a correct-location candidate for a wrong-location one just
+  // because the wrong-location one has higher raw precision (a house_number
+  // on the wrong street/city is not a better answer than a valid street-level
+  // match on the right one).
+  it('never prefers a higher-precision candidate from the wrong street/city/province over a valid match on the requested one', async () => {
+    mockFetchSequence(jsonResponse([
+      preciseResult({ lat: '43.7', lon: '-79.4', address: { house_number: '123', road: 'Yonge Street', city: 'Toronto', state: 'Ontario' } }), // precise, but WRONG street
+      { lat: '43.6532', lon: '-79.3832', address: { road: 'Main Street', city: 'Toronto', state: 'Ontario' } }, // street-level, but the RIGHT street
+    ]));
+
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'street' });
   });
 
   it('rejects a result on a completely unrelated street', async () => {
@@ -255,7 +290,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
-    expect(result).toEqual({ lat: 43.65321, lng: -79.38322 });
+    expect(result).toEqual({ lat: 43.65321, lng: -79.38322, confidence: 'precise' });
     expect(callCount()).toBe(2);
     // Second request was genuinely a free-text query (q=...), not another
     // structured attempt.
@@ -271,7 +306,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
-    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'precise' });
     expect(callCount()).toBe(2);
   });
 
@@ -324,7 +359,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', undefined, { requirePreciseMatch: true });
 
-    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'precise' });
     expect(new URL(capturedUrls[0]).searchParams.has('state')).toBe(false);
   });
 

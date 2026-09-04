@@ -264,6 +264,16 @@ export const citiesApi = {
   getAll: () => api.get<{ data: { name: string; province: string }[] }>('/cities/all'),
 };
 
+// ─── Geocode API ──────────────────────────────────────────────────────────────
+// Ad-hoc place/address search for the "search a location + radius" filter --
+// same server-side geocoder listing creation uses, just without tying the
+// result to a listing. The search text itself is never sent anywhere else
+// or persisted; only the resolved lat/lng is used, client-side, to center
+// the map and filter listings.
+export const geocodeApi = {
+  search: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode?q=${encodeURIComponent(q)}`),
+};
+
 // ─── Users API ────────────────────────────────────────────────────────────────
 export const usersApi = {
   getProfile: (id: string) => api.get<{ data: any }>(`/users/${id}`),

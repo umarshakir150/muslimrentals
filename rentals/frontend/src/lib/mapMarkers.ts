@@ -93,3 +93,18 @@ export function buildApproxZoneTooltipHtml(): string {
     <span>Exact address hidden for privacy</span>
   </div>`;
 }
+
+// ─── Location-radius search circle ─────────────────────────────────────────
+// Drawn around a renter's searched location + chosen radius (see
+// LocationRadiusSearch.tsx / FullMap.tsx) to show what area a radius search
+// covers. Deliberately styled nothing like APPROX_LOCATION_CIRCLE_STYLE
+// above (blue/solid vs. brand-green/dashed) -- the two circles answer
+// different questions ("what area did I search" vs. "where is this
+// specific listing, approximately") and must never be visually confused
+// with each other when both happen to be on screen at once.
+export const SEARCH_RADIUS_CIRCLE_STYLE = {
+  color: '#2563eb',
+  fillColor: '#2563eb',
+  fillOpacity: 0.06,
+  weight: 1.5,
+} as const;

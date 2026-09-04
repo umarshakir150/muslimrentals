@@ -19,7 +19,7 @@ import { authenticate, optionalAuth, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
-import { distKm, toPublicListingLocation } from '../utils/geo';
+import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
 import { geocodeAddress } from '../utils/geocode';
 import { logger } from '../utils/logger';
 import {
@@ -101,9 +101,20 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
       prisma.listing.count({ where }),
     ]);
 
-    // Geo radius filter (in-memory; adequate for MVP scale)
+    // Geo radius filter (in-memory; adequate for MVP scale). Deliberately
+    // filters against each listing's PUBLIC approximate point (the exact
+    // same one toPublicListingLocation returns below), never the real
+    // precise coordinate -- filtering on the real point would let a
+    // motivated searcher binary-search increasingly small radii around a
+    // suspected address to localize a listing far more precisely than the
+    // stated privacy radius promises. Using the same deterministic
+    // approximate point here means the result set a renter sees always
+    // matches what they'd expect from the circle drawn on the map, too.
     if (q.lat != null && q.lng != null && q.radiusKm != null) {
-      listings = listings.filter(l => distKm(q.lat!, q.lng!, l.lat, l.lng) <= q.radiusKm!);
+      listings = listings.filter(l => {
+        const approx = getApproximateLocation(l.id, l.lat, l.lng);
+        return distKm(q.lat!, q.lng!, approx.lat, approx.lng) <= q.radiusKm!;
+      });
     }
 
     let savedIds = new Set<string>();
@@ -117,9 +128,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
 
     // Public browse/search/map results never carry a listing's real
     // address or precise coordinates -- see utils/geo.ts's
-    // toPublicListingLocation for what "approximate" means here. The
-    // radius filter above already ran against the real lat/lng before this
-    // point, so filtering accuracy is unaffected.
+    // toPublicListingLocation for what "approximate" means here.
     const result = listings.map(l => ({
       ...toPublicListingLocation(l),
       isSaved:      savedIds.has(l.id),

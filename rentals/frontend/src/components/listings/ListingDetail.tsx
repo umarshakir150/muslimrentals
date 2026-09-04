@@ -12,6 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import DeleteListingDialog from './DeleteListingDialog';
 import ListingImageLightbox from './ListingImageLightbox';
 import ReportModal from '@/components/reports/ReportModal';
+import ListingLocationMap from './ListingLocationMap';
 
 const SWIPE_THRESHOLD = 50;
 
@@ -172,6 +173,10 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                     <span className="italic">Exact address hidden for privacy.</span>
                   </p>
                 )}
+              </div>
+
+              <div className="mb-5">
+                <ListingLocationMap listing={listing} />
               </div>
 
               <div className="flex flex-wrap gap-4 text-sm mb-5 pb-5 border-b border-ink/8">

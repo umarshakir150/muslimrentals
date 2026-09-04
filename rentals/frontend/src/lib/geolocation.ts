@@ -43,6 +43,18 @@ function describeError(err: GeolocationPositionError): GeolocationFailure {
   }
 }
 
+// Shared short toast-title copy per failure reason -- used by every UI that
+// calls requestUserLocation (FullMap's "Locate me" button and
+// LocationRadiusSearch's "Use my location" button) so the two don't drift
+// into slightly different wording for the same underlying failure.
+export const GEOLOCATION_ERROR_TITLE: Record<GeolocationFailureReason, string> = {
+  unsupported: "Location isn't supported",
+  denied: 'Location permission denied',
+  unavailable: "Couldn't find your location",
+  timeout: 'Location request timed out',
+  unknown: "Couldn't find your location",
+};
+
 export function isGeolocationSupported(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.geolocation;
 }

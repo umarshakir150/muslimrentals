@@ -22,6 +22,34 @@ vi.mock('@/components/ui/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+// ListingDetail now embeds ListingLocationMap (a compact Leaflet map), which
+// lazily imports 'leaflet' inside a useEffect -- mocked the same way every
+// other Leaflet-touching component's tests are (FullMap, ListingLocationMap's
+// own test file), so the real library never actually runs in jsdom here.
+// Without this, real Leaflet's bindTooltip/openTooltip genuinely renders the
+// privacy-circle tooltip's "Approximate location" text into the DOM,
+// duplicating (and making ambiguous) the assertions on ListingDetail's own
+// separate caption text below.
+vi.mock('leaflet', () => {
+  const mapInstance = { remove: vi.fn(), invalidateSize: vi.fn() };
+  const chainable = () => {
+    const obj: any = {};
+    obj.addTo = vi.fn(() => obj);
+    obj.bindTooltip = vi.fn(() => obj);
+    obj.openTooltip = vi.fn(() => obj);
+    return obj;
+  };
+  const L = {
+    map: vi.fn(() => mapInstance),
+    tileLayer: vi.fn(() => chainable()),
+    divIcon: vi.fn(() => ({})),
+    marker: vi.fn(() => chainable()),
+    circle: vi.fn(() => chainable()),
+    Icon: { Default: { prototype: {}, mergeOptions: vi.fn() } },
+  };
+  return { default: L };
+});
+
 // Real image rows pulled directly from production (Supabase project
 // mxpoenfnqrfwznquaibd, listing af96127c-2b38-4d53-9367-f63870bfdb72,
 // "testing photos") on 2026-09-01, while diagnosing why the gallery never

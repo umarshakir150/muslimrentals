@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useFilterStore } from '@/store/filterStore';
 import { cn, formatCAD } from '@/lib/utils';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
+import LocationRadiusSearch from './LocationRadiusSearch';
 
 // Audience labels without emojis for a cleaner horizontal bar
 const AUDIENCE_OPTIONS = [
@@ -29,6 +30,7 @@ export default function ListingFilters() {
 
   const hasActiveFilters =
     !!filters.city ||
+    filters.lat != null ||
     (filters.audience && filters.audience !== 'all') ||
     filters.furnished ||
     filters.parking ||
@@ -128,7 +130,13 @@ export default function ListingFilters() {
         )}
       </div>
 
-      {/* ── Row 2: expandable "more filters" panel ── */}
+      {/* ── Row 2: location + radius search -- always visible, composes with
+          keyword/city/other filters rather than replacing them ── */}
+      <div className="mt-3">
+        <LocationRadiusSearch />
+      </div>
+
+      {/* ── Row 3: expandable "more filters" panel ── */}
       <AnimatePresence>
         {moreOpen && (
           <motion.div
@@ -187,21 +195,6 @@ export default function ListingFilters() {
                   <div className="flex justify-between text-[10px] text-muted mt-0.5">
                     <span>$500</span><span>$10k+</span>
                   </div>
-                </div>
-
-                {/* Radius */}
-                <div className="col-span-2 sm:col-span-1">
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs font-semibold text-muted uppercase tracking-wider">Radius</label>
-                    <span className="text-xs font-bold text-brand-700">{filters.radiusKm} km</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={5} max={250} step={5}
-                    value={filters.radiusKm || 80}
-                    onChange={e => setFilter('radiusKm', parseInt(e.target.value))}
-                    className="w-full"
-                  />
                 </div>
 
                 {/* Amenity toggles */}

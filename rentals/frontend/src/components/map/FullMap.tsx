@@ -5,7 +5,7 @@ import type { Map as LeafletMap } from 'leaflet';
 import { Locate, LocateFixed } from 'lucide-react';
 import { Listing } from '@/types';
 import { formatShortCAD, cn } from '@/lib/utils';
-import { requestUserLocation, type GeolocationFailureReason } from '@/lib/geolocation';
+import { requestUserLocation, GEOLOCATION_ERROR_TITLE, type GeolocationFailureReason } from '@/lib/geolocation';
 import { useToast } from '@/components/ui/use-toast';
 import {
   CLUSTER_OPTIONS,
@@ -22,6 +22,7 @@ import {
   formatApproxRadiusLabel,
   APPROX_LOCATION_CIRCLE_STYLE,
   buildApproxZoneTooltipHtml,
+  SEARCH_RADIUS_CIRCLE_STYLE,
 } from '@/lib/mapMarkers';
 
 interface FullMapProps {
@@ -29,31 +30,33 @@ interface FullMapProps {
   center: [number, number];
   onCentreChange: (center: [number, number]) => void;
   onListingClick: (listing: Listing) => void;
+  // Renter-facing "search a location + radius" filter (ListingFilters.tsx's
+  // LocationRadiusSearch widget) -- when both are set, draws a subtle,
+  // distinctly-styled circle showing the searched area. Purely a display
+  // concern here; the actual filtering happens server-side in GET /listings
+  // against each listing's public approximate point (see utils/geo.ts).
+  searchCenter?: [number, number] | null;
+  searchRadiusKm?: number | null;
 }
-
-// A user-facing message per failure reason -- kept next to the component
-// that renders it (geolocation.ts stays framework-free and returns the raw
-// reason/message; this is just which one this particular UI prefers to
-// show, e.g. a shorter "unsupported" line than the lib's own generic one).
-const LOCATE_ERROR_TITLE: Record<GeolocationFailureReason, string> = {
-  unsupported: "Location isn't supported",
-  denied: 'Location permission denied',
-  unavailable: "Couldn't find your location",
-  timeout: 'Location request timed out',
-  unknown: "Couldn't find your location",
-};
 
 export default function FullMap({
   listings,
   center,
   onCentreChange,
   onListingClick,
+  searchCenter,
+  searchRadiusKm,
 }: FullMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const clusterRef = useRef<any>(null);
   const userLocationMarkerRef = useRef<any>(null);
+  const searchCircleRef = useRef<any>(null);
   const initializedRef = useRef(false);
+  // The Leaflet module resolved once by the init IIFE below, reused by
+  // follow-up effects instead of a redundant `import('leaflet')` per redraw
+  // -- it's already loaded and cached the moment the map itself exists.
+  const leafletRef = useRef<any>(null);
   const { toast } = useToast();
   const [locating, setLocating] = useState(false);
 
@@ -62,11 +65,15 @@ export default function FullMap({
   const centerRef = useRef(center);
   const onCentreChangeRef = useRef(onCentreChange);
   const onListingClickRef = useRef(onListingClick);
+  const searchCenterRef = useRef(searchCenter);
+  const searchRadiusKmRef = useRef(searchRadiusKm);
 
   useEffect(() => { listingsRef.current = listings; }, [listings]);
   useEffect(() => { centerRef.current = center; }, [center]);
   useEffect(() => { onCentreChangeRef.current = onCentreChange; }, [onCentreChange]);
   useEffect(() => { onListingClickRef.current = onListingClick; }, [onListingClick]);
+  useEffect(() => { searchCenterRef.current = searchCenter; }, [searchCenter]);
+  useEffect(() => { searchRadiusKmRef.current = searchRadiusKm; }, [searchRadiusKm]);
 
   // ── One-time map initialisation ──────────────────────────────────────────
   useEffect(() => {
@@ -85,6 +92,8 @@ export default function FullMap({
       // Component unmounted (e.g. user navigated away) while these
       // dynamic imports were still in flight — abort before touching the DOM.
       if (cancelled) return;
+
+      leafletRef.current = L;
 
       // Fix webpack-broken default icon
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,6 +153,7 @@ export default function FullMap({
 
       // Render markers with data available at init time
       renderMarkers(L);
+      renderSearchCircle(L);
 
       // ── invalidateSize after paint ─────────────────────────────────────
       // Two staggered calls handle slow paints and CSS transitions.
@@ -194,6 +204,28 @@ export default function FullMap({
       mapRef.current.setView(center, mapRef.current.getZoom(), { animate: true });
     }
   }, [center]);
+
+  // ── Re-draw the search-radius circle when the search location/radius
+  // changes ──────────────────────────────────────────────────────────────
+  // Depends on the destructured numeric values, not the `searchCenter`
+  // array reference itself, since a fresh `[lat, lng]` literal from the
+  // caller every render would otherwise redraw the circle (and flicker)
+  // even when the actual location hasn't changed. Guarded exactly like the
+  // marker-rerender effect above -- on first mount, this and the main init
+  // effect both fire in the same commit, but the map itself is only
+  // created inside that init effect's own async IIFE, so `mapRef.current`
+  // is briefly still null here; renderSearchCircle(L) is called directly
+  // from inside that same IIFE (below) once the map is actually ready, so
+  // an already-active search on first load still draws correctly.
+  useEffect(() => {
+    if (!initializedRef.current || !mapRef.current) return;
+    if (leafletRef.current) {
+      renderSearchCircle(leafletRef.current);
+    } else {
+      import('leaflet').then(({ default: L }) => renderSearchCircle(L));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCenter?.[0], searchCenter?.[1], searchRadiusKm]);
 
   // ── Keep global click bridge current ────────────────────────────────────
   useEffect(() => {
@@ -281,6 +313,30 @@ export default function FullMap({
     });
   }
 
+  // Draws (or removes) the subtle "searched area" circle for the renter
+  // location+radius filter. Distinct from the per-listing approximate-
+  // location privacy circle in renderMarkers above -- this one is purely a
+  // display aid for where the user searched; the actual filtering already
+  // happened server-side against each listing's public approximate point.
+  function renderSearchCircle(L: any) {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (searchCircleRef.current) {
+      map.removeLayer(searchCircleRef.current);
+      searchCircleRef.current = null;
+    }
+
+    const center = searchCenterRef.current;
+    const radiusKm = searchRadiusKmRef.current;
+    if (!center || !radiusKm) return;
+
+    searchCircleRef.current = L.circle(center, {
+      radius: radiusKm * 1000,
+      ...SEARCH_RADIUS_CIRCLE_STYLE,
+    }).addTo(map);
+  }
+
   async function handleLocateMe() {
     if (!mapRef.current) return;
     setLocating(true);
@@ -304,7 +360,7 @@ export default function FullMap({
     } catch (err: any) {
       const reason: GeolocationFailureReason = err?.reason ?? 'unknown';
       toast({
-        title: LOCATE_ERROR_TITLE[reason],
+        title: GEOLOCATION_ERROR_TITLE[reason],
         description: err?.message,
         variant: 'destructive',
       });

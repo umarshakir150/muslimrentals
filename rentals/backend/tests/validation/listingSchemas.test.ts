@@ -392,6 +392,16 @@ describe('listingQuerySchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects a radiusKm above the new 10km cap (location-search slider is 1-10km)', () => {
+    const result = listingQuerySchema.safeParse({ radiusKm: '11' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a radiusKm at exactly the 10km cap', () => {
+    const result = listingQuerySchema.safeParse({ radiusKm: '10' });
+    expect(result.success).toBe(true);
+  });
+
   it('rejects latitude out of the -90..90 range', () => {
     const result = listingQuerySchema.safeParse({ lat: '200' });
     expect(result.success).toBe(false);

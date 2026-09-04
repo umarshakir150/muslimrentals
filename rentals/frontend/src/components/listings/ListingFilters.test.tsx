@@ -22,7 +22,7 @@ const DEFAULT_FILTERS = {
   minBeds: 0,
   minBaths: 0,
   maxPrice: 5000,
-  radiusKm: 80,
+  radiusKm: 5,
   sort: 'newest' as const,
   furnished: false,
   parking: false,

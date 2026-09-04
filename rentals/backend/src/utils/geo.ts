@@ -27,36 +27,42 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 //
 // This is deliberately a per-listing random jitter, not a shared
 // neighbourhood/grid centroid: every listing gets its own approximate point
-// within PRIVACY_RADIUS_METERS of its real one, so the public map reflects
+// within MAX_DISPLACEMENT_METERS of its real one, so the public map reflects
 // genuine relative proximity between listings without ever landing a
 // normal-looking pin on any real property. See mapMarkers.ts/FullMap.tsx
 // for how the client then draws an explicit "approximate area" circle of
-// this same radius around the point, rather than presenting it as exact.
+// radius PRIVACY_RADIUS_METERS around the point, rather than presenting it
+// as exact.
 //
-// 200m (not the original 250m) per founder direction after a live test:
-// the offset math itself was verified correct and tightly bounded (see
-// getApproximateLocation's own multi-city regression coverage below,
-// which computes the real geodesic distance for every case) -- a ~1km-off
-// marker the founder observed live was not explained by this function,
-// which has never been able to produce more than PRIVACY_RADIUS_METERS of
-// displacement by construction. The likely actual cause is Nominatim
-// (the free OSM geocoder)'s own precision for that specific address --
-// see PostListingModal.tsx/CityAutocomplete's onChange, which now also
-// passes the selected city's province into the geocoding query, tightening
-// match specificity. Kept at 200m for this pass too: it already sits in the
-// founder's requested 150-250m band, and the "real point can appear outside
-// the circle" concern this pass fixes is about the OFFSET CONSTRUCTION below
-// (how close to the R boundary the jitter distance was allowed to get), not
-// about R itself needing to move again.
-export const PRIVACY_RADIUS_METERS = 200;
-
-// The offset distance is drawn from [MIN_OFFSET_FRACTION, MAX_OFFSET_FRACTION)
-// * PRIVACY_RADIUS_METERS. MAX_OFFSET_FRACTION < 1 is not a stylistic choice --
-// it is what makes "the real point is guaranteed inside the displayed circle"
-// a mathematical fact rather than a best-effort approximation. See the proof
-// in the comment on getApproximateLocation below.
-const MIN_OFFSET_FRACTION = 0.4;
-const MAX_OFFSET_FRACTION = 0.9;
+// ── Two independent knobs, not one ──────────────────────────────────────
+// Earlier passes tied "how far the point actually moves" and "how big the
+// displayed circle is" to the same single constant (first 250m, then 200m,
+// scaled by a fraction for the jitter). That made the approximation only as
+// accurate as the circle was allowed to be large. Per founder direction
+// after live testing ("the approximate location is still a little too far
+// from the actual property"), these are now separate:
+//
+//   MAX_DISPLACEMENT_METERS -- caps how far the public point can actually
+//   be moved from the real one. Smaller = a more accurate/closer
+//   approximation. This is the number that answers "how close is the dot
+//   to the real property."
+//
+//   PRIVACY_RADIUS_METERS -- the radius of the circle actually drawn on the
+//   map. Only needs to satisfy PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS
+//   (see the proof on getApproximateLocation below for why a 10m margin is
+//   already more than enough). This is the number that answers "how big is
+//   the 'somewhere in here' zone."
+//
+// Lowered from the prior 180m max / 200m circle to 120m max / 130m circle:
+// a real, measured ~33% reduction in worst-case displacement (verified in
+// tests/utils/geo.test.ts, not just asserted), while keeping the same
+// mathematical containment guarantee, just with a smaller, more honest
+// margin (10m here vs. 20m before -- still 1000x+ the ~1e-9 relative
+// approximation error the proof below accounts for, so no less "guaranteed"
+// than the prior 20m margin was).
+export const MAX_DISPLACEMENT_METERS = 120;
+const MIN_DISPLACEMENT_METERS = 50;
+export const PRIVACY_RADIUS_METERS = 130;
 
 // Mulberry32 -- a small, fast, deterministic PRNG. Not cryptographic (no
 // need to be: the seed is derived from public-ish data and the whole point
@@ -93,22 +99,24 @@ export interface ApproximateLocation {
 }
 
 // Deterministically offsets (lat, lng) by a pseudo-random distance in
-// [MIN_OFFSET_FRACTION, MAX_OFFSET_FRACTION) * PRIVACY_RADIUS_METERS -- i.e.
-// [80, 180) meters at the current 200m radius -- at a pseudo-random angle,
-// seeded by `seed` (pass the listing's id) plus the real coordinates
-// themselves (so moving a listing's real address changes its public point
-// too, rather than the point sticking to a stale id-only seed forever).
+// [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS) -- i.e. [50, 120)
+// meters currently -- at a pseudo-random angle, seeded by `seed` (pass the
+// listing's id) plus the real coordinates themselves (so moving a listing's
+// real address changes its public point too, rather than the point
+// sticking to a stale id-only seed forever).
 //
 // ── Why the real point is GUARANTEED to lie inside the displayed circle ───
-// The public map draws a circle of radius `R = PRIVACY_RADIUS_METERS`
-// centered on the point this function returns. For the real point to be
-// guaranteed inside that circle, the actual geodesic distance between the
-// real point and the returned point must be strictly less than R -- always,
-// not "almost always":
+// The public map draws a circle of radius PRIVACY_RADIUS_METERS centered on
+// the point this function returns. For the real point to be guaranteed
+// inside that circle, the actual geodesic distance between the real point
+// and the returned point must be strictly less than PRIVACY_RADIUS_METERS --
+// always, not "almost always":
 //
 //   1. `distance` (the value fed into the offset construction below) is
-//      drawn from [MIN_OFFSET_FRACTION * R, MAX_OFFSET_FRACTION * R), i.e.
-//      strictly < R by construction (MAX_OFFSET_FRACTION = 0.9 < 1). This
+//      drawn from [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS), i.e.
+//      strictly < MAX_DISPLACEMENT_METERS by construction (rand() < 1).
+//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (130 > 120),
+//      `distance` is therefore also strictly < PRIVACY_RADIUS_METERS. This
 //      alone would be sufficient if the offset were built directly on a
 //      flat plane.
 //   2. Lat/lng isn't a flat plane, though, so `dLat`/`dLng` below are built
@@ -118,30 +126,32 @@ export interface ApproximateLocation {
 //      isn't exactly `distance`, only extremely close to it. That
 //      approximation's relative error for a great-circle path of length d
 //      on a sphere of radius R_earth is O((d / R_earth)^2) (from the
-//      Taylor expansion of the spherical law of cosines around d = 0).
-//      At d = 200m and R_earth = 6,371,000m that's on the order of
-//      (200 / 6_371_000)^2 ~= 1e-9, i.e. a sub-millimeter absolute error --
-//      utterly swallowed by the 10% (20m at R=200) margin MAX_OFFSET_FRACTION
-//      already leaves below R. So the real geodesic distance is, for every
-//      practical and floating-point purpose, still strictly < R.
+//      Taylor expansion of the spherical law of cosines around d = 0). At
+//      d = 120m and R_earth = 6,371,000m that's on the order of
+//      (120 / 6_371_000)^2 ~= 3.5e-10, i.e. a sub-millimeter absolute error
+//      -- utterly swallowed by the 10m margin between MAX_DISPLACEMENT_METERS
+//      (120) and PRIVACY_RADIUS_METERS (130). So the real geodesic distance
+//      is, for every practical and floating-point purpose, still strictly
+//      less than PRIVACY_RADIUS_METERS.
 //
-// Combined: real geodesic distance(realPoint, approxPoint) < R for every
-// input, at every latitude -- which is exactly "the real point is somewhere
-// inside this circle", not a statistical tendency. Proven, not just tested,
-// but also independently verified in tests/utils/geo.test.ts by computing
-// the actual haversine distance (via distKm, a separately-implemented
-// formula from the equirectangular offset built here) across hundreds of
-// deterministic samples spanning equatorial, mid-latitude, and near-polar
-// coordinates in both hemispheres.
+// Combined: real geodesic distance(realPoint, approxPoint) < PRIVACY_RADIUS_METERS
+// for every input, at every latitude -- which is exactly "the real point is
+// somewhere inside this circle", not a statistical tendency. Proven, not
+// just tested, but also independently verified in tests/utils/geo.test.ts
+// by computing the actual haversine distance (via distKm, a
+// separately-implemented formula from the equirectangular offset built
+// here) across hundreds of deterministic samples spanning equatorial,
+// mid-latitude, and near-polar coordinates in both hemispheres, plus a set
+// of Canadian city/latitude samples specifically.
 //
-// The lower bound (MIN_OFFSET_FRACTION) is a separate, non-mathematical
+// The lower bound (MIN_DISPLACEMENT_METERS) is a separate, non-mathematical
 // privacy/UX choice: it keeps the jitter from ever landing suspiciously
 // close to the real point, which the "inside the circle" guarantee alone
 // doesn't require but a *useful* privacy circle does.
 export function getApproximateLocation(seed: string, lat: number, lng: number): ApproximateLocation {
   const rand = mulberry32(hashSeed(`${seed}:${lat.toFixed(6)}:${lng.toFixed(6)}`));
   const angle = rand() * 2 * Math.PI;
-  const distance = PRIVACY_RADIUS_METERS * (MIN_OFFSET_FRACTION + rand() * (MAX_OFFSET_FRACTION - MIN_OFFSET_FRACTION));
+  const distance = MIN_DISPLACEMENT_METERS + rand() * (MAX_DISPLACEMENT_METERS - MIN_DISPLACEMENT_METERS);
 
   const dLat = (distance * Math.cos(angle)) / METERS_PER_DEG_LAT;
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);

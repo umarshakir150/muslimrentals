@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { distKm, getApproximateLocation, toPublicListingLocation, PRIVACY_RADIUS_METERS } from '../../src/utils/geo';
+import { distKm, getApproximateLocation, toPublicListingLocation, PRIVACY_RADIUS_METERS, MAX_DISPLACEMENT_METERS } from '../../src/utils/geo';
 
 describe('distKm', () => {
   it('returns 0 for identical coordinates', () => {
@@ -73,21 +73,30 @@ describe('getApproximateLocation', () => {
     }
   });
 
-  it('never offsets suspiciously close to the real point either (stays at least 40% of the radius away)', () => {
+  it('never offsets suspiciously close to the real point either (stays at least MIN_DISPLACEMENT_METERS away)', () => {
     const p = getApproximateLocation('listing-1', TORONTO.lat, TORONTO.lng);
     const offsetMeters = distKm(TORONTO.lat, TORONTO.lng, p.lat, p.lng) * 1000;
-    expect(offsetMeters).toBeGreaterThanOrEqual(PRIVACY_RADIUS_METERS * 0.4 - 1); // -1 for floating-point slack
+    expect(offsetMeters).toBeGreaterThanOrEqual(50 - 1); // MIN_DISPLACEMENT_METERS; -1 for floating-point slack
   });
 
-  it('never offsets beyond 90% of the radius either (the safety margin that makes "guaranteed inside the circle" hold even after the equirectangular-vs-geodesic rounding, not just approximately)', () => {
+  it('never offsets beyond MAX_DISPLACEMENT_METERS either (the safety margin that makes "guaranteed inside the circle" hold even after the equirectangular-vs-geodesic rounding, not just approximately)', () => {
     // Exhaustively over many seeds rather than trusting one sample -- the
     // upper bound is the one that matters for the "always inside the
     // circle" guarantee, so it gets the most scrutiny here.
     for (let i = 0; i < 200; i++) {
       const p = getApproximateLocation(`margin-check-${i}`, TORONTO.lat, TORONTO.lng);
       const offsetMeters = distKm(TORONTO.lat, TORONTO.lng, p.lat, p.lng) * 1000;
-      expect(offsetMeters).toBeLessThanOrEqual(PRIVACY_RADIUS_METERS * 0.9 + 1); // +1 for floating-point slack
+      expect(offsetMeters).toBeLessThanOrEqual(MAX_DISPLACEMENT_METERS + 1); // +1 for floating-point slack
     }
+  });
+
+  it('keeps a clear numeric margin between MAX_DISPLACEMENT_METERS and PRIVACY_RADIUS_METERS -- the actual mathematical fact the "guaranteed inside the circle" claim rests on', () => {
+    expect(MAX_DISPLACEMENT_METERS).toBeLessThan(PRIVACY_RADIUS_METERS);
+    // Sanity-check the margin is comfortably larger than the equirectangular
+    // approximation's error bound (~1e-9 relative, i.e. sub-millimeter
+    // absolute at these distances -- see the comment on
+    // getApproximateLocation) so this isn't a hairline-close boundary.
+    expect(PRIVACY_RADIUS_METERS - MAX_DISPLACEMENT_METERS).toBeGreaterThanOrEqual(5);
   });
 
   it('different listing ids at the same real coordinates get different approximate points', () => {
@@ -112,18 +121,22 @@ describe('getApproximateLocation', () => {
   // of them ever exceed PRIVACY_RADIUS_METERS. It also reports the actual
   // observed maximum so that figure is a real measured value, not a claim.
   describe('real-world geodesic distance never exceeds the configured privacy radius (multi-city, multi-latitude)', () => {
-    // Deliberately spans equatorial, mid-latitude, high-latitude, and
-    // near-polar coordinates in BOTH hemispheres -- the longitude/cosine
-    // scaling in getApproximateLocation behaves differently at each of
-    // these, so "one city" or "one hemisphere" would not actually exercise
-    // the geometry the founder asked this pass to prove.
+    // Deliberately spans representative Canadian coordinates/latitudes --
+    // this app's actual serving area -- east/west/north/south across the
+    // country, PLUS non-Canadian equatorial/southern-hemisphere points so
+    // the longitude/cosine scaling in getApproximateLocation (which behaves
+    // differently at each latitude) is exercised well beyond just "one city."
     const CITIES: [string, number, number][] = [
-      ['Toronto', 43.6532, -79.3832],
-      ['Vancouver', 49.2827, -123.1207],
-      ['Ottawa', 45.4215, -75.6972],
-      ['Calgary', 51.0447, -114.0719],
-      ['Iqaluit (near-polar, extreme longitude scaling)', 63.7467, -68.5170],
-      ['Alert, Nunavut (Canada high-arctic, most extreme case this app can plausibly serve)', 82.5018, -62.3481],
+      ['Toronto, ON', 43.6532, -79.3832],
+      ['Vancouver, BC', 49.2827, -123.1207],
+      ['Ottawa, ON', 45.4215, -75.6972],
+      ['Calgary, AB', 51.0447, -114.0719],
+      ['Montreal, QC', 45.5019, -73.5674],
+      ['Winnipeg, MB', 49.8951, -97.1384],
+      ['Halifax, NS', 44.6488, -63.5752],
+      ['Yellowknife, NT (subarctic)', 62.4540, -114.3718],
+      ['Iqaluit, NU (near-polar, extreme longitude scaling)', 63.7467, -68.5170],
+      ['Alert, NU (Canada high-arctic, most extreme case this app can plausibly serve)', 82.5018, -62.3481],
       ['Quito (near-equator, minimal longitude scaling)', -0.1807, -78.4678],
       ['Singapore (near-equator, other hemisphere)', 1.3521, 103.8198],
       ['Sydney (mid-latitude, southern hemisphere)', -33.8688, 151.2093],
@@ -141,13 +154,13 @@ describe('getApproximateLocation', () => {
           const approx = getApproximateLocation(id, lat, lng);
           const offsetMeters = distKm(lat, lng, approx.lat, approx.lng) * 1000;
 
-          // Strictly less than R -- this is the "real property is guaranteed
-          // inside the displayed circle" claim, checked against the REAL
-          // (haversine) distance, not the flat-plane approximation the
-          // offset itself was built from.
+          // Strictly less than the displayed radius -- this is the "real
+          // property is guaranteed inside the displayed circle" claim,
+          // checked against the REAL (haversine) distance, not the
+          // flat-plane approximation the offset itself was built from.
           expect(offsetMeters).toBeLessThan(PRIVACY_RADIUS_METERS);
-          expect(offsetMeters).toBeGreaterThanOrEqual(PRIVACY_RADIUS_METERS * 0.4 - 1);
-          expect(offsetMeters).toBeLessThanOrEqual(PRIVACY_RADIUS_METERS * 0.9 + 1);
+          expect(offsetMeters).toBeGreaterThanOrEqual(50 - 1); // MIN_DISPLACEMENT_METERS
+          expect(offsetMeters).toBeLessThanOrEqual(MAX_DISPLACEMENT_METERS + 1);
 
           maxObservedMeters = Math.max(maxObservedMeters, offsetMeters);
           minObservedMeters = Math.min(minObservedMeters, offsetMeters);
@@ -180,6 +193,8 @@ describe('getApproximateLocation', () => {
     const SAMPLE_COORDINATES: [number, number][] = [
       [43.6532, -79.3832],   // Toronto
       [49.2827, -123.1207],  // Vancouver
+      [45.5019, -73.5674],   // Montreal
+      [62.4540, -114.3718],  // Yellowknife
       [63.7467, -68.5170],   // Iqaluit
       [82.5018, -62.3481],   // Alert, Nunavut
       [-0.1807, -78.4678],   // Quito

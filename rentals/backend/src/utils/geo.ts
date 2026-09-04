@@ -49,20 +49,28 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 //
 //   PRIVACY_RADIUS_METERS -- the radius of the circle actually drawn on the
 //   map. Only needs to satisfy PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS
-//   (see the proof on getApproximateLocation below for why a 10m margin is
-//   already more than enough). This is the number that answers "how big is
-//   the 'somewhere in here' zone."
+//   (see the proof on getApproximateLocation below for the exact margin).
+//   This is the number that answers "how big is the 'somewhere in here'
+//   zone."
 //
-// Lowered from the prior 180m max / 200m circle to 120m max / 130m circle:
-// a real, measured ~33% reduction in worst-case displacement (verified in
-// tests/utils/geo.test.ts, not just asserted), while keeping the same
-// mathematical containment guarantee, just with a smaller, more honest
-// margin (10m here vs. 20m before -- still 1000x+ the ~1e-9 relative
-// approximation error the proof below accounts for, so no less "guaranteed"
-// than the prior 20m margin was).
-export const MAX_DISPLACEMENT_METERS = 120;
-const MIN_DISPLACEMENT_METERS = 50;
-export const PRIVACY_RADIUS_METERS = 130;
+// Per founder direction after auditing the underlying geocoded coordinates
+// themselves (see utils/geocode.ts's `requirePreciseMatch` gate, added in
+// the same pass -- the base coordinate stored per listing is now verified
+// address-level-precise, not just "whatever Nominatim's top result was"):
+// with that base point trustworthy, and a much larger 500m displayed
+// circle providing the actual privacy buffer, the jitter itself can (and
+// should) be small -- the founder's own framing was "I care more about the
+// renter getting the correct general area than keeping the circle tiny...
+// you can keep the public approximate marker much closer to the real
+// coordinate than before, since the 500m circle provides the privacy
+// buffer." Previous passes: 180m max/200m circle, then 120m max/130m
+// circle. Now: 50m max/500m circle -- a real, dramatically smaller
+// displacement (the public dot sits within half a block of the real
+// property) alongside a much larger, more honest "somewhere in this whole
+// area" zone.
+export const MAX_DISPLACEMENT_METERS = 50;
+const MIN_DISPLACEMENT_METERS = 15;
+export const PRIVACY_RADIUS_METERS = 500;
 
 // Mulberry32 -- a small, fast, deterministic PRNG. Not cryptographic (no
 // need to be: the seed is derived from public-ish data and the whole point
@@ -99,7 +107,7 @@ export interface ApproximateLocation {
 }
 
 // Deterministically offsets (lat, lng) by a pseudo-random distance in
-// [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS) -- i.e. [50, 120)
+// [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS) -- i.e. [15, 50)
 // meters currently -- at a pseudo-random angle, seeded by `seed` (pass the
 // listing's id) plus the real coordinates themselves (so moving a listing's
 // real address changes its public point too, rather than the point
@@ -115,7 +123,7 @@ export interface ApproximateLocation {
 //   1. `distance` (the value fed into the offset construction below) is
 //      drawn from [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS), i.e.
 //      strictly < MAX_DISPLACEMENT_METERS by construction (rand() < 1).
-//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (130 > 120),
+//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (500 > 50),
 //      `distance` is therefore also strictly < PRIVACY_RADIUS_METERS. This
 //      alone would be sufficient if the offset were built directly on a
 //      flat plane.
@@ -127,10 +135,10 @@ export interface ApproximateLocation {
 //      approximation's relative error for a great-circle path of length d
 //      on a sphere of radius R_earth is O((d / R_earth)^2) (from the
 //      Taylor expansion of the spherical law of cosines around d = 0). At
-//      d = 120m and R_earth = 6,371,000m that's on the order of
-//      (120 / 6_371_000)^2 ~= 3.5e-10, i.e. a sub-millimeter absolute error
-//      -- utterly swallowed by the 10m margin between MAX_DISPLACEMENT_METERS
-//      (120) and PRIVACY_RADIUS_METERS (130). So the real geodesic distance
+//      d = 50m and R_earth = 6,371,000m that's on the order of
+//      (50 / 6_371_000)^2 ~= 6.2e-11, i.e. a sub-millimeter absolute error
+//      -- utterly swallowed by the 450m margin between MAX_DISPLACEMENT_METERS
+//      (50) and PRIVACY_RADIUS_METERS (500). So the real geodesic distance
 //      is, for every practical and floating-point purpose, still strictly
 //      less than PRIVACY_RADIUS_METERS.
 //

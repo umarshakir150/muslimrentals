@@ -79,14 +79,15 @@ describe('GET /listings?lat=&lng=&radiusKm= -- filters by the PUBLIC approximate
 
   it('excludes a listing whose approximate point falls outside the radius even though its PRECISE point is inside it', async () => {
     // Construct a real case: find a listing id/coordinate whose real point is
-    // just inside a 1km radius, but whose deterministic ~100-200m jitter
-    // (see getApproximateLocation) pushes the approximate point just past it.
-    // Precise point ~950m from the search point -- inside a 1km radius.
-    // 'listing-a' is a known-good id for this exact case: its deterministic
-    // jitter happens to push the approximate point from ~0.95km to ~1.05km,
-    // crossing the 1km radius boundary in the right direction.
-    const preciseLat = SEARCH_POINT.lat + (950 / 111_320);
-    const id = 'listing-a';
+    // just inside a 1km radius, but whose deterministic jitter (see
+    // getApproximateLocation; up to MAX_DISPLACEMENT_METERS) pushes the
+    // approximate point just past it. Precise point ~954m from the search
+    // point -- inside a 1km radius. 'listing-a7' is a known-good id for this
+    // exact case: its deterministic jitter happens to push the approximate
+    // point from ~0.953km to ~1.002km, crossing the 1km radius boundary in
+    // the right direction.
+    const preciseLat = SEARCH_POINT.lat + (954 / 111_320);
+    const id = 'listing-a7';
     const approx = getApproximateLocation(id, preciseLat, SEARCH_POINT.lng);
     const preciseDistKm = distKm(SEARCH_POINT.lat, SEARCH_POINT.lng, preciseLat, SEARCH_POINT.lng);
     const approxDistKm = distKm(SEARCH_POINT.lat, SEARCH_POINT.lng, approx.lat, approx.lng);
@@ -113,10 +114,10 @@ describe('GET /listings?lat=&lng=&radiusKm= -- filters by the PUBLIC approximate
   it('includes a listing whose PRECISE point is technically outside the radius but whose approximate point lands inside it', async () => {
     // The mirror image of the above: precise point just outside 1km, but
     // jitter happens to land the approximate point back inside it.
-    // 'listing-c' is a known-good id for this exact case: its jitter pushes
-    // the approximate point from ~1.05km back to ~0.92km.
-    const preciseLat = SEARCH_POINT.lat + (1050 / 111_320);
-    const id = 'listing-c';
+    // 'listing-c1' is a known-good id for this exact case: its jitter pulls
+    // the approximate point from ~1.001km back to ~0.995km.
+    const preciseLat = SEARCH_POINT.lat + (1002 / 111_320);
+    const id = 'listing-c1';
     const approx = getApproximateLocation(id, preciseLat, SEARCH_POINT.lng);
     const preciseDistKm = distKm(SEARCH_POINT.lat, SEARCH_POINT.lng, preciseLat, SEARCH_POINT.lng);
     const approxDistKm = distKm(SEARCH_POINT.lat, SEARCH_POINT.lng, approx.lat, approx.lng);

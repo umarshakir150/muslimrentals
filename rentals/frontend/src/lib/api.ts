@@ -219,9 +219,10 @@ export const authApi = {
   refresh: () => api.post<{ data: { accessToken: string } }>('/auth/refresh', {}),
 };
 
-// A create/update call the backend couldn't resolve to a specific building
-// -- only the street -- comes back this way instead of a created/updated
-// listing (see routes/listings.ts's resolveGeocodedLocation): the caller
+// Every create/update call with an address comes back this way first,
+// regardless of how confident the geocode match was (see routes/listings.ts's
+// universal confirm-property-location flow / resolveGeocodedLocation) --
+// nothing is created/updated until the landlord confirms a pin. The caller
 // must show the landlord a pin centered on matchedLat/matchedLng, then
 // resubmit the same payload with confirmedLat/confirmedLng added.
 export interface NeedsLocationConfirmationResponse {

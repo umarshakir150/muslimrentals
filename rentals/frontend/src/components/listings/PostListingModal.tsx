@@ -17,11 +17,12 @@ import { postListingSchema, PostListingFormData as FormData } from '@/lib/postLi
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
 
-// Set only when the backend couldn't resolve the entered address past
-// street-level (see routes/listings.ts's resolveGeocodedLocation /
-// `confidence: 'street'`) -- nothing was created yet. `pinLat`/`pinLng`
-// start at the geocoder's matched point and track the landlord's drag;
-// confirming resubmits the same form payload plus confirmedLat/confirmedLng.
+// Set after every address submission (see routes/listings.ts's universal
+// confirm-property-location flow / resolveGeocodedLocation) -- nothing was
+// created yet, regardless of how confident the geocode match was.
+// `pinLat`/`pinLng` start at the geocoder's matched point and track the
+// landlord's drag; confirming resubmits the same form payload plus
+// confirmedLat/confirmedLng.
 interface PendingLocationConfirmation {
   formData: FormData;
   matchedLat: number;
@@ -124,9 +125,10 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
         imageUrls: [],
       });
       if (needsLocationConfirmation(res)) {
-        // Nothing was created -- the geocoder could only place the street,
-        // not the building. Show the landlord a pin on the matched street
-        // point and let them confirm/move it before anything is saved.
+        // Nothing was created -- every address requires the landlord to
+        // confirm the pin first, regardless of how confident the geocode
+        // match was. Show a pin on the geocoder's matched point and let
+        // them confirm/move it before anything is saved.
         setPendingConfirmation({
           formData: data,
           matchedLat: res.data.matchedLat,
@@ -231,15 +233,16 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
               </div>
             )}
 
-            {/* Confirm-location step -- shown instead of the form when the
-                geocoder could only resolve the street, not the specific
-                building (see resolveGeocodedLocation in routes/listings.ts).
-                Nothing has been saved yet; confirming here is what actually
-                creates the listing. */}
+            {/* Confirm-location step -- shown for EVERY new/edited address,
+                regardless of how confident the geocode match was (see the
+                universal confirm-property-location flow in
+                resolveGeocodedLocation, routes/listings.ts). Nothing has
+                been saved yet; confirming here is what actually creates
+                the listing. */}
             {!success && pendingConfirmation && (
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                 <p className="text-sm text-muted">
-                  We found the correct street, but couldn&apos;t pinpoint the exact building. Move the pin to the property&apos;s location. Your exact location will remain private.
+                  Make sure the pin is on the property. Drag it if needed. Your exact property location will remain private.
                 </p>
                 <ConfirmLocationMap
                   initialLat={pendingConfirmation.matchedLat}

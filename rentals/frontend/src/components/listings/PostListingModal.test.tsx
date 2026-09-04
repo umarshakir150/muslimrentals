@@ -203,19 +203,25 @@ describe('PostListingModal', () => {
     );
   });
 
-  // The landlord-confirmed-pin fallback: a street-level-only geocode match
-  // (see routes/listings.ts's resolveGeocodedLocation) comes back as
-  // `needsLocationConfirmation` instead of a created listing.
-  describe('landlord-confirmed-pin fallback (street-level geocode match)', () => {
+  // The universal confirm-property-location flow: EVERY address submission
+  // comes back as `needsLocationConfirmation` instead of a created listing
+  // (see routes/listings.ts's resolveGeocodedLocation) -- the frontend
+  // response shape carries no confidence info at all (just matchedLat/
+  // matchedLng), so the exact same UI/flow below handles a precise
+  // (house-level) match and a street-level-only match identically.
+  describe('universal confirm-property-location flow', () => {
     beforeEach(() => {
       createMock.mockReset();
     });
 
-    it('shows the "Confirm property location" step and creates nothing when the address only resolves to street-level', async () => {
+    it.each([
+      ['a precise (house-level) match', { matchedLat: 43.5789, matchedLng: -79.6583 }],
+      ['a street-level-only match', { matchedLat: 42.3023085, matchedLng: -83.0764497 }],
+    ])('shows the "Confirm property location" step and creates nothing for %s', async (_label, matched) => {
       createMock.mockResolvedValueOnce({
         success: true,
         needsLocationConfirmation: true,
-        data: { matchedLat: 42.3023085, matchedLng: -83.0764497 },
+        data: matched,
       });
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} />);
@@ -224,7 +230,7 @@ describe('PostListingModal', () => {
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
-      expect(screen.getByText(/We found the correct street, but couldn.t pinpoint the exact building/)).toBeInTheDocument();
+      expect(screen.getByText(/Make sure the pin is on the property\. Drag it if needed\. Your exact property location will remain private\./)).toBeInTheDocument();
       expect(uploadImagesMock).not.toHaveBeenCalled();
     });
 

@@ -1,10 +1,13 @@
 /**
- * Coverage for the address -> geocode -> precise-coordinate pipeline that
- * replaced the old neighbourhood-dropdown/centroid system: POST /listings
- * now geocodes the submitted address server-side (never trusts a
- * client-supplied lat/lng -- see listingSchemas.ts, which no longer accepts
- * those fields at all), and PATCH /listings/:id re-geocodes only when the
- * address/city/province actually changes.
+ * Coverage for the address -> geocode -> universal-confirmation ->
+ * precise-coordinate pipeline that replaced the old neighbourhood-dropdown/
+ * centroid system: POST /listings geocodes the submitted address
+ * server-side (never trusts a client-supplied lat/lng on its own -- see
+ * listingSchemas.ts) to find the best STARTING point, but never creates or
+ * updates a listing until the landlord confirms (or drags) a pin over that
+ * point -- regardless of how confident the geocode match was. PATCH
+ * /listings/:id re-geocodes only when the address/city/province actually
+ * changes, and follows the exact same confirmation rule when it does.
  *
  * Prisma and utils/geocode are both mocked -- there is no test database or
  * real network access wired up in this repo (same established pattern as
@@ -27,7 +30,7 @@ vi.mock('../../src/utils/geocode', () => ({
   // Real value (not mocked) -- the landlord-confirmed-pin distance check in
   // routes/listings.ts imports this constant directly, and these tests pick
   // confirmed-pin fixtures that are deliberately near/far relative to it.
-  MAX_STREET_PIN_CORRECTION_METERS: 2000,
+  MAX_PIN_CORRECTION_METERS: 2000,
 }));
 
 const createMock = vi.fn();
@@ -93,82 +96,15 @@ beforeEach(() => {
   userFindUniqueMock.mockResolvedValue(activeUser(OWNER_ID));
 });
 
-describe('POST /listings — server-side geocoding', () => {
-  it('geocodes the submitted address and stores the resolved coordinates, never client-supplied ones', async () => {
-    geocodeAddressMock.mockResolvedValue({ lat: 43.6532, lng: -79.3832 });
-    createMock.mockImplementation((args: any) =>
-      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
-    );
-    const app = await buildApp();
-
-    const res = await request(app)
-      .post('/api/v1/listings')
-      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      .send(validPayload());
-
-    expect(res.status).toBe(201);
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lat: 43.6532, lng: -79.3832, address: '123 Main Street' }),
-    }));
-  });
-
-  it('never passes the unit number into the geocoding call', async () => {
-    geocodeAddressMock.mockResolvedValue({ lat: 43.6532, lng: -79.3832 });
-    createMock.mockImplementation((args: any) => Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: {} }));
-    const app = await buildApp();
-
-    await request(app)
-      .post('/api/v1/listings')
-      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      .send(validPayload({ unit: 'Unit 4B' }));
-
-    // geocodeAddress's own signature has no unit parameter -- confirms the
-    // route only ever calls it with (address, city, province, options).
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ unit: 'Unit 4B' }),
-    }));
-  });
-
-  it('rejects with a clear error and creates nothing when the address cannot be geocoded', async () => {
-    geocodeAddressMock.mockResolvedValue(null);
-    const app = await buildApp();
-
-    const res = await request(app)
-      .post('/api/v1/listings')
-      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      .send(validPayload({ address: 'Not A Real Address Whatsoever' }));
-
-    expect(res.status).toBe(422);
-    expect(createMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects a request that tries to supply lat/lng directly (unknown fields)', async () => {
-    const app = await buildApp();
-
-    const res = await request(app)
-      .post('/api/v1/listings')
-      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      .send({ ...validPayload(), lat: 43.6532, lng: -79.3832 });
-
-    expect(res.status).toBe(422); // Zod .strict() validation failure -- see errorHandler's ZodError mapping
-    expect(geocodeAddressMock).not.toHaveBeenCalled();
-    expect(createMock).not.toHaveBeenCalled();
-  });
-});
-
-// Coverage for the landlord-confirmed-pin fallback: geocodeAddress tags a
-// result `confidence: 'street'` when it can only resolve the STREET (no
-// house/building-level OSM data), e.g. the real 732 Mill St, Windsor, ON
-// case. That coordinate must never be stored as the listing's exact
-// private location without the landlord confirming/moving a pin first.
-describe('POST /listings — landlord-confirmed-pin fallback for a street-level (confidence: "street") match', () => {
-  it('creates the listing automatically when the geocode is house/building-level precise (1051 Cedarglen Gate, Mississauga style) -- no confirmation needed', async () => {
+// Coverage for the universal confirm-property-location flow: EVERY new
+// address-based listing requires the landlord to confirm (or drag) a pin
+// before it's created, regardless of geocodeAddress's confidence for the
+// match -- a house/building-level ("precise") result and a street-only
+// result are treated identically here. geocodeAddress is only ever used to
+// find the best STARTING point shown to the landlord.
+describe('POST /listings — universal confirm-property-location flow', () => {
+  it('returns needsLocationConfirmation and creates nothing for a precise (house-level) match (1051 Cedarglen Gate, Mississauga style)', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
-    createMock.mockImplementation((args: any) =>
-      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
-    );
     const app = await buildApp();
 
     const res = await request(app)
@@ -176,14 +112,14 @@ describe('POST /listings — landlord-confirmed-pin fallback for a street-level 
       .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
       .send(validPayload({ address: '1051 Cedarglen Gate', city: 'Mississauga' }));
 
-    expect(res.status).toBe(201);
-    expect(res.body.needsLocationConfirmation).toBeUndefined();
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lat: 43.5789, lng: -79.6583 }),
-    }));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 43.5789, matchedLng: -79.6583 });
+    expect(createMock).not.toHaveBeenCalled();
   });
 
-  it('does NOT create the listing and returns needsLocationConfirmation when the geocode is only street-level (732 Mill St, Windsor style)', async () => {
+  it('returns needsLocationConfirmation and creates nothing for a street-level-only match (732 Mill St, Windsor style)', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
     const app = await buildApp();
 
@@ -199,7 +135,45 @@ describe('POST /listings — landlord-confirmed-pin fallback for a street-level 
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it('creates the listing with the landlord-confirmed pin as the exact private coordinates once confirmedLat/confirmedLng are resubmitted', async () => {
+  it('geocodes with the right address/city/province and never passes the unit number, before confirmation is even in the picture', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 43.6532, lng: -79.3832, confidence: 'precise' });
+    const app = await buildApp();
+
+    await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ unit: 'Unit 4B' }));
+
+    // geocodeAddress's own signature has no unit parameter -- confirms the
+    // route only ever calls it with (address, city, province, options).
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('creates the listing with the confirmed pin as the exact private coordinate for a precise match (small landlord nudge)', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    createMock.mockImplementation((args: any) =>
+      Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
+    );
+    const app = await buildApp();
+
+    // A small ~10m nudge -- the landlord just double-checking a precise pin.
+    const confirmedLat = 43.5789 + 0.00009;
+    const confirmedLng = -79.6583;
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '1051 Cedarglen Gate', city: 'Mississauga', confirmedLat, confirmedLng }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, address: '1051 Cedarglen Gate' }),
+    }));
+  });
+
+  it('creates the listing with the confirmed pin as the exact private coordinate for a street-level match (larger landlord correction)', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
     createMock.mockImplementation((args: any) =>
       Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
@@ -207,7 +181,7 @@ describe('POST /listings — landlord-confirmed-pin fallback for a street-level 
     const app = await buildApp();
 
     // A pin the landlord dragged ~120m from the matched street point --
-    // comfortably within MAX_STREET_PIN_CORRECTION_METERS.
+    // comfortably within MAX_PIN_CORRECTION_METERS.
     const confirmedLat = 42.3023085 + 0.0011;
     const confirmedLng = -83.0764497;
 
@@ -223,15 +197,28 @@ describe('POST /listings — landlord-confirmed-pin fallback for a street-level 
     }));
   });
 
-  it('rejects a confirmed pin that is implausibly far from the matched street (e.g. a different city) and creates nothing', async () => {
+  it('rejects a confirmed pin that is implausibly far from the geocoded point (e.g. a different city) and creates nothing', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
     const app = await buildApp();
 
     const res = await request(app)
       .post('/api/v1/listings')
       .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      // Toronto -- hundreds of km from the matched Windsor street point.
+      // Toronto -- hundreds of km from the matched Windsor point.
       .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 43.6532, confirmedLng: -79.3832 }));
+
+    expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an implausibly-far confirmed pin even for a precise match, not just a street-level one', async () => {
+    geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '1051 Cedarglen Gate', city: 'Mississauga', confirmedLat: 45.4215, confirmedLng: -75.6972 }));
 
     expect(res.status).toBe(422);
     expect(createMock).not.toHaveBeenCalled();
@@ -265,6 +252,32 @@ describe('POST /listings — landlord-confirmed-pin fallback for a street-level 
     expect((publicView as any).address).toBeUndefined();
     expect(publicView.locationApproximate).toBe(true);
   });
+
+  it('rejects with a clear error and creates nothing when the address cannot be geocoded at all (no candidate to confirm against)', async () => {
+    geocodeAddressMock.mockResolvedValue(null);
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: 'Not A Real Address Whatsoever' }));
+
+    expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request that tries to supply lat/lng directly (unknown fields)', async () => {
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ ...validPayload(), lat: 43.6532, lng: -79.3832 });
+
+    expect(res.status).toBe(422); // Zod .strict() validation failure -- see errorHandler's ZodError mapping
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /listings — TRANSITIONAL legacy shape (old production Post Listing contract)', () => {
@@ -273,7 +286,7 @@ describe('POST /listings — TRANSITIONAL legacy shape (old production Post List
     return { ...rest, neighbourhood: 'Kensington Market', lat: 43.6532, lng: -79.3832, ...overrides };
   }
 
-  it('accepts the old production shape (neighbourhood + client lat/lng, no address) and stores it verbatim', async () => {
+  it('accepts the old production shape (neighbourhood + client lat/lng, no address) and stores it verbatim -- no confirmation step for the legacy shape', async () => {
     createMock.mockImplementation((args: any) =>
       Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
     );
@@ -287,7 +300,9 @@ describe('POST /listings — TRANSITIONAL legacy shape (old production Post List
     expect(res.status).toBe(201);
     // The whole point of the legacy path: no geocoding call at all, and the
     // client-supplied coordinates are trusted directly -- exactly the
-    // pre-existing production behavior this preserves.
+    // pre-existing production behavior this preserves. The universal
+    // confirm-property-location flow only applies to the NEW (address)
+    // shape, which this payload deliberately doesn't use.
     expect(geocodeAddressMock).not.toHaveBeenCalled();
     expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ neighbourhood: 'Kensington Market', lat: 43.6532, lng: -79.3832 }),
@@ -358,10 +373,9 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
     };
   }
 
-  it('re-geocodes when the address changes, and stores the new coordinates', async () => {
+  it('re-geocodes (and requires confirmation, not an immediate update) when the address changes', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
-    geocodeAddressMock.mockResolvedValue({ lat: 45.4215, lng: -75.6972 });
-    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    geocodeAddressMock.mockResolvedValue({ lat: 45.4215, lng: -75.6972, confidence: 'precise' });
     const app = await buildApp();
 
     const res = await request(app)
@@ -371,9 +385,9 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
 
     expect(res.status).toBe(200);
     expect(geocodeAddressMock).toHaveBeenCalledWith('999 New Street', 'Toronto', 'ON', { requirePreciseMatch: true });
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lat: 45.4215, lng: -75.6972 }),
-    }));
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 45.4215, matchedLng: -75.6972 });
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('does not re-geocode when only unrelated fields (e.g. unit, price, title) change', async () => {
@@ -406,10 +420,9 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
     expect(geocodeAddressMock).not.toHaveBeenCalled();
   });
 
-  it('re-geocodes when only the city changes (address text reused against a new city)', async () => {
+  it('re-geocodes (and requires confirmation) when only the city changes (address text reused against a new city)', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
-    geocodeAddressMock.mockResolvedValue({ lat: 49.2827, lng: -123.1207 });
-    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    geocodeAddressMock.mockResolvedValue({ lat: 49.2827, lng: -123.1207, confidence: 'precise' });
     const app = await buildApp();
 
     const res = await request(app)
@@ -419,6 +432,8 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
 
     expect(res.status).toBe(200);
     expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON', { requirePreciseMatch: true });
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('rejects with a clear error and applies no update when the new address cannot be geocoded', async () => {
@@ -453,7 +468,11 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
   });
 });
 
-describe('PATCH /listings/:id — landlord-confirmed-pin fallback (same rules as POST)', () => {
+// Coverage for the universal confirm-property-location flow applied to
+// PATCH -- identical rule to POST (see the describe block above): a
+// re-geocode triggered by an edit NEVER commits a new coordinate without
+// landlord confirmation, whether the match was 'precise' or 'street'.
+describe('PATCH /listings/:id — universal confirm-property-location flow (same rules as POST)', () => {
   function existingListing(overrides: Record<string, any> = {}) {
     return {
       id: LISTING_ID, userId: OWNER_ID, status: 'ACTIVE',
@@ -462,6 +481,22 @@ describe('PATCH /listings/:id — landlord-confirmed-pin fallback (same rules as
       ...overrides,
     };
   }
+
+  it('does not apply the edit and returns needsLocationConfirmation for a precise (house-level) match, not just a street-level one', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '1051 Cedarglen Gate', city: 'Mississauga' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 43.5789, matchedLng: -79.6583 });
+    expect(updateMock).not.toHaveBeenCalled();
+  });
 
   it('does not apply the edit and returns needsLocationConfirmation when the new address only geocodes to street-level', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
@@ -502,6 +537,28 @@ describe('PATCH /listings/:id — landlord-confirmed-pin fallback (same rules as
     // into the Prisma update payload itself.
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.not.objectContaining({ confirmedLat: expect.anything(), confirmedLng: expect.anything() }),
+    }));
+  });
+
+  it('applies the edit using the landlord-confirmed pin when only city/province changed (re-geocoded from the existing stored address)', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 49.2827, lng: -123.1207, confidence: 'precise' });
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const confirmedLat = 49.2827 + 0.00005;
+    const confirmedLng = -123.1207;
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ city: 'Vancouver', confirmedLat, confirmedLng });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON', { requirePreciseMatch: true });
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, city: 'Vancouver' }),
     }));
   });
 

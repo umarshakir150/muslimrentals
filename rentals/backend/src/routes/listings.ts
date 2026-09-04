@@ -20,7 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
-import { geocodeAddress, MAX_STREET_PIN_CORRECTION_METERS } from '../utils/geocode';
+import { geocodeAddress, MAX_PIN_CORRECTION_METERS } from '../utils/geocode';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -49,15 +49,16 @@ const s3 = AWS_CONFIGURED
 
 const router = Router();
 
-// ─── Landlord-confirmed-pin fallback ────────────────────────────────────────
-// geocodeAddress tags every result `confidence: 'precise'` (a real
-// house/building-level match -- safe to use automatically) or
-// `confidence: 'street'` (the best it could do is place the STREET, not the
-// specific building -- can legitimately be a few hundred meters from the
-// actual property, per the real Windsor case that motivated this). A
-// 'street' match is never silently stored as the listing's exact private
-// location: the caller must return a `needsLocationConfirmation` response
-// so the landlord can drag a pin to the actual property first.
+// ─── Universal confirm-property-location flow ──────────────────────────────
+// Every new or address-changing listing requires the landlord to confirm
+// (or drag) a pin before its exact private coordinate is ever stored --
+// regardless of geocodeAddress's `confidence` for the match. geocodeAddress
+// still finds the best available STARTING point (a 'precise' house-level
+// match makes for a better starting pin than a 'street'-level one, but
+// either way the landlord confirms it): nothing is created/updated until
+// a confirmed pin is submitted, and even then it's validated against the
+// geocoder's own matched point (see MAX_PIN_CORRECTION_METERS) rather than
+// trusted outright.
 //
 // Shared by POST / (create) and PATCH /:id (edit) -- both need identical
 // behavior here (see CLAUDE.md's product-consistency expectations), so this
@@ -67,30 +68,22 @@ type LocationResolution =
   | { kind: 'needsConfirmation'; matchedLat: number; matchedLng: number };
 
 function resolveGeocodedLocation(
-  geocoded: { lat: number; lng: number; confidence?: 'precise' | 'street' },
+  geocoded: { lat: number; lng: number },
   confirmedLat: number | undefined,
   confirmedLng: number | undefined
 ): LocationResolution {
-  if (geocoded.confidence !== 'street') {
-    // 'precise' (or no confidence tag at all, e.g. a test/legacy caller) --
-    // automatic, no confirmation step. Any confirmedLat/Lng submitted
-    // alongside a precise match is simply ignored: confirmation was never
-    // needed, so there's nothing to validate it against.
-    return { kind: 'resolved', lat: geocoded.lat, lng: geocoded.lng };
-  }
-
   if (confirmedLat === undefined || confirmedLng === undefined) {
     return { kind: 'needsConfirmation', matchedLat: geocoded.lat, matchedLng: geocoded.lng };
   }
 
   // Never trust the confirmed pin outright -- validate it's actually near
-  // the street the geocoder matched (see MAX_STREET_PIN_CORRECTION_METERS),
-  // so submitting an address on one street/city and manually placing the
-  // pin somewhere unrelated is rejected rather than silently stored.
+  // the point the geocoder matched (see MAX_PIN_CORRECTION_METERS), so
+  // submitting an address on one street/city and manually placing the pin
+  // somewhere unrelated is rejected rather than silently stored.
   const correctionMeters = distKm(geocoded.lat, geocoded.lng, confirmedLat, confirmedLng) * 1000;
-  if (correctionMeters > MAX_STREET_PIN_CORRECTION_METERS) {
+  if (correctionMeters > MAX_PIN_CORRECTION_METERS) {
     throw new AppError(
-      `That pin is too far from the address we matched (about ${Math.round(correctionMeters)}m away; the maximum is ${MAX_STREET_PIN_CORRECTION_METERS}m). Please move it closer to the property's location on the matched street.`,
+      `That pin is too far from the address we matched (about ${Math.round(correctionMeters)}m away; the maximum is ${MAX_PIN_CORRECTION_METERS}m). Please move it closer to the property's actual location.`,
       422
     );
   }

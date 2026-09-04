@@ -99,12 +99,12 @@ describe('getApproximateLocation', () => {
     expect(PRIVACY_RADIUS_METERS - MAX_DISPLACEMENT_METERS).toBeGreaterThanOrEqual(5);
   });
 
-  // Explicit regression guard for the founder's literal ask ("make the
-  // displayed approximate-location circle 500 metres") -- a silent drift in
+  // Explicit regression guard for the founder's literal ask ("change the
+  // public listing privacy radius from 500m to 250m") -- a silent drift in
   // either constant should fail loudly here rather than only be noticed by
   // eyeballing the map.
-  it('is configured for a 500m displayed privacy circle with the public marker kept close (max 50m) to the real point', () => {
-    expect(PRIVACY_RADIUS_METERS).toBe(500);
+  it('is configured for a 250m displayed privacy circle with the public marker kept close (max 50m) to the real point', () => {
+    expect(PRIVACY_RADIUS_METERS).toBe(250);
     expect(MAX_DISPLACEMENT_METERS).toBe(50);
   });
 
@@ -277,7 +277,7 @@ describe('toPublicListingLocation', () => {
     expect(a.lng).toBe(b.lng);
   });
 
-  // This whole pass (precise-match geocoding gate, tighter jitter, 500m
+  // This whole pass (precise-match geocoding gate, tighter jitter, 250m
   // circle) only changes how a NEW address-based listing's stored lat/lng
   // gets there. It changes nothing about what happens AFTER a coordinate is
   // stored -- so a legacy listing (neighbourhood + client-submitted lat/lng,

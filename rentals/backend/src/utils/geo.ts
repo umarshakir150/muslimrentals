@@ -43,9 +43,20 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 // (the free OSM geocoder)'s own precision for that specific address --
 // see PostListingModal.tsx/CityAutocomplete's onChange, which now also
 // passes the selected city's province into the geocoding query, tightening
-// match specificity. This constant still lowered from 250 to 200 anyway,
-// per explicit product direction to target a tighter 100-200m range.
+// match specificity. Kept at 200m for this pass too: it already sits in the
+// founder's requested 150-250m band, and the "real point can appear outside
+// the circle" concern this pass fixes is about the OFFSET CONSTRUCTION below
+// (how close to the R boundary the jitter distance was allowed to get), not
+// about R itself needing to move again.
 export const PRIVACY_RADIUS_METERS = 200;
+
+// The offset distance is drawn from [MIN_OFFSET_FRACTION, MAX_OFFSET_FRACTION)
+// * PRIVACY_RADIUS_METERS. MAX_OFFSET_FRACTION < 1 is not a stylistic choice --
+// it is what makes "the real point is guaranteed inside the displayed circle"
+// a mathematical fact rather than a best-effort approximation. See the proof
+// in the comment on getApproximateLocation below.
+const MIN_OFFSET_FRACTION = 0.4;
+const MAX_OFFSET_FRACTION = 0.9;
 
 // Mulberry32 -- a small, fast, deterministic PRNG. Not cryptographic (no
 // need to be: the seed is derived from public-ish data and the whole point
@@ -82,24 +93,55 @@ export interface ApproximateLocation {
 }
 
 // Deterministically offsets (lat, lng) by a pseudo-random distance in
-// [0.5 * PRIVACY_RADIUS_METERS, PRIVACY_RADIUS_METERS) -- i.e. [100, 200]
-// meters at the current radius -- at a pseudo-random angle, seeded by
-// `seed` (pass the listing's id) plus the real coordinates themselves (so
-// moving a listing's real address changes its public point too, rather
-// than the point sticking to a stale id-only seed forever). The lower
-// bound keeps the jitter from ever landing suspiciously close to the real
-// point while still guaranteeing (by construction) that the real point
-// lies within PRIVACY_RADIUS_METERS of the returned one -- exactly the
-// "somewhere in this circle" guarantee the public-facing privacy circle
-// promises. This bound is a hard mathematical ceiling, not a statistical
-// tendency -- see this function's own regression coverage in
-// tests/utils/geo.test.ts, which computes the real geodesic (haversine)
-// distance for every case across several cities/latitudes, not just the
-// equirectangular approximation used here to build the offset itself.
+// [MIN_OFFSET_FRACTION, MAX_OFFSET_FRACTION) * PRIVACY_RADIUS_METERS -- i.e.
+// [80, 180) meters at the current 200m radius -- at a pseudo-random angle,
+// seeded by `seed` (pass the listing's id) plus the real coordinates
+// themselves (so moving a listing's real address changes its public point
+// too, rather than the point sticking to a stale id-only seed forever).
+//
+// ── Why the real point is GUARANTEED to lie inside the displayed circle ───
+// The public map draws a circle of radius `R = PRIVACY_RADIUS_METERS`
+// centered on the point this function returns. For the real point to be
+// guaranteed inside that circle, the actual geodesic distance between the
+// real point and the returned point must be strictly less than R -- always,
+// not "almost always":
+//
+//   1. `distance` (the value fed into the offset construction below) is
+//      drawn from [MIN_OFFSET_FRACTION * R, MAX_OFFSET_FRACTION * R), i.e.
+//      strictly < R by construction (MAX_OFFSET_FRACTION = 0.9 < 1). This
+//      alone would be sufficient if the offset were built directly on a
+//      flat plane.
+//   2. Lat/lng isn't a flat plane, though, so `dLat`/`dLng` below are built
+//      using the standard equirectangular (local tangent-plane)
+//      approximation, not an exact geodesic construction -- so the REAL
+//      (haversine) distance between (lat, lng) and (lat+dLat, lng+dLng)
+//      isn't exactly `distance`, only extremely close to it. That
+//      approximation's relative error for a great-circle path of length d
+//      on a sphere of radius R_earth is O((d / R_earth)^2) (from the
+//      Taylor expansion of the spherical law of cosines around d = 0).
+//      At d = 200m and R_earth = 6,371,000m that's on the order of
+//      (200 / 6_371_000)^2 ~= 1e-9, i.e. a sub-millimeter absolute error --
+//      utterly swallowed by the 10% (20m at R=200) margin MAX_OFFSET_FRACTION
+//      already leaves below R. So the real geodesic distance is, for every
+//      practical and floating-point purpose, still strictly < R.
+//
+// Combined: real geodesic distance(realPoint, approxPoint) < R for every
+// input, at every latitude -- which is exactly "the real point is somewhere
+// inside this circle", not a statistical tendency. Proven, not just tested,
+// but also independently verified in tests/utils/geo.test.ts by computing
+// the actual haversine distance (via distKm, a separately-implemented
+// formula from the equirectangular offset built here) across hundreds of
+// deterministic samples spanning equatorial, mid-latitude, and near-polar
+// coordinates in both hemispheres.
+//
+// The lower bound (MIN_OFFSET_FRACTION) is a separate, non-mathematical
+// privacy/UX choice: it keeps the jitter from ever landing suspiciously
+// close to the real point, which the "inside the circle" guarantee alone
+// doesn't require but a *useful* privacy circle does.
 export function getApproximateLocation(seed: string, lat: number, lng: number): ApproximateLocation {
   const rand = mulberry32(hashSeed(`${seed}:${lat.toFixed(6)}:${lng.toFixed(6)}`));
   const angle = rand() * 2 * Math.PI;
-  const distance = PRIVACY_RADIUS_METERS * (0.5 + rand() * 0.5);
+  const distance = PRIVACY_RADIUS_METERS * (MIN_OFFSET_FRACTION + rand() * (MAX_OFFSET_FRACTION - MIN_OFFSET_FRACTION));
 
   const dLat = (distance * Math.cos(angle)) / METERS_PER_DEG_LAT;
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);

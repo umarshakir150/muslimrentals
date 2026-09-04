@@ -164,6 +164,20 @@ describe('FullMap approximate-location privacy zone', () => {
     expect(mapInstance.removeLayer).toHaveBeenCalledWith(circle);
   });
 
+  it('draws the circle with EXACTLY the radius the API sent, never a hardcoded/independent value', async () => {
+    // A deliberately non-default number (not 200, the current
+    // PRIVACY_RADIUS_METERS) -- if this component ever hardcoded its own
+    // radius instead of reading listing.locationPrecisionRadiusM, this test
+    // would catch it even though the default-value tests above would not
+    // (they'd still pass by coincidence).
+    const listing = baseListing({ locationApproximate: true, locationPrecisionRadiusM: 137 } as any);
+    const { markerInstances, circleInstances } = await renderFullMap([listing]);
+
+    markerInstances[0].fireHandler('popupopen');
+
+    expect(circleInstances[0].options.radius).toBe(137);
+  });
+
   it('draws the circle around the exact same point already on the marker -- never a separate, more-precise coordinate', async () => {
     const listing = baseListing({ lat: 45.4215, lng: -75.6972, locationApproximate: true, locationPrecisionRadiusM: 200 } as any);
     const { markerInstances, circleInstances } = await renderFullMap([listing]);

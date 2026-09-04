@@ -19,11 +19,15 @@ import { logger } from './logger';
  * for a landlord's entered address, but every listing -- regardless of how
  * confident the match is -- requires the landlord to confirm (or drag) a
  * pin over that starting point before it's ever stored. That confirmed pin
- * -- validated against the geocoder's own matched point, see
- * MAX_PIN_CORRECTION_METERS -- becomes the exact private coordinate. The
- * client still never gets to supply a coordinate untethered from any
- * geocoded address: the pin is always anchored to (and checked against)
- * an address this function actually resolved.
+ * becomes the exact private coordinate, but only once it's independently
+ * verified -- see verifyConfirmedPinLocation below -- against the entered
+ * city/province, NOT against distance from geocodeAddress's own starting
+ * point. The starting point can itself be badly wrong (a real observed
+ * case: off by over 5km for a genuine address), so a landlord correcting
+ * it by a large distance is expected and must not be penalized for how bad
+ * the starting guess was. The client still never gets to supply a
+ * coordinate verified against nothing: every confirmed pin is checked
+ * against the same city/province the address was actually entered under.
  *
  * Uses OpenStreetMap's free Nominatim search API -- no API key/signup, and
  * consistent with this app already using OSM tiles for the map itself
@@ -74,9 +78,12 @@ export interface GeocodeResult {
   //
   // Purely informational/internal now -- routes/listings.ts's universal
   // confirm-property-location flow requires landlord confirmation for
-  // EVERY listing regardless of this value (see MAX_PIN_CORRECTION_METERS
-  // below), so `confidence` no longer gates whether confirmation happens.
-  // It's kept because pickBestCandidate still needs it to prefer a
+  // EVERY listing regardless of this value, and the confirmed pin is
+  // verified against the entered city/province (see
+  // verifyConfirmedPinLocation below), never against this result's own
+  // coordinate -- so `confidence` no longer gates whether confirmation
+  // happens, nor how the confirmed pin gets validated. It's kept because
+  // pickBestCandidate still needs it to prefer a
   // building-level match over a street-level one when picking the
   // STARTING point shown to the landlord -- a more accurate starting pin
   // means less dragging, even though confirmation is required either way.
@@ -93,36 +100,6 @@ export interface GeocodeResult {
   //   the pin before anything is stored.
   confidence?: 'precise' | 'street';
 }
-
-// How far a landlord-confirmed pin (the universal confirm-property-location
-// flow -- see routes/listings.ts -- required for every new/edited listing
-// address, regardless of geocode confidence) may be moved from the
-// geocoder's own matched point before it's rejected as implausible. This is
-// NOT a generic "trust the client" allowance -- it exists only to let a
-// landlord correct the geocoder's starting pin to the actual property
-// nearby, not to accept an arbitrary coordinate unrelated to the address
-// that was actually geocoded.
-//
-// 2000m was chosen from the real-world case that motivated this feature: a
-// genuine Windsor address (732 Mill St) whose only available Nominatim
-// point sat roughly 600-700m from the actual property along the same
-// street -- a legitimate 'street'-confidence correction this bound must
-// keep allowing. It's generous for a 'precise' (house-level) match, where a
-// real correction is typically well under 50m, but that's fine: the goal
-// here is only to catch abuse (an address entered in one city with the pin
-// dropped somewhere unrelated), not to grade how much a landlord nudges an
-// already-good pin. 2km gives real headroom above the observed
-// street-level displacement for a long block/rural road, while still being
-// far too small to cross into a different city, or (other than in a
-// handful of tiny communities) a different province -- e.g. Windsor to
-// Toronto is ~360km, Windsor to Detroit's own nearest street is still >1km
-// across the river/border. A pin correction this large is still checked
-// against the SAME street/city/province the address was originally
-// validated against (evaluateAddressMatch already ran before any result --
-// 'precise' or 'street' -- is ever returned), so this constant only needs
-// to rule out "wrong spot near the right street," not "wrong city
-// entirely."
-export const MAX_PIN_CORRECTION_METERS = 2000;
 
 interface NominatimAddressDetails {
   house_number?: string;
@@ -268,6 +245,111 @@ function normalizeProvinceName(input: string): string {
 function extractCanadianFsa(input: string): string | null {
   const match = input.toUpperCase().match(/[A-Z]\d[A-Z]/);
   return match ? match[0] : null;
+}
+
+const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
+
+export interface PinLocationVerification {
+  ok: boolean;
+  // Sanitized, log-safe reason (e.g. "resolves to Toronto, not Windsor") --
+  // never the coordinate itself, same stance as every other diagnostic
+  // string in this file. Safe to surface directly in the 422 error message
+  // routes/listings.ts returns to the landlord.
+  reason: string;
+}
+
+// ─── Landlord-confirmed-pin geography check ────────────────────────────────
+// The universal confirm-property-location flow (routes/listings.ts) cannot
+// validate a landlord-placed pin by measuring its distance from
+// geocodeAddress's own starting point -- that point is exactly what
+// confirmation exists to let the landlord CORRECT, and a real case proved
+// it can be off by more than 5km for a genuine address. Measuring "distance
+// from a possibly-wrong point" would reject the landlord's legitimate fix
+// for being too far from the very mistake they're fixing.
+//
+// Instead, this reverse-geocodes the CONFIRMED pin itself and checks its
+// own city/province against what the landlord actually entered -- the
+// thing that actually matters ("is this plausibly in Windsor, ON") is
+// independent of how far the pin ended up from any earlier guess. A pin
+// several km away, still within the entered city, is accepted; a pin in a
+// different city (Toronto instead of Windsor) is rejected regardless of
+// distance.
+//
+// Uses Nominatim's own /reverse endpoint -- the SAME provider already used
+// for forward geocoding in this file (no new dependency, API key, billing
+// relationship, or provider evaluation needed). Adds exactly one extra
+// request per confirmed pin (once per listing create/edit, not per
+// keystroke or drag event), comfortably inside the ~1req/s usage-policy
+// headroom already discussed at the top of this file.
+export async function verifyConfirmedPinLocation(
+  lat: number,
+  lng: number,
+  city: string,
+  province?: string | null
+): Promise<PinLocationVerification> {
+  const params = new URLSearchParams({
+    format: 'jsonv2', lat: String(lat), lon: String(lng), addressdetails: '1', zoom: '16',
+  });
+  const url = `${NOMINATIM_REVERSE_URL}?${params.toString()}`;
+  // Never includes the actual coordinate -- same "diagnostic metadata only,
+  // never the private location" stance as every other query description in
+  // this file.
+  const description = `reverse geocode of the landlord-confirmed pin (verifying against city="${city}", state="${province ?? ''}")`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    logger.error(`Reverse geocoding request failed for ${description}:`, err);
+    return { ok: false, reason: "we couldn't verify that location right now (reverse geocoding request failed)" };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    logger.error(`Reverse geocoding API returned ${response.status} for ${description}`);
+    return { ok: false, reason: "we couldn't verify that location right now (reverse geocoding service error)" };
+  }
+
+  let result: { address?: NominatimAddressDetails } | null;
+  try {
+    result = (await response.json()) as { address?: NominatimAddressDetails } | null;
+  } catch (err) {
+    logger.error(`Reverse geocoding response was not valid JSON for ${description}:`, err);
+    return { ok: false, reason: "we couldn't verify that location right now (invalid reverse geocoding response)" };
+  }
+
+  const addr = result?.address ?? {};
+  const resultCity = addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet;
+  const resultState = addr.state;
+
+  // Province checked first (cheaper, coarser signal) -- catches a
+  // cross-province placement even before the city comparison below.
+  if (province && resultState && normalizeProvinceName(resultState) !== normalizeProvinceName(province)) {
+    logger.warn(`Pin verification REJECTED for [${description}]: pin resolves to state="${resultState}", not the requested province.`);
+    return { ok: false, reason: `that location appears to be in ${resultState}, not ${province}` };
+  }
+
+  // Deliberately stricter than evaluateAddressMatch's forward-match city
+  // check (which lets a MISSING result city pass): a manually placed pin
+  // with no determinable city at all (open water, wilderness, another
+  // country's rural area) must not be silently accepted just because
+  // Nominatim had nothing to compare against.
+  if (!resultCity || normalizePlaceName(resultCity) !== normalizePlaceName(city)) {
+    logger.warn(`Pin verification REJECTED for [${description}]: pin resolves to city="${resultCity ?? 'unknown'}", not the requested city.`);
+    return {
+      ok: false,
+      reason: resultCity ? `that location appears to be in ${resultCity}, not ${city}` : "that location's city couldn't be determined",
+    };
+  }
+
+  logger.info(`Pin verification ACCEPTED for [${description}]: pin resolves to city="${resultCity}", state="${resultState ?? 'unknown'}".`);
+  return { ok: true, reason: 'matches the requested city/province' };
 }
 
 // Judges whether a Nominatim result resolves to the requested address's
@@ -448,7 +530,7 @@ export interface GeocodeOptions {
   //      only (see the field's own doc comment on GeocodeResult): the
   //      caller (routes/listings.ts) always requires landlord confirmation
   //      before treating EITHER as the exact private location, using this
-  //      result only as the starting pin -- see MAX_PIN_CORRECTION_METERS.
+  //      result only as the starting pin -- see verifyConfirmedPinLocation.
   //
   // This does NOT require Nominatim to have building/house-number-level
   // OSM data for the address to return SOMETHING -- a correctly-located

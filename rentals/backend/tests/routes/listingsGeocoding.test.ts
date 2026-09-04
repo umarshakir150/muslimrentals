@@ -25,12 +25,10 @@ const OWNER_ID = '11111111-1111-4111-8111-111111111111';
 const LISTING_ID = '22222222-2222-4222-8222-222222222222';
 
 const geocodeAddressMock = vi.fn();
+const verifyConfirmedPinLocationMock = vi.fn();
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
-  // Real value (not mocked) -- the landlord-confirmed-pin distance check in
-  // routes/listings.ts imports this constant directly, and these tests pick
-  // confirmed-pin fixtures that are deliberately near/far relative to it.
-  MAX_PIN_CORRECTION_METERS: 2000,
+  verifyConfirmedPinLocation: (...args: any[]) => verifyConfirmedPinLocationMock(...args),
 }));
 
 const createMock = vi.fn();
@@ -89,6 +87,10 @@ async function buildApp() {
 
 beforeEach(() => {
   geocodeAddressMock.mockReset();
+  verifyConfirmedPinLocationMock.mockReset();
+  // Default: a confirmed pin verifies fine -- individual tests override
+  // this to `{ ok: false, reason: ... }` to exercise rejection.
+  verifyConfirmedPinLocationMock.mockResolvedValue({ ok: true, reason: 'matches the requested city/province' });
   createMock.mockReset();
   findUniqueMock.mockReset();
   updateMock.mockReset();
@@ -168,22 +170,34 @@ describe('POST /listings — universal confirm-property-location flow', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Mississauga', 'ON');
     expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, address: '1051 Cedarglen Gate' }),
     }));
   });
 
-  it('creates the listing with the confirmed pin as the exact private coordinate for a street-level match (larger landlord correction)', async () => {
-    geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+  // The exact regression this redesign exists to fix: the geocoder's own
+  // starting point can be badly wrong (a real observed case: off by over
+  // 5km), and the OLD distance-from-that-point validation would have
+  // rejected the landlord's legitimate correction for being "too far" from
+  // the very mistake it was fixing. Nothing here measures distance from the
+  // geocoded point at all -- acceptance depends only on
+  // verifyConfirmedPinLocation (reverse-geocoding the CONFIRMED pin)
+  // resolving `ok: true`.
+  it('accepts a confirmed pin several kilometres from a badly-wrong geocoded starting point, as long as it verifies within the entered city', async () => {
+    // A deliberately bad starting guess for a Windsor, ON address.
+    geocodeAddressMock.mockResolvedValue({ lat: 42.20, lng: -83.20, confidence: 'street' });
+    verifyConfirmedPinLocationMock.mockResolvedValue({ ok: true, reason: 'matches the requested city/province' });
     createMock.mockImplementation((args: any) =>
       Promise.resolve({ id: 'new-listing', ...args.data, images: [], amenities: [], user: { id: OWNER_ID, name: 'Owner', avatarUrl: null } })
     );
     const app = await buildApp();
 
-    // A pin the landlord dragged ~120m from the matched street point --
-    // comfortably within MAX_PIN_CORRECTION_METERS.
-    const confirmedLat = 42.3023085 + 0.0011;
-    const confirmedLng = -83.0764497;
+    // The landlord's correction, ~6km from the bad starting point above --
+    // this alone would have failed the old MAX_PIN_CORRECTION_METERS=2000m
+    // distance check.
+    const confirmedLat = 42.31;
+    const confirmedLng = -83.05;
 
     const res = await request(app)
       .post('/api/v1/listings')
@@ -197,22 +211,30 @@ describe('POST /listings — universal confirm-property-location flow', () => {
     }));
   });
 
-  it('rejects a confirmed pin that is implausibly far from the geocoded point (e.g. a different city) and creates nothing', async () => {
+  it('rejects a confirmed pin that verifies to a clearly different city (regardless of distance from the geocoded point) and creates nothing', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    verifyConfirmedPinLocationMock.mockResolvedValue({
+      ok: false,
+      reason: 'that location appears to be in Toronto, not Windsor',
+    });
     const app = await buildApp();
 
     const res = await request(app)
       .post('/api/v1/listings')
       .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      // Toronto -- hundreds of km from the matched Windsor point.
       .send(validPayload({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 43.6532, confirmedLng: -79.3832 }));
 
     expect(res.status).toBe(422);
+    expect(res.body.message).toContain('Toronto');
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it('rejects an implausibly-far confirmed pin even for a precise match, not just a street-level one', async () => {
+  it('rejects a confirmed pin that fails city/province verification even for a precise match, not just a street-level one', async () => {
     geocodeAddressMock.mockResolvedValue({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    verifyConfirmedPinLocationMock.mockResolvedValue({
+      ok: false,
+      reason: 'that location appears to be in Ottawa, not Mississauga',
+    });
     const app = await buildApp();
 
     const res = await request(app)
@@ -530,6 +552,7 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
 
     expect(res.status).toBe(200);
     expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Windsor', 'ON');
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng }),
     }));
@@ -537,6 +560,31 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
     // into the Prisma update payload itself.
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.not.objectContaining({ confirmedLat: expect.anything(), confirmedLng: expect.anything() }),
+    }));
+  });
+
+  // Same regression as POST's "several kilometres from a badly-wrong
+  // geocoded starting point" test above -- PATCH must follow the identical
+  // rule, not a distance-from-the-geocoded-point check.
+  it('applies the edit using a confirmed pin several kilometres from a badly-wrong geocoded starting point, as long as it verifies within the entered city', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    geocodeAddressMock.mockResolvedValue({ lat: 42.20, lng: -83.20, confidence: 'street' }); // badly wrong
+    verifyConfirmedPinLocationMock.mockResolvedValue({ ok: true, reason: 'matches the requested city/province' });
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const confirmedLat = 42.31; // ~6km from the bad starting point
+    const confirmedLng = -83.05;
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat, confirmedLng });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng }),
     }));
   });
 
@@ -557,14 +605,19 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
     expect(res.status).toBe(200);
     expect(res.body.needsLocationConfirmation).toBeUndefined();
     expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON', { requirePreciseMatch: true });
+    expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Vancouver', 'ON');
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, city: 'Vancouver' }),
     }));
   });
 
-  it('rejects an implausibly-far confirmed pin on PATCH and applies no update', async () => {
+  it('rejects a confirmed pin that fails city/province verification on PATCH (regardless of distance from the geocoded point) and applies no update', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
     geocodeAddressMock.mockResolvedValue({ lat: 42.3023085, lng: -83.0764497, confidence: 'street' });
+    verifyConfirmedPinLocationMock.mockResolvedValue({
+      ok: false,
+      reason: 'that location appears to be in Toronto, not Windsor',
+    });
     const app = await buildApp();
 
     const res = await request(app)
@@ -573,6 +626,7 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
       .send({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 43.6532, confirmedLng: -79.3832 });
 
     expect(res.status).toBe(422);
+    expect(res.body.message).toContain('Toronto');
     expect(updateMock).not.toHaveBeenCalled();
   });
 });

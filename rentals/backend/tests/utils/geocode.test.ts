@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geocodeAddress } from '../../src/utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation } from '../../src/utils/geocode';
 
 const originalFetch = globalThis.fetch;
 
@@ -157,7 +157,7 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   // `confidence: 'street'` -- purely informational at this layer now:
   // routes/listings.ts requires landlord pin-confirmation for every
   // address-based listing regardless of confidence, using this coordinate
-  // only as the starting pin (see MAX_PIN_CORRECTION_METERS).
+  // only as the starting pin (see verifyConfirmedPinLocation).
   it('returns a street-level (confidence: "street") result when no house_number exists in OSM, but does not reject it (732 Mill St, Windsor, ON regression)', async () => {
     const { callCount } = mockFetchSequence(jsonResponse([{
       lat: '42.3023085', lon: '-83.0764497',
@@ -497,5 +497,103 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
       expect(result).toBeNull();
       expect(callCount()).toBe(12); // still checks every candidate rather than stopping at the first success
     });
+  });
+});
+
+// The landlord-confirmed-pin geography check (routes/listings.ts's
+// resolveGeocodedLocation): validates a confirmed pin by reverse-geocoding
+// IT (never by measuring distance from geocodeAddress's own, possibly
+// wrong, starting point) and checking its city/province against what was
+// actually entered.
+describe('verifyConfirmedPinLocation', () => {
+  function reverseResponse(address: Record<string, any>): Partial<Response> {
+    return { ok: true, status: 200, json: async () => ({ address }) };
+  }
+
+  it('accepts a pin that reverse-geocodes to the requested city and province', async () => {
+    mockFetchOnce(() => reverseResponse({ city: 'Windsor', state: 'Ontario' }));
+
+    const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a pin several kilometres from any earlier guess, as long as it is still in the requested city -- the whole point of this redesign', async () => {
+    // Nothing here measures distance from a prior geocode result at all --
+    // this function only ever looks at where the CONFIRMED pin itself
+    // reverse-geocodes to. A pin 5-6km from a bad starting guess, but still
+    // within Windsor, must be accepted.
+    mockFetchOnce(() => reverseResponse({ city: 'Windsor', state: 'Ontario' }));
+
+    const result = await verifyConfirmedPinLocation(42.35, -83.02, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a pin that reverse-geocodes to a different city, even in the same province', async () => {
+    mockFetchOnce(() => reverseResponse({ city: 'Toronto', state: 'Ontario' }));
+
+    const result = await verifyConfirmedPinLocation(43.6532, -79.3832, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Toronto');
+  });
+
+  it('rejects a pin that reverse-geocodes to a different province, even if some city field happens to match', async () => {
+    mockFetchOnce(() => reverseResponse({ city: 'Windsor', state: 'Nova Scotia' }));
+
+    const result = await verifyConfirmedPinLocation(44.98, -64.35, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Nova Scotia');
+  });
+
+  it('rejects a pin whose reverse-geocode has no determinable city at all, rather than silently accepting it', async () => {
+    mockFetchOnce(() => reverseResponse({ state: 'Ontario' })); // no city/town/village/municipality/hamlet
+
+    const result = await verifyConfirmedPinLocation(46.5, -83.0, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts city matches through the town/village/municipality/hamlet fallback chain, same as forward geocoding', async () => {
+    mockFetchOnce(() => reverseResponse({ hamlet: 'Windsor', state: 'Ontario' }));
+
+    const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('works without a province (optional), checking city only', async () => {
+    mockFetchOnce(() => reverseResponse({ city: 'Windsor' }));
+
+    const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails closed (rejects) rather than accepting when the reverse-geocoding request itself fails', async () => {
+    globalThis.fetch = vi.fn(async () => { throw new Error('network error'); }) as unknown as typeof fetch;
+
+    const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('fails closed (rejects) when the reverse-geocoding API responds with a non-OK status', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => ({}) }));
+
+    const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('never includes the actual coordinate in its rejection reason (sanitized, log-safe text only)', async () => {
+    mockFetchOnce(() => reverseResponse({ city: 'Toronto', state: 'Ontario' }));
+
+    const result = await verifyConfirmedPinLocation(43.999999, -79.888888, 'Windsor', 'ON');
+
+    expect(result.reason).not.toContain('43.999999');
+    expect(result.reason).not.toContain('-79.888888');
   });
 });

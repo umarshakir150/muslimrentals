@@ -187,6 +187,48 @@ const STREET_TYPE_ALIASES: Record<string, string> = {
 
 const MUNICIPALITY_PREFIXES = /^(city|town|township|municipality|village|district)\s+of\s+/i;
 
+// ─── Missing-street-suffix fallback ─────────────────────────────────────────
+// A landlord who types "1031 Askin" instead of "1031 Askin Ave" gets no
+// match at all from Nominatim -- it doesn't guess a suffix on its own. This
+// is the real, motivating case (a genuine Windsor, ON address). Two
+// distinct word lists do two distinct jobs here:
+//
+//   KNOWN_STREET_SUFFIXES -- every suffix word (abbreviated forms already
+//   normalize to these via STREET_TYPE_ALIASES) this app can recognize an
+//   address as already HAVING. If the entered address already ends in one
+//   of these, appending another would be actively wrong (turning "732 Mill
+//   St" into "732 Mill Street Avenue"), so hasRecognizedStreetSuffix below
+//   gates the whole fallback off in that case -- deliberately broader than
+//   SUFFIX_EXPANSION_CANDIDATES so this never fires when it shouldn't.
+//
+//   SUFFIX_EXPANSION_CANDIDATES -- the specific suffixes actually tried
+//   (see tryStreetSuffixExpansion), one structured Nominatim query each,
+//   only when the address as entered found nothing at all. Deliberately
+//   just the handful of suffixes that cover the large majority of Canadian
+//   street addresses, not an exhaustive list -- this is a fallback for the
+//   common case of an omitted suffix, not a general spell-checker.
+const KNOWN_STREET_SUFFIXES = new Set([
+  ...Object.values(STREET_TYPE_ALIASES).filter((w) => !['north', 'south', 'east', 'west'].includes(w)),
+  'way', 'trail', 'close', 'grove', 'gate', 'walk', 'mews', 'row',
+  'path', 'run', 'view', 'ridge', 'heights', 'landing', 'point',
+  'bend', 'cove', 'manor', 'common', 'crossing', 'line', 'loop',
+]);
+
+const SUFFIX_EXPANSION_CANDIDATES = [
+  'Street', 'Avenue', 'Road', 'Drive', 'Boulevard', 'Court', 'Crescent', 'Place', 'Lane', 'Way',
+];
+
+// True when the entered street text already ends in a recognized suffix
+// (ignoring a trailing directional like "N"/"South") -- i.e. the fallback
+// below has nothing useful to add.
+function hasRecognizedStreetSuffix(address: string): boolean {
+  const words = normalizeStreetName(address).split(' ').filter(Boolean);
+  if (words.length > 1 && ['north', 'south', 'east', 'west'].includes(words[words.length - 1])) {
+    words.pop();
+  }
+  return KNOWN_STREET_SUFFIXES.has(words[words.length - 1] ?? '');
+}
+
 function normalizeStreetName(input: string): string {
   return input
     .trim()
@@ -309,6 +351,78 @@ function pickBestCandidate(
   }
 
   return best;
+}
+
+// The missing-street-suffix fallback itself: only ever called after the
+// address exactly as entered (both structured and free-text) found nothing
+// usable at all -- see the call site in geocodeAddress. Tries appending
+// each of SUFFIX_EXPANSION_CANDIDATES in turn as a STRUCTURED query (so
+// Nominatim knows this is specifically the street field, not a free-text
+// guess), evaluating each attempt through the exact same
+// evaluateAddressMatch/pickBestCandidate gate as every other query in this
+// file -- so a suffix-expansion match still has to land on the right
+// street, city, and province, never a fuzzy "close enough" pick.
+//
+// Deliberately checks EVERY candidate suffix rather than stopping at the
+// first success: if "Askin Avenue" and "Askin Trail" both turned out to be
+// real, distinct, plausible streets in the same city, silently picking
+// whichever happened to come first in the list would be a guess dressed up
+// as a match. When more than one distinct suffix produces an accepted
+// result, that's genuine ambiguity -- refuse to guess and return null,
+// same as if nothing had matched at all.
+async function tryStreetSuffixExpansion(
+  address: string,
+  city: string,
+  province: string | null | undefined,
+  provinceName: string | undefined
+): Promise<GeocodeResult | null> {
+  const accepted: Array<BestCandidate & { expandedStreet: string }> = [];
+
+  for (const suffix of SUFFIX_EXPANSION_CANDIDATES) {
+    const expandedStreet = `${address} ${suffix}`;
+    const params = new URLSearchParams({
+      format: 'jsonv2', limit: String(PRECISE_CANDIDATE_LIMIT), countrycodes: 'ca', addressdetails: '1',
+      street: expandedStreet, country: 'Canada',
+    });
+    if (city) params.set('city', city);
+    if (provinceName) params.set('state', provinceName);
+    const url = `${NOMINATIM_SEARCH_URL}?${params.toString()}`;
+    const description = `street="${expandedStreet}", city="${city}", state="${provinceName ?? ''}", country="Canada" (suffix-expansion fallback)`;
+
+    const candidates = await fetchNominatimCandidates(url, description);
+    // Validated against the EXPANDED street (e.g. "1031 Askin Avenue"), the
+    // same requested city/province as every other attempt -- a candidate
+    // still has to resolve to this exact street, not just something
+    // vaguely nearby, and city/province checks are untouched.
+    const best = pickBestCandidate(candidates, expandedStreet, city, province);
+    if (best) {
+      logger.info(
+        `Geocoding (suffix-expansion "${suffix}", ${candidates.length} candidate(s)) for [${description}]: ` +
+        `ACCEPTED (${best.status}) -- ${best.reason}`
+      );
+      accepted.push({ ...best, expandedStreet });
+    }
+  }
+
+  if (accepted.length === 0) return null;
+
+  // Prefer any precise (house-level) match over a street-level one across
+  // ALL accepted suffixes, then apply the ambiguity check within that
+  // preferred tier only -- two street-level guesses when a precise one
+  // also exists shouldn't block the precise one from winning.
+  const preciseMatches = accepted.filter((m) => m.status === 'precise');
+  const pool = preciseMatches.length > 0 ? preciseMatches : accepted;
+
+  if (pool.length > 1) {
+    logger.warn(
+      `Geocoding suffix-expansion for "${address}, ${city}" is ambiguous -- ${pool.length} distinct street-suffix ` +
+      `expansions (${pool.map((m) => m.expandedStreet).join(', ')}) each resolved to a plausible address; refusing to guess.`
+    );
+    return null;
+  }
+
+  const [match] = pool;
+  return toGeocodeResult(match.candidate, `suffix-expansion "${match.expandedStreet}"`, match.status);
 }
 
 export interface GeocodeOptions {
@@ -466,7 +580,17 @@ export async function geocodeAddress(
   const freeTextCandidates = await fetchNominatimCandidates(freeTextUrl, freeTextDescription);
   const freeTextBest = pickBestCandidate(freeTextCandidates, address, city, province);
   if (!freeTextBest) {
-    logger.warn(`Geocoding rejected for "${address}, ${city}": no candidate from either structured or free-text fallback query resolved to the requested street/city/province.`);
+    // Address exactly as entered found nothing at all (neither structured
+    // nor free-text). If it looks like it's simply missing a street-type
+    // suffix ("1031 Askin" instead of "1031 Askin Ave"), try appending the
+    // common ones before giving up -- see tryStreetSuffixExpansion for the
+    // exact same street/city/province validation and ambiguity guard as
+    // every other attempt above.
+    if (!hasRecognizedStreetSuffix(address)) {
+      const suffixResult = await tryStreetSuffixExpansion(address, city, province, provinceName);
+      if (suffixResult) return suffixResult;
+    }
+    logger.warn(`Geocoding rejected for "${address}, ${city}": no candidate from the structured query, free-text fallback, or street-suffix expansion resolved to the requested street/city/province.`);
     return null;
   }
 

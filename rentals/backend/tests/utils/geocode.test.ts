@@ -376,4 +376,126 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
       expect(line).not.toContain('-79.888888');
     }
   });
+
+  // The real case that motivated this fallback: a landlord types "1031
+  // Askin" (a genuine Windsor, ON address) instead of "1031 Askin Ave", and
+  // Nominatim -- which doesn't guess missing suffixes on its own -- finds
+  // nothing at all for either the structured or free-text query as typed.
+  describe('missing street-suffix fallback ("1031 Askin" resolves like "1031 Askin Ave")', () => {
+    function preciseAvenueResult(overrides: Record<string, any> = {}) {
+      return {
+        lat: '42.3100', lon: '-83.0500',
+        class: 'building', type: 'house', place_rank: 30, importance: 0.31,
+        display_name: '1031 Askin Avenue, Windsor, Ontario, Canada',
+        address: { house_number: '1031', road: 'Askin Avenue', city: 'Windsor', state: 'Ontario' },
+        ...overrides,
+      };
+    }
+
+    it('resolves "1031 Askin" to the same address/location as "1031 Askin Ave" once the address-as-typed finds nothing', async () => {
+      const { callCount, capturedUrls } = mockFetchSequence(
+        jsonResponse([]), // structured, "1031 Askin" as typed -- nothing
+        jsonResponse([]), // free-text, "1031 Askin" as typed -- nothing
+        jsonResponse([]), // suffix-expansion attempt #1: "1031 Askin Street" -- nothing
+        jsonResponse([preciseAvenueResult()]), // suffix-expansion attempt #2: "1031 Askin Avenue" -- match
+        // Every subsequent suffix attempt (Road, Drive, Boulevard, ...)
+        // repeats this same fixture (a fixed mock array), but each is
+        // evaluated against a DIFFERENT expected street name (e.g. "1031
+        // Askin Road") -- so despite the mock "succeeding" again, the
+        // street-name check correctly rejects all of them; only the
+        // genuine "Avenue" attempt above is ever accepted.
+      );
+
+      const result = await geocodeAddress('1031 Askin', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toEqual({ lat: 42.31, lng: -83.05, confidence: 'precise' });
+      // 2 initial attempts (structured + free-text, as typed) + all 10
+      // suffix candidates tried (never stops at the first success -- see
+      // the ambiguity test below for why).
+      expect(callCount()).toBe(12);
+      expect(new URL(capturedUrls[3]).searchParams.get('street')).toBe('1031 Askin Avenue');
+    });
+
+    it('never attempts suffix expansion when the address already ends in a recognized street suffix', async () => {
+      const { callCount } = mockFetchSequence(
+        jsonResponse([]), // structured, "732 Mill St" -- nothing
+        jsonResponse([]), // free-text, "732 Mill St" -- nothing
+      );
+
+      const result = await geocodeAddress('732 Mill St', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toBeNull();
+      // "St" normalizes to a recognized suffix ("street") -- appending
+      // another one would be actively wrong, so this never happens.
+      expect(callCount()).toBe(2);
+    });
+
+    it('accepts a street-level-only suffix-expansion match (no house_number) and tags it confidence: "street", same as any other street-level match', async () => {
+      mockFetchSequence(
+        jsonResponse([]),
+        jsonResponse([]),
+        jsonResponse([]), // "1031 Askin Street" -- nothing
+        jsonResponse([{
+          lat: '42.3100', lon: '-83.0500',
+          address: { road: 'Askin Avenue', city: 'Windsor', state: 'Ontario' }, // no house_number
+        }]),
+      );
+
+      const result = await geocodeAddress('1031 Askin', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toEqual({ lat: 42.31, lng: -83.05, confidence: 'street' });
+    });
+
+    it('still rejects a suffix-expansion candidate in the wrong city -- the fallback never weakens the existing wrong-city protection', async () => {
+      const { callCount } = mockFetchSequence(
+        jsonResponse([]),
+        jsonResponse([]),
+        // Every suffix attempt "succeeds" at finding *a* result, but every
+        // one of them is in Toronto, not the requested Windsor.
+        jsonResponse([preciseAvenueResult({ address: { house_number: '1031', road: 'Askin Street', city: 'Toronto', state: 'Ontario' } })]),
+      );
+
+      const result = await geocodeAddress('1031 Askin', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toBeNull();
+      expect(callCount()).toBe(12); // every suffix candidate tried and rejected -- none silently accepted
+    });
+
+    it('still rejects a suffix-expansion candidate on an unrelated street -- the fallback never weakens the existing wrong-street protection', async () => {
+      mockFetchSequence(
+        jsonResponse([]),
+        jsonResponse([]),
+        // "succeeds" at finding a result, but it's a completely different
+        // street than the one actually being expanded/requested.
+        jsonResponse([preciseAvenueResult({ address: { house_number: '1031', road: 'Completely Different Road', city: 'Windsor', state: 'Ontario' } })]),
+      );
+
+      const result = await geocodeAddress('1031 Askin', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toBeNull();
+    });
+
+    it('refuses to guess and returns null when more than one distinct suffix expansion resolves to a plausible address', async () => {
+      const { callCount } = mockFetchSequence(
+        jsonResponse([]), // structured, as typed
+        jsonResponse([]), // free-text, as typed
+        jsonResponse([{ // suffix attempt #1 ("King Street") -- a real, precise match
+          lat: '43.10', lon: '-81.20',
+          address: { house_number: '500', road: 'King Street', city: 'Windsor', state: 'Ontario' },
+        }]),
+        jsonResponse([{ // suffix attempt #2 ("King Avenue") -- ALSO a real, precise, but DIFFERENT match
+          lat: '43.20', lon: '-81.30',
+          address: { house_number: '500', road: 'King Avenue', city: 'Windsor', state: 'Ontario' },
+        }]),
+        // Every remaining suffix attempt (Road, Drive, ...) repeats the
+        // "King Avenue" fixture but is evaluated against a different
+        // expected street each time, so none of them add a third match.
+      );
+
+      const result = await geocodeAddress('500 King', 'Windsor', 'ON', { requirePreciseMatch: true });
+
+      expect(result).toBeNull();
+      expect(callCount()).toBe(12); // still checks every candidate rather than stopping at the first success
+    });
+  });
 });

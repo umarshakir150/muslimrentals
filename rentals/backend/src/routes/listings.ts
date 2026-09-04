@@ -20,7 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
-import { geocodeAddress, MAX_PIN_CORRECTION_METERS } from '../utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation } from '../utils/geocode';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -55,10 +55,19 @@ const router = Router();
 // regardless of geocodeAddress's `confidence` for the match. geocodeAddress
 // still finds the best available STARTING point (a 'precise' house-level
 // match makes for a better starting pin than a 'street'-level one, but
-// either way the landlord confirms it): nothing is created/updated until
-// a confirmed pin is submitted, and even then it's validated against the
-// geocoder's own matched point (see MAX_PIN_CORRECTION_METERS) rather than
-// trusted outright.
+// either way the landlord confirms it): nothing is created/updated until a
+// confirmed pin is submitted.
+//
+// The confirmed pin is validated against the ENTERED CITY/PROVINCE (via
+// verifyConfirmedPinLocation's reverse-geocode check), never against
+// distance from geocodeAddress's own starting point -- that starting point
+// is exactly what confirmation exists to let the landlord correct, and a
+// real case showed it can be off by more than 5km for a genuine address. A
+// distance-from-the-guess check would reject the landlord's legitimate fix
+// for being "too far" from the very mistake it's fixing. Checking the
+// confirmed pin's own city/province instead means a multi-kilometer
+// correction WITHIN the entered city is fine, while a pin dropped in a
+// different city entirely is rejected regardless of distance.
 //
 // Shared by POST / (create) and PATCH /:id (edit) -- both need identical
 // behavior here (see CLAUDE.md's product-consistency expectations), so this
@@ -67,23 +76,26 @@ type LocationResolution =
   | { kind: 'resolved'; lat: number; lng: number }
   | { kind: 'needsConfirmation'; matchedLat: number; matchedLng: number };
 
-function resolveGeocodedLocation(
+async function resolveGeocodedLocation(
   geocoded: { lat: number; lng: number },
   confirmedLat: number | undefined,
-  confirmedLng: number | undefined
-): LocationResolution {
+  confirmedLng: number | undefined,
+  city: string,
+  province: string | null | undefined
+): Promise<LocationResolution> {
   if (confirmedLat === undefined || confirmedLng === undefined) {
     return { kind: 'needsConfirmation', matchedLat: geocoded.lat, matchedLng: geocoded.lng };
   }
 
-  // Never trust the confirmed pin outright -- validate it's actually near
-  // the point the geocoder matched (see MAX_PIN_CORRECTION_METERS), so
-  // submitting an address on one street/city and manually placing the pin
-  // somewhere unrelated is rejected rather than silently stored.
-  const correctionMeters = distKm(geocoded.lat, geocoded.lng, confirmedLat, confirmedLng) * 1000;
-  if (correctionMeters > MAX_PIN_CORRECTION_METERS) {
+  // Never trust the confirmed pin outright -- verify it actually resolves
+  // to the entered city/province, so manually placing the pin somewhere
+  // unrelated to the entered address is rejected rather than silently
+  // stored, no matter how far (or how close) it is from the geocoder's own
+  // starting guess.
+  const verification = await verifyConfirmedPinLocation(confirmedLat, confirmedLng, city, province);
+  if (!verification.ok) {
     throw new AppError(
-      `That pin is too far from the address we matched (about ${Math.round(correctionMeters)}m away; the maximum is ${MAX_PIN_CORRECTION_METERS}m). Please move it closer to the property's actual location.`,
+      `That pin doesn't look right for ${city}${province ? `, ${province}` : ''} -- ${verification.reason}. Please move it to the property's actual location.`,
       422
     );
   }
@@ -259,7 +271,7 @@ router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: R
         throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
 
-      const resolution = resolveGeocodedLocation(geocoded, data.confirmedLat, data.confirmedLng);
+      const resolution = await resolveGeocodedLocation(geocoded, data.confirmedLat, data.confirmedLng, data.city, data.province);
       if (resolution.kind === 'needsConfirmation') {
         // Nothing is created yet -- the landlord must confirm the pin first
         // (see resolveGeocodedLocation above). The client resubmits this
@@ -345,7 +357,7 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
           throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
         }
 
-        const resolution = resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng);
+        const resolution = await resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng, nextCity, nextProvince);
         if (resolution.kind === 'needsConfirmation') {
           // Nothing is applied yet, including any other fields in this same
           // PATCH -- the landlord must confirm the pin first, then resubmit
@@ -382,7 +394,7 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
         throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
 
-      const resolution = resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng);
+      const resolution = await resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng, nextCity, nextProvince);
       if (resolution.kind === 'needsConfirmation') {
         return res.status(200).json({
           success: true,

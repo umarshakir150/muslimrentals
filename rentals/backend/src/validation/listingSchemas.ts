@@ -70,9 +70,11 @@ export const newListingCreateSchema = z.object({
   // response (creating/updating nothing yet) if these aren't present; the
   // client shows a draggable pin centered on the geocoder's matched point,
   // and the landlord's confirmed placement is resubmitted here. Never
-  // trusted as an arbitrary coordinate on its own -- the route validates
-  // it's within MAX_PIN_CORRECTION_METERS of the geocoder's own matched
-  // point (see utils/geocode.ts) before storing it.
+  // trusted as an arbitrary coordinate on its own -- the route
+  // reverse-geocodes it and verifies it actually resolves to the entered
+  // city/province (see verifyConfirmedPinLocation in utils/geocode.ts)
+  // before storing it, rather than checking distance from the geocoder's
+  // own (possibly wrong) starting point.
   confirmedLat: z.number().min(-90).max(90).optional(),
   confirmedLng: z.number().min(-180).max(180).optional(),
 }).strict();

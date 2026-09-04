@@ -101,56 +101,168 @@ describe('geocodeAddress', () => {
 // which must keep behaving exactly as before.
 describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   function preciseResult(overrides: Record<string, any> = {}) {
-    return { lat: '43.6532', lon: '-79.3832', address: { house_number: '123', road: 'Main Street' }, ...overrides };
+    return {
+      lat: '43.6532', lon: '-79.3832',
+      class: 'building', type: 'house', place_rank: 30, importance: 0.31,
+      display_name: '123 Main Street, Toronto, Ontario, Canada',
+      address: { house_number: '123', road: 'Main Street' },
+      ...overrides,
+    };
   }
 
-  it('accepts a result whose address breakdown includes a house_number', async () => {
-    mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [preciseResult()] }));
+  // Fetch mock that returns a DIFFERENT response per call, in order -- lets
+  // a test express "the structured attempt returns X, then the free-text
+  // fallback returns Y" without a shared, hard-to-follow counter variable.
+  function mockFetchSequence(...responses: Array<Partial<Response>>) {
+    let callCount = 0;
+    const capturedUrls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: any) => {
+      capturedUrls.push(String(url));
+      const r = responses[Math.min(callCount, responses.length - 1)];
+      callCount++;
+      return r as Response;
+    }) as unknown as typeof fetch;
+    return { capturedUrls, callCount: () => callCount };
+  }
+
+  function jsonResponse(body: unknown): Partial<Response> {
+    return { ok: true, status: 200, json: async () => body };
+  }
+
+  it('accepts a result whose address breakdown includes a house_number, without needing a fallback query', async () => {
+    const { callCount } = mockFetchSequence(jsonResponse([preciseResult()]));
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(callCount()).toBe(1); // precise on the first (structured) try -- no fallback needed
   });
 
-  it('rejects (returns null) a result with no house_number -- a street/area-level match, not the actual address', async () => {
-    mockFetchOnce(() => ({
-      ok: true, status: 200,
-      // Nominatim resolved *a* result -- just not down to a specific
-      // building. This is exactly the "silently produces a different
-      // location" case the precision gate exists to catch.
-      json: async () => [{ lat: '43.6532', lon: '-79.3832', address: { road: 'Main Street' } }],
-    }));
+  it('accepts a legitimate building/address result that has NO house_number, based on class=building', async () => {
+    const { callCount } = mockFetchSequence(jsonResponse([
+      preciseResult({ address: { road: 'Main Street' } }), // class=building, but no house_number field
+    ]));
+
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(callCount()).toBe(1);
+  });
+
+  it('accepts a legitimate address/POI result with no house_number and class != building, based on a high place_rank alone', async () => {
+    const { callCount } = mockFetchSequence(jsonResponse([
+      preciseResult({ class: 'amenity', type: 'restaurant', place_rank: 30, address: { road: 'Main Street' } }),
+    ]));
+
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(callCount()).toBe(1);
+  });
+
+  it('rejects a street-only broad match (class=highway, place_rank below the precision threshold), even though Nominatim returned a result', async () => {
+    const { callCount } = mockFetchSequence(
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'highway', type: 'residential', place_rank: 26, importance: 0.2, display_name: 'Main Street, Toronto, Ontario, Canada' }]),
+      jsonResponse([]), // free-text fallback also finds nothing precise
+    );
 
     const result = await geocodeAddress('99999 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toBeNull();
+    expect(callCount()).toBe(2); // structured rejected -> free-text fallback attempted -> also rejected
+  });
+
+  it('rejects a city/place-level match (class=place, low place_rank)', async () => {
+    const { callCount } = mockFetchSequence(
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'city', place_rank: 16, importance: 0.9, display_name: 'Toronto, Ontario, Canada' }]),
+      jsonResponse([]),
+    );
+
+    const result = await geocodeAddress('Nonexistent Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toBeNull();
+    expect(callCount()).toBe(2);
+  });
+
+  it('rejects a neighbourhood/suburb-level match (class=place, mid place_rank)', async () => {
+    mockFetchSequence(
+      jsonResponse([{ lat: '43.6547', lon: '-79.4005', class: 'place', type: 'neighbourhood', place_rank: 22, importance: 0.4, display_name: 'Kensington Market, Toronto, Ontario, Canada' }]),
+      jsonResponse([]),
+    );
+
+    const result = await geocodeAddress('Some Vague Street', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(result).toBeNull();
   });
 
-  it('rejects (returns null) a result with no address breakdown at all', async () => {
-    mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [{ lat: '43.6532', lon: '-79.3832' }] }));
+  it('rejects a province/state-level match (class=boundary, very low place_rank)', async () => {
+    mockFetchSequence(
+      jsonResponse([{ lat: '51.2538', lon: '-85.3232', class: 'boundary', type: 'administrative', place_rank: 8, importance: 0.7, display_name: 'Ontario, Canada' }]),
+      jsonResponse([]),
+    );
 
-    const result = await geocodeAddress('Somewhere vague', 'Toronto', 'ON', { requirePreciseMatch: true });
+    const result = await geocodeAddress('Not A Real Street', 'NowhereVille', 'ON', { requirePreciseMatch: true });
     expect(result).toBeNull();
   });
 
-  it('does NOT apply the house_number gate when requirePreciseMatch is left off (default false) -- the renter free-text search path', async () => {
-    mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [{ lat: '43.6532', lon: '-79.3832' }] }));
+  it('falls back to a free-text query when the structured query is too broad, and accepts a precise free-text result', async () => {
+    const { callCount, capturedUrls } = mockFetchSequence(
+      // Structured attempt: only resolves to the street.
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'highway', type: 'residential', place_rank: 26, display_name: 'Main Street, Toronto, Ontario, Canada' }]),
+      // Free-text fallback: resolves precisely.
+      jsonResponse([preciseResult({ lat: '43.65321', lon: '-79.38322' })]),
+    );
 
-    // Same coarse, house_number-less result as the rejection test above,
-    // but WITHOUT the option -- must resolve normally, exactly as
-    // GET /geocode (routes/geocode.ts) relies on for area-level searches.
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 43.65321, lng: -79.38322 });
+    expect(callCount()).toBe(2);
+    // Second request was genuinely a free-text query (q=...), not another
+    // structured attempt.
+    expect(new URL(capturedUrls[1]).searchParams.has('q')).toBe(true);
+    expect(new URL(capturedUrls[1]).searchParams.get('q')).toContain('123 Main Street');
+  });
+
+  it('falls back to free-text when the structured query finds nothing at all (not just something too broad)', async () => {
+    const { callCount } = mockFetchSequence(
+      jsonResponse([]), // structured: no match
+      jsonResponse([preciseResult()]),
+    );
+
+    const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
+    expect(callCount()).toBe(2);
+  });
+
+  it('rejects when neither the structured nor the free-text fallback resolves precisely', async () => {
+    mockFetchSequence(
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20 }]),
+      jsonResponse([{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'suburb', place_rank: 20 }]),
+    );
+
+    const result = await geocodeAddress('Nonexistent Street 99999', 'Toronto', 'ON', { requirePreciseMatch: true });
+    expect(result).toBeNull();
+  });
+
+  it('does NOT apply the precision gate when requirePreciseMatch is left off (default false) -- the renter free-text search path', async () => {
+    mockFetchOnce(() => ({
+      ok: true, status: 200,
+      // A city-level, house_number-less result -- would be rejected under
+      // requirePreciseMatch, but the renter location search legitimately
+      // wants exactly this kind of area-level result.
+      json: async () => [{ lat: '43.6532', lon: '-79.3832', class: 'place', type: 'city' }],
+    }));
+
     const result = await geocodeAddress('Scarborough', '');
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
   });
 
   it('builds a STRUCTURED query (street/city/state/country) instead of one free-text string', async () => {
-    let capturedUrl = '';
-    globalThis.fetch = vi.fn(async (url) => {
-      capturedUrl = String(url);
-      return { ok: true, status: 200, json: async () => [preciseResult()] } as Response;
-    }) as unknown as typeof fetch;
+    const { capturedUrls } = mockFetchSequence(jsonResponse([preciseResult()]));
 
     await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
-    const params = new URL(capturedUrl).searchParams;
+    const params = new URL(capturedUrls[0]).searchParams;
     expect(params.get('street')).toBe('123 Main Street');
     expect(params.get('city')).toBe('Toronto');
     expect(params.get('country')).toBe('Canada');
@@ -159,27 +271,32 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   });
 
   it('converts a 2-letter province code to its full name for the structured "state" field (Nominatim matches full names more reliably)', async () => {
-    let capturedUrl = '';
-    globalThis.fetch = vi.fn(async (url) => {
-      capturedUrl = String(url);
-      return { ok: true, status: 200, json: async () => [preciseResult()] } as Response;
-    }) as unknown as typeof fetch;
+    const { capturedUrls } = mockFetchSequence(jsonResponse([preciseResult()]));
 
     await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
 
-    expect(new URL(capturedUrl).searchParams.get('state')).toBe('Ontario');
+    expect(new URL(capturedUrls[0]).searchParams.get('state')).toBe('Ontario');
   });
 
   it('still works without a province in structured mode (state simply omitted)', async () => {
-    let capturedUrl = '';
-    globalThis.fetch = vi.fn(async (url) => {
-      capturedUrl = String(url);
-      return { ok: true, status: 200, json: async () => [preciseResult()] } as Response;
-    }) as unknown as typeof fetch;
+    const { capturedUrls } = mockFetchSequence(jsonResponse([preciseResult()]));
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', undefined, { requirePreciseMatch: true });
 
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832 });
-    expect(new URL(capturedUrl).searchParams.has('state')).toBe(false);
+    expect(new URL(capturedUrls[0]).searchParams.has('state')).toBe(false);
+  });
+
+  it('never logs the resolved lat/lon in the acceptance/rejection diagnostic messages (sanitized-metadata logging only)', async () => {
+    const infoSpy = vi.spyOn((await import('../../src/utils/logger')).logger, 'info');
+    mockFetchSequence(jsonResponse([preciseResult({ lat: '43.999999', lon: '-79.888888' })]));
+
+    await geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+
+    for (const call of infoSpy.mock.calls) {
+      const line = call.join(' ');
+      expect(line).not.toContain('43.999999');
+      expect(line).not.toContain('-79.888888');
+    }
   });
 });

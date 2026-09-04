@@ -63,6 +63,19 @@ export const newListingCreateSchema = z.object({
   // silently becoming "" -- required must mean required.
   address: z.string().trim().min(3).max(200),
   unit:    z.string().trim().max(50).optional(),
+  // Landlord-confirmed pin coordinates -- ONLY meaningful (and only ever
+  // read by routes/listings.ts) when the address geocodes to a
+  // `confidence: 'street'` match, i.e. Nominatim can only place the
+  // *street*, not the specific building. In that case the route returns a
+  // `needsLocationConfirmation` response instead of creating/updating the
+  // listing, the client shows a draggable pin centered on the geocoder's
+  // matched point, and the landlord's confirmed placement is resubmitted
+  // here. Never trusted as an arbitrary coordinate on its own -- the route
+  // validates it's within MAX_STREET_PIN_CORRECTION_METERS of the
+  // geocoder's own matched point (see utils/geocode.ts) before storing it.
+  // Meaningless (and simply ignored) for a `confidence: 'precise'` match.
+  confirmedLat: z.number().min(-90).max(90).optional(),
+  confirmedLng: z.number().min(-180).max(180).optional(),
 }).strict();
 
 export const legacyListingCreateSchema = z.object({

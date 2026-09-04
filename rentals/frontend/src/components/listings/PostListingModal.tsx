@@ -6,15 +6,29 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { listingsApi } from '@/lib/api';
+import { listingsApi, needsLocationConfirmation } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
+import ConfirmLocationMap from '@/components/listings/ConfirmLocationMap';
 import { postListingSchema, PostListingFormData as FormData } from '@/lib/postListingSchema';
 
 interface PostListingModalProps { open: boolean; onClose: () => void; }
+
+// Set only when the backend couldn't resolve the entered address past
+// street-level (see routes/listings.ts's resolveGeocodedLocation /
+// `confidence: 'street'`) -- nothing was created yet. `pinLat`/`pinLng`
+// start at the geocoder's matched point and track the landlord's drag;
+// confirming resubmits the same form payload plus confirmedLat/confirmedLng.
+interface PendingLocationConfirmation {
+  formData: FormData;
+  matchedLat: number;
+  matchedLng: number;
+  pinLat: number;
+  pinLng: number;
+}
 
 const AMENITIES = [
   'Furnished', 'Parking', 'Utilities included', 'Laundry in-unit', 'Laundry shared',
@@ -31,6 +45,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingLocationConfirmation | null>(null);
   const { toast } = useToast();
 
   const { register, handleSubmit, formState: { errors }, setValue, watch, trigger, reset } = useForm<FormData>({
@@ -64,45 +79,89 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     setSelectedAmenities(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
   };
 
+  // Shared by the direct-success path and the post-confirmation resubmit
+  // below -- both end the same way (upload photos, roll back on failure,
+  // show the success state).
+  async function finalizeListing(listing: any) {
+    if (images.length > 0) {
+      try {
+        await listingsApi.uploadImages(listing.id, images);
+      } catch (uploadErr: any) {
+        // A listing the poster explicitly attached photos to must not end
+        // up live without them -- that's a silently incomplete listing,
+        // not a successful post. Roll the listing back rather than leaving
+        // it orphaned (photo-less) behind a "Listing posted!" toast, and
+        // keep the form open with the entered data + selected images
+        // intact so the poster can just retry, instead of starting over.
+        try {
+          await listingsApi.deletePermanent(listing.id);
+        } catch {
+          // Best-effort rollback -- if it fails there's nothing more the
+          // client can do here; the listing may need manual cleanup, but
+          // we still must not tell the poster this succeeded.
+        }
+        toast({
+          variant: 'destructive',
+          title: 'Could not post your listing',
+          description: uploadErr.message || 'Uploading your photo failed, so nothing was posted. Please try again.',
+        });
+        return;
+      }
+    }
+    setPendingConfirmation(null);
+    setSuccess(true);
+    toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
+    setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
+  }
+
   async function onSubmit(data: FormData) {
     if (!isAuth) { setAuthOpen(true); return; }
     setLoading(true);
     try {
-      const { data: listing } = await listingsApi.create({
+      const res = await listingsApi.create({
         ...data,
         amenities: selectedAmenities,
         imageUrls: [],
       });
-      if (images.length > 0) {
-        try {
-          await listingsApi.uploadImages(listing.id, images);
-        } catch (uploadErr: any) {
-          // A listing the poster explicitly attached photos to must not end
-          // up live without them -- that's a silently incomplete listing,
-          // not a successful post. Roll the listing back rather than leaving
-          // it orphaned (photo-less) behind a "Listing posted!" toast, and
-          // keep the form open with the entered data + selected images
-          // intact so the poster can just retry, instead of starting over.
-          try {
-            await listingsApi.deletePermanent(listing.id);
-          } catch {
-            // Best-effort rollback -- if it fails there's nothing more the
-            // client can do here; the listing may need manual cleanup, but
-            // we still must not tell the poster this succeeded.
-          }
-          toast({
-            variant: 'destructive',
-            title: 'Could not post your listing',
-            description: uploadErr.message || 'Uploading your photo failed, so nothing was posted. Please try again.',
-          });
-          return;
-        }
+      if (needsLocationConfirmation(res)) {
+        // Nothing was created -- the geocoder could only place the street,
+        // not the building. Show the landlord a pin on the matched street
+        // point and let them confirm/move it before anything is saved.
+        setPendingConfirmation({
+          formData: data,
+          matchedLat: res.data.matchedLat,
+          matchedLng: res.data.matchedLng,
+          pinLat: res.data.matchedLat,
+          pinLng: res.data.matchedLng,
+        });
+        return;
       }
-      setSuccess(true);
-      toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
-      setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
+      await finalizeListing(res.data);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error', description: err.message });
+    } finally { setLoading(false); }
+  }
+
+  async function confirmPendingLocation() {
+    if (!pendingConfirmation) return;
+    setLoading(true);
+    try {
+      const res = await listingsApi.create({
+        ...pendingConfirmation.formData,
+        amenities: selectedAmenities,
+        imageUrls: [],
+        confirmedLat: pendingConfirmation.pinLat,
+        confirmedLng: pendingConfirmation.pinLng,
+      });
+      if (needsLocationConfirmation(res)) {
+        // Shouldn't happen (the same address now carries a confirmed pin),
+        // but guard rather than silently drop the listing if it ever does.
+        toast({ variant: 'destructive', title: 'Error', description: 'Please try confirming the location again.' });
+        return;
+      }
+      await finalizeListing(res.data);
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Could not confirm location', description: err.message });
     } finally { setLoading(false); }
   }
 
@@ -114,7 +173,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (valid) setStep(s => s + 1);
   }
 
-  const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); onClose(); } };
+  const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setPendingConfirmation(null); onClose(); } };
 
   if (!isAuth && open) return (
     <>
@@ -149,16 +208,18 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
             {/* Header */}
             <div className="px-6 py-5 border-b border-ink/8 flex items-center justify-between shrink-0">
               <div>
-                <h2 className="font-serif text-xl">Post rental listing</h2>
-                <p className="text-xs text-muted mt-0.5">Step {step} of 3</p>
+                <h2 className="font-serif text-xl">{pendingConfirmation ? 'Confirm property location' : 'Post rental listing'}</h2>
+                {!pendingConfirmation && <p className="text-xs text-muted mt-0.5">Step {step} of 3</p>}
               </div>
               <button onClick={handleClose} className="p-2 rounded-full hover:bg-gray-100 transition-colors"><X size={18} /></button>
             </div>
 
             {/* Progress bar */}
-            <div className="h-1 bg-gray-100 shrink-0">
-              <div className="h-full bg-brand-gradient transition-all duration-400" style={{ width: `${(step / 3) * 100}%` }} />
-            </div>
+            {!pendingConfirmation && (
+              <div className="h-1 bg-gray-100 shrink-0">
+                <div className="h-full bg-brand-gradient transition-all duration-400" style={{ width: `${(step / 3) * 100}%` }} />
+              </div>
+            )}
 
             {/* Success state */}
             {success && (
@@ -170,8 +231,34 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
               </div>
             )}
 
+            {/* Confirm-location step -- shown instead of the form when the
+                geocoder could only resolve the street, not the specific
+                building (see resolveGeocodedLocation in routes/listings.ts).
+                Nothing has been saved yet; confirming here is what actually
+                creates the listing. */}
+            {!success && pendingConfirmation && (
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                <p className="text-sm text-muted">
+                  We found the correct street, but couldn&apos;t pinpoint the exact building. Move the pin to the property&apos;s location. Your exact location will remain private.
+                </p>
+                <ConfirmLocationMap
+                  initialLat={pendingConfirmation.matchedLat}
+                  initialLng={pendingConfirmation.matchedLng}
+                  onChange={(lat, lng) => setPendingConfirmation(prev => prev ? { ...prev, pinLat: lat, pinLng: lng } : prev)}
+                />
+                <div className="flex gap-3 pt-1">
+                  <button type="button" disabled={loading} onClick={() => setPendingConfirmation(null)} className="btn-ghost flex-1 py-3">
+                    Back
+                  </button>
+                  <button type="button" disabled={loading} onClick={confirmPendingLocation} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+                    {loading ? <><Loader2 size={16} className="animate-spin" /> Confirming...</> : 'Confirm location'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Form */}
-            {!success && (
+            {!success && !pendingConfirmation && (
               <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col flex-1 overflow-hidden">
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 

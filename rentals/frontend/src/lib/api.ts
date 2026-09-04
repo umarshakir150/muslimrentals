@@ -219,6 +219,22 @@ export const authApi = {
   refresh: () => api.post<{ data: { accessToken: string } }>('/auth/refresh', {}),
 };
 
+// A create/update call the backend couldn't resolve to a specific building
+// -- only the street -- comes back this way instead of a created/updated
+// listing (see routes/listings.ts's resolveGeocodedLocation): the caller
+// must show the landlord a pin centered on matchedLat/matchedLng, then
+// resubmit the same payload with confirmedLat/confirmedLng added.
+export interface NeedsLocationConfirmationResponse {
+  success: true;
+  needsLocationConfirmation: true;
+  data: { matchedLat: number; matchedLng: number };
+}
+export type ListingWriteResponse = { data: any } | NeedsLocationConfirmationResponse;
+
+export function needsLocationConfirmation(res: ListingWriteResponse): res is NeedsLocationConfirmationResponse {
+  return (res as any)?.needsLocationConfirmation === true;
+}
+
 // ─── Listings API ─────────────────────────────────────────────────────────────
 export const listingsApi = {
   getAll: (params: Record<string, string | number | boolean | undefined>) => {
@@ -230,8 +246,8 @@ export const listingsApi = {
     return api.get<{ data: any[]; pagination: any }>(`/listings?${qs}`);
   },
   getById: (id: string) => api.get<{ data: any }>(`/listings/${id}`),
-  create: (data: any) => api.post<{ data: any }>('/listings', data),
-  update: (id: string, data: any) => api.patch<{ data: any }>(`/listings/${id}`, data),
+  create: (data: any) => api.post<ListingWriteResponse>('/listings', data),
+  update: (id: string, data: any) => api.patch<ListingWriteResponse>(`/listings/${id}`, data),
   delete: (id: string) => api.delete(`/listings/${id}`),
   // Permanent hard-delete -- distinct from `delete` above, which is the
   // existing soft-remove (status=REMOVED, admin-reversible).

@@ -20,7 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
-import { geocodeAddress } from '../utils/geocode';
+import { geocodeAddress, MAX_STREET_PIN_CORRECTION_METERS } from '../utils/geocode';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -48,6 +48,55 @@ const s3 = AWS_CONFIGURED
   : null;
 
 const router = Router();
+
+// ─── Landlord-confirmed-pin fallback ────────────────────────────────────────
+// geocodeAddress tags every result `confidence: 'precise'` (a real
+// house/building-level match -- safe to use automatically) or
+// `confidence: 'street'` (the best it could do is place the STREET, not the
+// specific building -- can legitimately be a few hundred meters from the
+// actual property, per the real Windsor case that motivated this). A
+// 'street' match is never silently stored as the listing's exact private
+// location: the caller must return a `needsLocationConfirmation` response
+// so the landlord can drag a pin to the actual property first.
+//
+// Shared by POST / (create) and PATCH /:id (edit) -- both need identical
+// behavior here (see CLAUDE.md's product-consistency expectations), so this
+// is the one place that decides it.
+type LocationResolution =
+  | { kind: 'resolved'; lat: number; lng: number }
+  | { kind: 'needsConfirmation'; matchedLat: number; matchedLng: number };
+
+function resolveGeocodedLocation(
+  geocoded: { lat: number; lng: number; confidence?: 'precise' | 'street' },
+  confirmedLat: number | undefined,
+  confirmedLng: number | undefined
+): LocationResolution {
+  if (geocoded.confidence !== 'street') {
+    // 'precise' (or no confidence tag at all, e.g. a test/legacy caller) --
+    // automatic, no confirmation step. Any confirmedLat/Lng submitted
+    // alongside a precise match is simply ignored: confirmation was never
+    // needed, so there's nothing to validate it against.
+    return { kind: 'resolved', lat: geocoded.lat, lng: geocoded.lng };
+  }
+
+  if (confirmedLat === undefined || confirmedLng === undefined) {
+    return { kind: 'needsConfirmation', matchedLat: geocoded.lat, matchedLng: geocoded.lng };
+  }
+
+  // Never trust the confirmed pin outright -- validate it's actually near
+  // the street the geocoder matched (see MAX_STREET_PIN_CORRECTION_METERS),
+  // so submitting an address on one street/city and manually placing the
+  // pin somewhere unrelated is rejected rather than silently stored.
+  const correctionMeters = distKm(geocoded.lat, geocoded.lng, confirmedLat, confirmedLng) * 1000;
+  if (correctionMeters > MAX_STREET_PIN_CORRECTION_METERS) {
+    throw new AppError(
+      `That pin is too far from the address we matched (about ${Math.round(correctionMeters)}m away; the maximum is ${MAX_STREET_PIN_CORRECTION_METERS}m). Please move it closer to the property's location on the matched street.`,
+      422
+    );
+  }
+
+  return { kind: 'resolved', lat: confirmedLat, lng: confirmedLng };
+}
 
 
 // ─── GET /listings ────────────────────────────────────────────────────────────
@@ -216,7 +265,20 @@ router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: R
       if (!geocoded) {
         throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
-      location = { address: data.address, unit: data.unit, lat: geocoded.lat, lng: geocoded.lng };
+
+      const resolution = resolveGeocodedLocation(geocoded, data.confirmedLat, data.confirmedLng);
+      if (resolution.kind === 'needsConfirmation') {
+        // Nothing is created yet -- the landlord must confirm the pin first
+        // (see resolveGeocodedLocation above). The client resubmits this
+        // same POST with confirmedLat/confirmedLng added once they do.
+        return res.status(200).json({
+          success: true,
+          needsLocationConfirmation: true,
+          data: { matchedLat: resolution.matchedLat, matchedLng: resolution.matchedLng },
+        });
+      }
+
+      location = { address: data.address, unit: data.unit, lat: resolution.lat, lng: resolution.lng };
     } else {
       // Transitional legacy path -- see listingSchemas.ts.
       location = { neighbourhood: data.neighbourhood, lat: data.lat, lng: data.lng };
@@ -255,6 +317,16 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     const data = listingUpdateSchema.parse(req.body);
     const { amenities, imageUrls, ...rest } = data;
 
+    // confirmedLat/confirmedLng only exist on the NEW shape (see
+    // listingSchemas.ts) and are never Listing table columns -- pulled out
+    // here for the location-confirmation flow below, then stripped from
+    // `rest` before it's spread into the Prisma update so an unknown-field
+    // error is never possible.
+    const confirmedLat: number | undefined = (rest as any).confirmedLat;
+    const confirmedLng: number | undefined = (rest as any).confirmedLng;
+    delete (rest as any).confirmedLat;
+    delete (rest as any).confirmedLng;
+
     // Which of the two shapes (see listingSchemas.ts) this particular PATCH
     // is using, if either -- a request touching neither is common (e.g.
     // editing only price/title) and needs no location handling at all.
@@ -275,10 +347,24 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       if (addressChanging || cityChanging || provinceChanging) {
         const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
         const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-        geocoded = await geocodeAddress(rest.address, nextCity, nextProvince, { requirePreciseMatch: true }) ?? undefined;
-        if (!geocoded) {
+        const newGeocoded = await geocodeAddress(rest.address, nextCity, nextProvince, { requirePreciseMatch: true });
+        if (!newGeocoded) {
           throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
         }
+
+        const resolution = resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng);
+        if (resolution.kind === 'needsConfirmation') {
+          // Nothing is applied yet, including any other fields in this same
+          // PATCH -- the landlord must confirm the pin first, then resubmit
+          // the whole edit with confirmedLat/confirmedLng added, exactly
+          // like the POST /listings create flow.
+          return res.status(200).json({
+            success: true,
+            needsLocationConfirmation: true,
+            data: { matchedLat: resolution.matchedLat, matchedLng: resolution.matchedLng },
+          });
+        }
+        geocoded = { lat: resolution.lat, lng: resolution.lng };
       }
     } else if (
       'neighbourhood' in rest && rest.neighbourhood !== undefined ||
@@ -298,10 +384,20 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       // rename a city would be a regression for those rows.
       const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
       const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-      geocoded = await geocodeAddress(listing.address, nextCity, nextProvince, { requirePreciseMatch: true }) ?? undefined;
-      if (!geocoded) {
+      const newGeocoded = await geocodeAddress(listing.address, nextCity, nextProvince, { requirePreciseMatch: true });
+      if (!newGeocoded) {
         throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
+
+      const resolution = resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng);
+      if (resolution.kind === 'needsConfirmation') {
+        return res.status(200).json({
+          success: true,
+          needsLocationConfirmation: true,
+          data: { matchedLat: resolution.matchedLat, matchedLng: resolution.matchedLng },
+        });
+      }
+      geocoded = { lat: resolution.lat, lng: resolution.lng };
     }
 
     const updated = await prisma.listing.update({

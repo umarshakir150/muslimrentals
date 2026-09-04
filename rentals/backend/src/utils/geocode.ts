@@ -14,13 +14,16 @@ import { logger } from './logger';
  * address text alone, makes the stored precise location actually mean what
  * it claims to.
  *
- * The one narrow exception is the landlord-confirmed-pin flow below
- * (`confidence: 'street'`): when the geocoder can only resolve a *street*,
- * not a specific building on it, the landlord drags a pin to the actual
- * property and that pin -- validated against the geocoder's own matched
- * point, see MAX_STREET_PIN_CORRECTION_METERS -- becomes the precise
- * coordinate instead. The client still never gets to supply a coordinate
- * untethered from any geocoded address.
+ * The one exception is the universal confirm-property-location flow (see
+ * routes/listings.ts): geocodeAddress here finds the best STARTING point
+ * for a landlord's entered address, but every listing -- regardless of how
+ * confident the match is -- requires the landlord to confirm (or drag) a
+ * pin over that starting point before it's ever stored. That confirmed pin
+ * -- validated against the geocoder's own matched point, see
+ * MAX_PIN_CORRECTION_METERS -- becomes the exact private coordinate. The
+ * client still never gets to supply a coordinate untethered from any
+ * geocoded address: the pin is always anchored to (and checked against)
+ * an address this function actually resolved.
  *
  * Uses OpenStreetMap's free Nominatim search API -- no API key/signup, and
  * consistent with this app already using OSM tiles for the map itself
@@ -69,43 +72,57 @@ export interface GeocodeResult {
   // pipeline). Absent for the renter free-text search, which has no
   // per-result confidence concept.
   //
+  // Purely informational/internal now -- routes/listings.ts's universal
+  // confirm-property-location flow requires landlord confirmation for
+  // EVERY listing regardless of this value (see MAX_PIN_CORRECTION_METERS
+  // below), so `confidence` no longer gates whether confirmation happens.
+  // It's kept because pickBestCandidate still needs it to prefer a
+  // building-level match over a street-level one when picking the
+  // STARTING point shown to the landlord -- a more accurate starting pin
+  // means less dragging, even though confirmation is required either way.
+  //
   //   'precise' -- the matched result carries a house_number (or is
   //   otherwise an address/building-level point) on the correct
-  //   street/city/province. Safe to store as the listing's exact private
-  //   location automatically, no landlord confirmation needed.
+  //   street/city/province.
   //
   //   'street' -- the best available result resolves to the correct
   //   street/city/province, but no candidate carried building-level
-  //   precision (OSM simply has no house-number data for that block).
-  //   routes/listings.ts must NOT store this coordinate as the exact
-  //   private location by itself -- it's only precise to "somewhere along
-  //   this street", which can legitimately be a couple hundred meters from
-  //   the actual property. The caller must have the landlord confirm/move
-  //   a pin first (see MAX_STREET_PIN_CORRECTION_METERS).
+  //   precision (OSM simply has no house-number data for that block) --
+  //   can legitimately be a couple hundred meters from the actual
+  //   property, which is exactly why the landlord still confirms/drags
+  //   the pin before anything is stored.
   confidence?: 'precise' | 'street';
 }
 
-// How far a landlord-confirmed pin (the manual-confirmation flow for a
-// 'street'-confidence match) may be moved from the geocoder's own matched
-// point before it's rejected as implausible. This is NOT a generic
-// "trust the client" allowance -- it exists only to let a landlord correct
-// a street-level point to the actual building on that SAME street, not to
-// accept an arbitrary coordinate.
+// How far a landlord-confirmed pin (the universal confirm-property-location
+// flow -- see routes/listings.ts -- required for every new/edited listing
+// address, regardless of geocode confidence) may be moved from the
+// geocoder's own matched point before it's rejected as implausible. This is
+// NOT a generic "trust the client" allowance -- it exists only to let a
+// landlord correct the geocoder's starting pin to the actual property
+// nearby, not to accept an arbitrary coordinate unrelated to the address
+// that was actually geocoded.
 //
 // 2000m was chosen from the real-world case that motivated this feature: a
 // genuine Windsor address (732 Mill St) whose only available Nominatim
 // point sat roughly 600-700m from the actual property along the same
-// street. 2km gives real headroom above that observed displacement for a
-// long block/rural road, while still being far too small to cross into a
-// different city, or (other than in a handful of tiny communities) a
-// different province -- e.g. Windsor to Toronto is ~360km, Windsor to
-// Detroit's own nearest street is still >1km across the river/border. A
-// pin correction this large is still checked against the SAME
-// street/city/province the address was originally validated against
-// (evaluateAddressMatch already ran before a 'street' result is ever
-// returned), so this constant only needs to rule out "wrong spot on the
-// right street," not "wrong city entirely."
-export const MAX_STREET_PIN_CORRECTION_METERS = 2000;
+// street -- a legitimate 'street'-confidence correction this bound must
+// keep allowing. It's generous for a 'precise' (house-level) match, where a
+// real correction is typically well under 50m, but that's fine: the goal
+// here is only to catch abuse (an address entered in one city with the pin
+// dropped somewhere unrelated), not to grade how much a landlord nudges an
+// already-good pin. 2km gives real headroom above the observed
+// street-level displacement for a long block/rural road, while still being
+// far too small to cross into a different city, or (other than in a
+// handful of tiny communities) a different province -- e.g. Windsor to
+// Toronto is ~360km, Windsor to Detroit's own nearest street is still >1km
+// across the river/border. A pin correction this large is still checked
+// against the SAME street/city/province the address was originally
+// validated against (evaluateAddressMatch already ran before any result --
+// 'precise' or 'street' -- is ever returned), so this constant only needs
+// to rule out "wrong spot near the right street," not "wrong city
+// entirely."
+export const MAX_PIN_CORRECTION_METERS = 2000;
 
 interface NominatimAddressDetails {
   house_number?: string;
@@ -312,16 +329,17 @@ export interface GeocodeOptions {
   //   3. Returns null if no candidate from either attempt resolves to the
   //      requested street/city/province -- a coordinate for the wrong
   //      street, wrong city, or a bare area centroid is not "this address."
-  //   4. Otherwise returns the best candidate found, tagged with
-  //      `confidence: 'precise'` (safe to use automatically) or
-  //      `confidence: 'street'` (the caller must get landlord confirmation
-  //      before treating it as the exact private location -- see
-  //      routes/listings.ts and MAX_STREET_PIN_CORRECTION_METERS).
+  //   4. Otherwise returns the best candidate found, tagged
+  //      `confidence: 'precise'` or `confidence: 'street'` -- informational
+  //      only (see the field's own doc comment on GeocodeResult): the
+  //      caller (routes/listings.ts) always requires landlord confirmation
+  //      before treating EITHER as the exact private location, using this
+  //      result only as the starting pin -- see MAX_PIN_CORRECTION_METERS.
   //
   // This does NOT require Nominatim to have building/house-number-level
   // OSM data for the address to return SOMETHING -- a correctly-located
-  // street-level match is still returned, just flagged as needing
-  // confirmation rather than silently trusted as exact.
+  // street-level match is still returned, just a worse starting pin than a
+  // building-level one would have been.
   //
   // Left off (default false) for the renter-facing free-text location
   // search (routes/geocode.ts's GET /geocode), which searches for areas by

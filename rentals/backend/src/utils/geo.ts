@@ -54,23 +54,22 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 //   zone."
 //
 // Per founder direction after auditing the underlying geocoded coordinates
-// themselves (see utils/geocode.ts's `requirePreciseMatch` gate, added in
-// the same pass -- the base coordinate stored per listing is now verified
-// address-level-precise, not just "whatever Nominatim's top result was"):
-// with that base point trustworthy, and a much larger 500m displayed
-// circle providing the actual privacy buffer, the jitter itself can (and
-// should) be small -- the founder's own framing was "I care more about the
-// renter getting the correct general area than keeping the circle tiny...
-// you can keep the public approximate marker much closer to the real
-// coordinate than before, since the 500m circle provides the privacy
-// buffer." Previous passes: 180m max/200m circle, then 120m max/130m
-// circle. Now: 50m max/500m circle -- a real, dramatically smaller
-// displacement (the public dot sits within half a block of the real
-// property) alongside a much larger, more honest "somewhere in this whole
-// area" zone.
+// themselves (see utils/geocode.ts's `requirePreciseMatch` gate): with the
+// base coordinate now either verified address-level-precise or a landlord-
+// confirmed pin (see the universal confirm-property-location flow in
+// routes/listings.ts -- every listing's exact private point is now either
+// a precise geocode match or an explicit human placement, never an
+// unconfirmed guess), the jitter itself can stay small while the displayed
+// circle still does the actual privacy work. Previous passes: 180m
+// max/200m circle, then 120m max/130m circle, then 50m max/500m circle.
+// Per founder direction (2026-09-04), the circle has been tightened to
+// 250m now that every stored coordinate is confirmation-backed -- 50m max
+// displacement/250m circle: the public dot still sits within half a block
+// of the real property, inside a tighter but still honest "somewhere in
+// this area" zone.
 export const MAX_DISPLACEMENT_METERS = 50;
 const MIN_DISPLACEMENT_METERS = 15;
-export const PRIVACY_RADIUS_METERS = 500;
+export const PRIVACY_RADIUS_METERS = 250;
 
 // Mulberry32 -- a small, fast, deterministic PRNG. Not cryptographic (no
 // need to be: the seed is derived from public-ish data and the whole point
@@ -123,7 +122,7 @@ export interface ApproximateLocation {
 //   1. `distance` (the value fed into the offset construction below) is
 //      drawn from [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS), i.e.
 //      strictly < MAX_DISPLACEMENT_METERS by construction (rand() < 1).
-//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (500 > 50),
+//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (250 > 50),
 //      `distance` is therefore also strictly < PRIVACY_RADIUS_METERS. This
 //      alone would be sufficient if the offset were built directly on a
 //      flat plane.
@@ -137,8 +136,8 @@ export interface ApproximateLocation {
 //      Taylor expansion of the spherical law of cosines around d = 0). At
 //      d = 50m and R_earth = 6,371,000m that's on the order of
 //      (50 / 6_371_000)^2 ~= 6.2e-11, i.e. a sub-millimeter absolute error
-//      -- utterly swallowed by the 450m margin between MAX_DISPLACEMENT_METERS
-//      (50) and PRIVACY_RADIUS_METERS (500). So the real geodesic distance
+//      -- utterly swallowed by the 200m margin between MAX_DISPLACEMENT_METERS
+//      (50) and PRIVACY_RADIUS_METERS (250). So the real geodesic distance
 //      is, for every practical and floating-point purpose, still strictly
 //      less than PRIVACY_RADIUS_METERS.
 //

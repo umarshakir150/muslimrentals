@@ -153,10 +153,11 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
   // province. Fixture is the ACTUAL response captured from the live
   // backend's own diagnostic logs while investigating this address; not a
   // hypothetical. Since it later turned out this class of match can sit a
-  // few hundred meters from the real building, it's now returned with
-  // `confidence: 'street'` rather than trusted outright -- routes/listings.ts
-  // requires landlord pin-confirmation before storing it as the exact
-  // private location (see MAX_STREET_PIN_CORRECTION_METERS).
+  // few hundred meters from the real building, it's returned with
+  // `confidence: 'street'` -- purely informational at this layer now:
+  // routes/listings.ts requires landlord pin-confirmation for every
+  // address-based listing regardless of confidence, using this coordinate
+  // only as the starting pin (see MAX_PIN_CORRECTION_METERS).
   it('returns a street-level (confidence: "street") result when no house_number exists in OSM, but does not reject it (732 Mill St, Windsor, ON regression)', async () => {
     const { callCount } = mockFetchSequence(jsonResponse([{
       lat: '42.3023085', lon: '-83.0764497',

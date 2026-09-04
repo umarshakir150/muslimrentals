@@ -212,9 +212,9 @@ router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: R
 
     let location: { address?: string; unit?: string; neighbourhood?: string; lat: number; lng: number };
     if ('address' in data) {
-      const geocoded = await geocodeAddress(data.address, data.city, data.province);
+      const geocoded = await geocodeAddress(data.address, data.city, data.province, { requirePreciseMatch: true });
       if (!geocoded) {
-        throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+        throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
       location = { address: data.address, unit: data.unit, lat: geocoded.lat, lng: geocoded.lng };
     } else {
@@ -275,9 +275,9 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       if (addressChanging || cityChanging || provinceChanging) {
         const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
         const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-        geocoded = await geocodeAddress(rest.address, nextCity, nextProvince) ?? undefined;
+        geocoded = await geocodeAddress(rest.address, nextCity, nextProvince, { requirePreciseMatch: true }) ?? undefined;
         if (!geocoded) {
-          throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+          throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
         }
       }
     } else if (
@@ -298,9 +298,9 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       // rename a city would be a regression for those rows.
       const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
       const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-      geocoded = await geocodeAddress(listing.address, nextCity, nextProvince) ?? undefined;
+      geocoded = await geocodeAddress(listing.address, nextCity, nextProvince, { requirePreciseMatch: true }) ?? undefined;
       if (!geocoded) {
-        throw new AppError('We couldn\'t verify that address. Please check it and try again.', 422);
+        throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
       }
     }
 

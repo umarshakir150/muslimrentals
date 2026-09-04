@@ -103,7 +103,7 @@ describe('POST /listings — server-side geocoding', () => {
       .send(validPayload());
 
     expect(res.status).toBe(201);
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON');
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: 43.6532, lng: -79.3832, address: '123 Main Street' }),
     }));
@@ -120,8 +120,8 @@ describe('POST /listings — server-side geocoding', () => {
       .send(validPayload({ unit: 'Unit 4B' }));
 
     // geocodeAddress's own signature has no unit parameter -- confirms the
-    // route only ever calls it with (address, city, province).
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON');
+    // route only ever calls it with (address, city, province, options).
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ unit: 'Unit 4B' }),
     }));
@@ -257,7 +257,7 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
       .send({ address: '999 New Street' });
 
     expect(res.status).toBe(200);
-    expect(geocodeAddressMock).toHaveBeenCalledWith('999 New Street', 'Toronto', 'ON');
+    expect(geocodeAddressMock).toHaveBeenCalledWith('999 New Street', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: 45.4215, lng: -75.6972 }),
     }));
@@ -305,7 +305,7 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
       .send({ city: 'Vancouver' });
 
     expect(res.status).toBe(200);
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON');
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON', { requirePreciseMatch: true });
   });
 
   it('rejects with a clear error and applies no update when the new address cannot be geocoded', async () => {

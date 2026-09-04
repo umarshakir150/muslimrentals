@@ -76,7 +76,7 @@ describe('getApproximateLocation', () => {
   it('never offsets suspiciously close to the real point either (stays at least MIN_DISPLACEMENT_METERS away)', () => {
     const p = getApproximateLocation('listing-1', TORONTO.lat, TORONTO.lng);
     const offsetMeters = distKm(TORONTO.lat, TORONTO.lng, p.lat, p.lng) * 1000;
-    expect(offsetMeters).toBeGreaterThanOrEqual(50 - 1); // MIN_DISPLACEMENT_METERS; -1 for floating-point slack
+    expect(offsetMeters).toBeGreaterThanOrEqual(15 - 1); // MIN_DISPLACEMENT_METERS; -1 for floating-point slack
   });
 
   it('never offsets beyond MAX_DISPLACEMENT_METERS either (the safety margin that makes "guaranteed inside the circle" hold even after the equirectangular-vs-geodesic rounding, not just approximately)', () => {
@@ -97,6 +97,15 @@ describe('getApproximateLocation', () => {
     // absolute at these distances -- see the comment on
     // getApproximateLocation) so this isn't a hairline-close boundary.
     expect(PRIVACY_RADIUS_METERS - MAX_DISPLACEMENT_METERS).toBeGreaterThanOrEqual(5);
+  });
+
+  // Explicit regression guard for the founder's literal ask ("make the
+  // displayed approximate-location circle 500 metres") -- a silent drift in
+  // either constant should fail loudly here rather than only be noticed by
+  // eyeballing the map.
+  it('is configured for a 500m displayed privacy circle with the public marker kept close (max 50m) to the real point', () => {
+    expect(PRIVACY_RADIUS_METERS).toBe(500);
+    expect(MAX_DISPLACEMENT_METERS).toBe(50);
   });
 
   it('different listing ids at the same real coordinates get different approximate points', () => {
@@ -159,7 +168,7 @@ describe('getApproximateLocation', () => {
           // checked against the REAL (haversine) distance, not the
           // flat-plane approximation the offset itself was built from.
           expect(offsetMeters).toBeLessThan(PRIVACY_RADIUS_METERS);
-          expect(offsetMeters).toBeGreaterThanOrEqual(50 - 1); // MIN_DISPLACEMENT_METERS
+          expect(offsetMeters).toBeGreaterThanOrEqual(15 - 1); // MIN_DISPLACEMENT_METERS
           expect(offsetMeters).toBeLessThanOrEqual(MAX_DISPLACEMENT_METERS + 1);
 
           maxObservedMeters = Math.max(maxObservedMeters, offsetMeters);
@@ -266,5 +275,32 @@ describe('toPublicListingLocation', () => {
     const b = toPublicListingLocation(listing);
     expect(a.lat).toBe(b.lat);
     expect(a.lng).toBe(b.lng);
+  });
+
+  // This whole pass (precise-match geocoding gate, tighter jitter, 500m
+  // circle) only changes how a NEW address-based listing's stored lat/lng
+  // gets there. It changes nothing about what happens AFTER a coordinate is
+  // stored -- so a legacy listing (neighbourhood + client-submitted lat/lng,
+  // no address/unit fields at all) must go through this exact same
+  // approximation logic, completely untouched by any of it.
+  it('applies identically to a legacy-shaped listing (neighbourhood + client lat/lng, no address/unit fields)', () => {
+    const legacyListing = {
+      id: 'legacy-listing-1',
+      title: 'Older 1BR',
+      neighbourhood: 'Kensington Market',
+      lat: 43.6547,
+      lng: -79.4005,
+      // No `address`/`unit` keys at all -- the pre-geocoding production shape.
+    };
+
+    const result = toPublicListingLocation(legacyListing);
+
+    expect(result.locationApproximate).toBe(true);
+    expect(result.locationPrecisionRadiusM).toBe(PRIVACY_RADIUS_METERS);
+    expect(result.lat).not.toBe(legacyListing.lat);
+    expect(result.lng).not.toBe(legacyListing.lng);
+    const offsetMeters = distKm(legacyListing.lat, legacyListing.lng, result.lat, result.lng) * 1000;
+    expect(offsetMeters).toBeLessThan(PRIVACY_RADIUS_METERS);
+    expect((result as any).neighbourhood).toBe('Kensington Market'); // untouched, unrelated field
   });
 });

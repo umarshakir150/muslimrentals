@@ -121,6 +121,17 @@ describe('ListingLocationMap', () => {
     expect(circle.openTooltip).toHaveBeenCalledTimes(1);
   });
 
+  it('draws the circle with EXACTLY the radius the API sent, never a hardcoded/independent value', async () => {
+    // A deliberately non-default number (not 200, the current
+    // PRIVACY_RADIUS_METERS) -- catches this component ever hardcoding its
+    // own radius instead of reading listing.locationPrecisionRadiusM, which
+    // the default-value tests above would pass on by coincidence.
+    const listing = baseListing({ locationApproximate: true, locationPrecisionRadiusM: 137 } as any);
+    const { circleInstances } = await renderMap(listing);
+
+    expect(circleInstances[0].options.radius).toBe(137);
+  });
+
   it('draws no privacy circle at all for an owner/staff view (no locationApproximate flag)', async () => {
     const listing = baseListing(); // locationApproximate left unset, as the owner/staff response shape does
     const { circleInstances, L } = await renderMap(listing);

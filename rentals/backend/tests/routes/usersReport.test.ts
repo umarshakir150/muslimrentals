@@ -128,21 +128,25 @@ describe('POST /users/:id/report', () => {
     expect(res.body).toEqual({ success: true, message: expect.any(String) });
     expect(reportCreateMock).toHaveBeenCalledWith({
       data: {
-        reporterId:     REPORTER,
-        targetType:     'USER',
-        reportedUserId: TARGET,
-        reason:         'Harassment or abusive behavior',
-        description:    undefined,
+        reporterId:           REPORTER,
+        targetType:           'USER',
+        reportedUserId:       TARGET,
+        reason:               'Harassment or abusive behavior',
+        description:          undefined,
+        qualifyingInteraction: 'SHARED_CONVERSATION',
       },
     });
   });
 
-  it('allows the report via a listing-interaction path even with no shared conversation', async () => {
+  it('allows the report via a listing-messaged path (no shared conversation, no save) and records LISTING_MESSAGED', async () => {
     userFindUniqueMock
       .mockResolvedValueOnce(activeUser(REPORTER))
       .mockResolvedValueOnce({ id: TARGET });
     conversationFindFirstMock.mockResolvedValue(null);
-    listingFindFirstMock.mockResolvedValue({ id: 'listing-1' }); // reporter saved / messaged about target's listing
+    // Two separate listing.findFirst calls now: [0] messaged-about check, [1] saved check.
+    listingFindFirstMock
+      .mockResolvedValueOnce({ id: 'listing-1' }) // messaged
+      .mockResolvedValueOnce(null);               // not saved
     reportCreateMock.mockResolvedValue({ id: 'report-2' });
     const app = await buildApp();
 
@@ -152,16 +156,44 @@ describe('POST /users/:id/report', () => {
       .send({ reason: 'Scam or fraud attempt' });
 
     expect(res.status).toBe(200);
-    expect(listingFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(listingFindFirstMock).toHaveBeenCalledTimes(2);
+    expect(listingFindFirstMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({
         userId: TARGET,
-        OR: expect.arrayContaining([
-          expect.objectContaining({ conversations: expect.anything() }),
-          expect.objectContaining({ savedBy: expect.anything() }),
-        ]),
+        conversations: expect.anything(),
       }),
     }));
-    expect(reportCreateMock).toHaveBeenCalled();
+    expect(listingFindFirstMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({
+        userId: TARGET,
+        savedBy: expect.anything(),
+      }),
+    }));
+    expect(reportCreateMock).toHaveBeenCalledWith({
+      data: expect.objectContaining({ qualifyingInteraction: 'LISTING_MESSAGED' }),
+    });
+  });
+
+  it('allows the report via a listing-saved path (no shared conversation, not messaged) and records LISTING_SAVED', async () => {
+    userFindUniqueMock
+      .mockResolvedValueOnce(activeUser(REPORTER))
+      .mockResolvedValueOnce({ id: TARGET });
+    conversationFindFirstMock.mockResolvedValue(null);
+    listingFindFirstMock
+      .mockResolvedValueOnce(null)                // not messaged
+      .mockResolvedValueOnce({ id: 'listing-2' }); // saved
+    reportCreateMock.mockResolvedValue({ id: 'report-3' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post(`/api/v1/users/${TARGET}/report`)
+      .set('Authorization', `Bearer ${signToken(REPORTER)}`)
+      .send({ reason: 'Scam or fraud attempt' });
+
+    expect(res.status).toBe(200);
+    expect(reportCreateMock).toHaveBeenCalledWith({
+      data: expect.objectContaining({ qualifyingInteraction: 'LISTING_SAVED' }),
+    });
   });
 
   it('rejects an off-taxonomy reason (e.g. a listing-only reason)', async () => {

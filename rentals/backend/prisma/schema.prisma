@@ -368,6 +368,16 @@ model Report {
   retentionHoldReason String?
   snapshotRedactedAt  DateTime?
 
+  // USER reports only: which prior-interaction path (POST /users/:id/report's
+  // mandatory gate, see users.ts) actually qualified the report at creation
+  // time, so a moderator reviewing it can judge legitimacy from real evidence
+  // instead of just trusting that the gate passed (Trust & Safety design-
+  // review follow-up). Nullable -- LISTING/MESSAGE reports and USER reports
+  // filed before this column existed simply have none on file. Serialized by
+  // GET /admin/reports as a plain scalar string (not an object) -- the admin
+  // UI compares it directly, see admin/page.tsx.
+  qualifyingInteraction ReportQualifyingInteraction?
+
   @@index([status])
   @@index([targetType])
   @@index([reportedUserId])
@@ -384,6 +394,12 @@ enum ReportTargetType {
   LISTING
   USER
   MESSAGE
+}
+
+enum ReportQualifyingInteraction {
+  SHARED_CONVERSATION
+  LISTING_MESSAGED
+  LISTING_SAVED
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

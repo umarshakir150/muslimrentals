@@ -13,7 +13,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { ListingStatus, ReportTargetType } from '@prisma/client';
+import { ListingStatus, ReportTargetType, ReportQualifyingInteraction } from '@prisma/client';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
@@ -124,7 +124,11 @@ router.get('/:id', validateUuidParam('id'), async (req, res: Response, next: Nex
 //    inferred from the request): (a) reporter and target already share a
 //    Conversation as participants, OR (b) the target owns a Listing that
 //    the reporter has a real interaction with -- an existing conversation
-//    about that listing, or the reporter has saved it.
+//    about that listing, or the reporter has saved it. Whichever path
+//    passed is persisted on the Report row (`qualifyingInteraction`) as a
+//    plain enum scalar -- evidence for moderators reviewing the report, see
+//    GET /admin/reports and admin/page.tsx (which compares it directly, not
+//    as a nested object -- keep both sides in sync if this shape changes).
 //  - Who can read it? Nobody via this route -- {success, message} only,
 //    matching the existing listing-report shape (no enumeration of
 //    existing reports against a target).
@@ -142,7 +146,7 @@ router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimit
     const targetUser = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true } });
     if (!targetUser) throw new AppError('User not found.', 404);
 
-    const [sharedConversation, listingInteraction] = await Promise.all([
+    const [sharedConversation, listingMessaged, listingSaved] = await Promise.all([
       // (a) reporter and target already share a conversation
       prisma.conversation.findFirst({
         where: {
@@ -153,21 +157,36 @@ router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimit
         },
         select: { id: true },
       }),
-      // (b) target owns a listing the reporter has interacted with --
-      // an existing conversation about it, or the reporter saved it.
+      // (b) target owns a listing the reporter messaged about
       prisma.listing.findFirst({
         where: {
           userId: targetId,
-          OR: [
-            { conversations: { some: { participants: { some: { userId: req.user!.id } } } } },
-            { savedBy: { some: { userId: req.user!.id } } },
-          ],
+          conversations: { some: { participants: { some: { userId: req.user!.id } } } },
+        },
+        select: { id: true },
+      }),
+      // (c) target owns a listing the reporter saved
+      prisma.listing.findFirst({
+        where: {
+          userId: targetId,
+          savedBy: { some: { userId: req.user!.id } },
         },
         select: { id: true },
       }),
     ]);
 
-    if (!sharedConversation && !listingInteraction) {
+    // Recorded as evidence for moderators reviewing the report -- which of
+    // the three qualifying paths actually passed, in the same precedence
+    // the gate itself uses below.
+    const qualifyingInteraction = sharedConversation
+      ? ReportQualifyingInteraction.SHARED_CONVERSATION
+      : listingMessaged
+      ? ReportQualifyingInteraction.LISTING_MESSAGED
+      : listingSaved
+      ? ReportQualifyingInteraction.LISTING_SAVED
+      : null;
+
+    if (!qualifyingInteraction) {
       throw new AppError(
         'You can only report a user you have interacted with on the marketplace (a shared conversation or a listing of theirs you messaged about or saved).',
         403
@@ -181,6 +200,7 @@ router.post('/:id/report', validateUuidParam('id'), authenticate, writeRateLimit
         reportedUserId: targetId,
         reason,
         description,
+        qualifyingInteraction,
       },
     });
 

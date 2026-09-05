@@ -433,7 +433,12 @@ router.patch('/listings/:id/restore', validateUuidParam('id'), writeRateLimiter,
 //  - USER: the reported user's identity + restriction history (isBanned/
 //    banReason), plus the *reporter's* own filed/dismissed report counts so
 //    a moderator can spot a retaliatory or bad-faith report pattern
-//    (Trust & Safety review, 2026-09-01).
+//    (Trust & Safety review, 2026-09-01). `qualifyingInteraction` (a plain
+//    scalar enum string, included by default via the `...r` spread below --
+//    no explicit select needed) shows which prior-interaction path the
+//    reporter actually had with the target when they filed the report; the
+//    admin UI compares this string directly (no nested object), so keep
+//    both sides in sync if this contract ever changes.
 //  - MESSAGE: the sender's identity, the derived `recipient` (the other
 //    conversation participant, not the sender), the message's own
 //    createdAt, the frozen messageSnapshot (not a live lookup -- the

@@ -1679,3 +1679,17 @@ No new fields were exposed anywhere outside the existing ADMIN/MODERATOR-gated `
 **Impact:** closes the "only listings are reportable" Trust & Safety gap end-to-end, and gives ADMIN/MODERATOR staff the full moderation toolkit this milestone set out to build — report review, Restrict, Ban/Unban, listing Remove/Restore, permanent account deletion, and directory search — all live in `main`.
 
 **Revisit when:** the founder is ready to deploy the accumulated batch of merged work to production Netlify.
+
+## 2026-09-05 — Autonomous cycle self-corrected a shipped contract mismatch; PR #10 opened
+
+**Decision:** During a routine 4h autonomy cycle, the Lead selected a narrowly-scoped bug-fix candidate outside the normal backlog (rather than `no_selection`, its usual outcome while the backlog sits DONE/DEFERRED/APPROVAL_REQUIRED): task `20260904-053114` (recording which prior-interaction path — shared conversation / listing-messaged / listing-saved — qualified a USER report, backlog item `bl_7a0b37d9`) had shipped with a backend/frontend contract mismatch that QA and Security had already flagged in that task's own review — the backend returned the qualifying path as `{ type, listing }` but the admin Reports panel expected `listing.title` on it, so the new moderator-facing evidence never rendered.
+
+**Fix** (task `20260905-043638`, branch `agents/20260905-043638-fix-backendfrontend-contract-mismatch-breaking-the/backend`): simplified the contract to a plain nullable enum instead of reconciling the mismatched object shape. `Report.qualifyingInteraction` is now a new nullable enum column (`SHARED_CONVERSATION` | `LISTING_MESSAGED` | `LISTING_SAVED`, additive migration, no backfill), computed server-side in `POST /users/:id/report` from three DB-verified checks and not client-suppliable (`userReportSchema` stays `.strict()`). `GET /admin/reports` needed no route change (already used `include`, so the new column passes through the existing spread), and the admin panel now renders the plain scalar directly.
+
+**Review:** QA PASS (verified end-to-end for all three qualifying paths; confirmed the migration is additive/non-destructive; `tsc --noEmit` clean; full backend suite 450/450 including new/updated tests covering all three branches — frontend automated checks blocked by a pre-existing worktree `node_modules` gap, unrelated to this diff). Security APPROVED (confirmed no new auth surface, no spoofing/mass-assignment path, no new data exposure — the field only surfaces evidence a moderator can already see elsewhere in the same payload). One correction cycle was used.
+
+**PR opened, not merged:** this session opened PR #10 against `main` from the pushed branch, using GitHub tools directly (the worker subprocesses that implemented/reviewed it have no GitHub/MCP access) since the branch reached `COMPLETE` with QA PASS + Security APPROVED. Per `CLAUDE.md`, no agent may merge or deploy unilaterally — PR #10 is left for founder review like any other PR, with one recommended pre-merge manual check flagged in its test plan (hitting `GET /admin/reports` against a real report of each qualifying-path type).
+
+**Impact:** restores a Trust & Safety feature (moderator evidence for why a user report qualified) that was live but silently non-functional since the prior task merged. No production deploy occurred — this is backend/frontend code merged to a feature branch only.
+
+**Revisit when:** the founder reviews and either merges or requests changes to PR #10.

@@ -1,0 +1,60 @@
+{
+  "taskId": "20260905-043638-fix-backendfrontend-contract-mismatch-breaking-the",
+  "objective": "Fix backend/frontend contract mismatch breaking the prior-interaction moderator-evidence panel\n\nThe recently-attempted feature to record which prior-interaction path (shared conversation vs. listing-messaged vs. listing-saved) qualified a USER report (task 20260904-053114-record-which-prior-interaction-path-qualified-a, related to backlog item bl_7a0b37d9) shipped with a contract mismatch: the backend's admin.ts returns the qualifying path as a bare scalar/shape that does not match what the frontend expects (an object of the form { type, listing } with listing.title), so the new moderator-facing evidence never renders correctly in the admin Reports panel. Security review explicitly flagged this must be reconciled before merge. Fix by either (a) having admin.ts join and return the qualifying listing (for LISTING_MESSAGED/LISTING_SAVED paths) in the shape the frontend already expects, or (b) simplifying the frontend to render the plain scalar string the backend actually returns. Re-verify by hitting GET /admin/reports against a real USER report of each of the three qualifying-path types and confirming the panel shows a correct, human-readable label.\n\nWhy this matters (backlog rationale): This is a concrete, already-evidenced defect in recently-written code (not speculative) that leaves a shipped Trust & Safety feature non-functional for moderators. It is a narrow, low-risk correction (no schema change, no new auth surface, touches only the response-shape contract between one admin route and one admin UI component) rather than new feature scope, making it a good candidate for immediate correction ahead of larger gated items.\n\nEvidence:\n- ai/tasks/20260904-053114-record-which-prior-interaction-path-qualified-a/qa.json: \"The frontend's `.listing?.title` optional-chaining anticipates this data but it will never be populated under the current backend implementation.\"\n- ai/tasks/20260904-053114-record-which-prior-interaction-path-qualified-a/security.json: \"Backend/frontend contract mismatch renders the new moderator evidence non-functional as merged. — Reconcile the contract before merge...\"",
+  "requiredAgents": [
+    "backend",
+    "qa",
+    "security",
+    "trust_safety"
+  ],
+  "dependencies": {
+    "trust_safety": [],
+    "backend": [
+      "trust_safety"
+    ],
+    "qa": [
+      "trust_safety",
+      "backend"
+    ],
+    "security": [
+      "trust_safety",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "trust_safety"
+    ],
+    [
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Updated rentals/backend/src/routes/admin.ts response shape for the qualifying prior-interaction path on USER reports",
+    "Manual verification notes (or minimal frontend adjustment if scalar-render approach is chosen instead) confirming the admin Reports panel renders correct labels for all three qualifying-path types",
+    "Updated ai/tasks/20260904-053114-record-which-prior-interaction-path-qualified-a/ records or a new task file documenting the fix and re-verification"
+  ],
+  "riskNotes": [
+    "This is a narrow bug-fix reconciling an already-flagged contract mismatch from a prior task, not new feature scope.",
+    "No schema change, no new auth surface, and no production deployment is in scope for this task — the fix lands on main/Render per existing workflow, consistent with CLAUDE.md's standing production-deploy hold.",
+    "Touches user-report/moderation evidence data (Trust & Safety relevant) so trust_safety review is included even though the change is narrow.",
+    "If the backend approach is chosen, confirm the listing join does not leak data beyond what a moderator/admin role should see (already-restricted route, but worth a quick security check given the shape change)."
+  ]
+}

@@ -1,25 +1,31 @@
 # Current State
 
-Last verified against the repository: 2026-09-03. **`main` and production
+Last verified against the repository: 2026-09-06. **`main` and production
 are decoupled again, deliberately.** Production Netlify (deploy
 `6a972323ac04d013c488bc29`, published 2026-09-01 19:16:20Z) is still
 serving commit `49d4bb7` — the multi-feature milestone (Gallery/lightbox,
 Settings/Account, Messaging, Legal/Policy Pages, Forgot Password + Change
 Email). `main` has since advanced through PR #7 (report-a-user/report-a-
-message, merged 2026-09-02, commit `c771c07`) and PR #8 (admin Remove/
+message, merged 2026-09-02, commit `c771c07`), PR #8 (admin Remove/
 Restore Listing, ADMIN-only permanent account deletion, ADMIN-only User
-Search, merged 2026-09-03, commit `83ff9417`) — see `ai/decisions.md` for
-both. That work is implementation-complete, founder-approved via its own
-Netlify Deploy Previews, merged to `main`, its schema migrations are live
-on the production Supabase database, and the Render backend is deployed
-and healthy on it — but **the production Netlify frontend has not been
+Search, merged 2026-09-03, commit `83ff9417`), PR #9 (Locate Me,
+privacy-safe approximate listing locations, the universal confirm-
+property-location flow, and a Spiderfy fix, merged 2026-09-05, commit
+`87d23a7`), and PR #10 (fixes the report qualifying-interaction evidence
+contract mismatch from PR #9's Trust & Safety follow-up, merged
+2026-09-06, commit `f8c20c4`) — see `ai/decisions.md` for all four. That
+work is implementation-complete, founder-approved via its own Netlify
+Deploy Previews, merged to `main`, its schema migrations are live on the
+production Supabase database, and the Render backend is deployed and
+healthy on it — but **the production Netlify frontend has not been
 redeployed to pick it up**, at the founder's explicit request: the
 production deploy is being saved for the end of a larger batch of
 still-in-progress future work. Until that deploy happens, do not describe
-report-a-user/message or the admin moderation toolkit below as
-"in production" — they are real and live in `main`/Render, not yet on
-`muslimrentals.ca`. Update this file whenever the picture materially
-changes — don't let it drift into fiction.
+report-a-user/message, the admin moderation toolkit, the location/privacy
+work, or the qualifying-interaction evidence below as "in production" —
+they are real and live in `main`/Render, not yet on `muslimrentals.ca`.
+Update this file whenever the picture materially changes — don't let it
+drift into fiction.
 
 ## Tech stack
 

@@ -14,12 +14,15 @@ actually get involved before work is called done.
 
 ## Standing status flag — remove once resolved
 
-**Production Netlify deploy pending.** PR #7 and PR #8 (report-a-user/
-report-a-message + the admin moderation toolkit: Remove/Restore Listing,
-ADMIN-only permanent account deletion, ADMIN-only User Search) are merged
-into `main`, migrations are live on production Supabase, and Render is
-deployed and healthy — but the production Netlify frontend has **not**
-been redeployed. The founder explicitly asked (2026-09-03) to batch this
+**Production Netlify deploy pending.** PR #7, PR #8, PR #9, and PR #10
+(report-a-user/report-a-message + the admin moderation toolkit: Remove/
+Restore Listing, ADMIN-only permanent account deletion, ADMIN-only User
+Search; Locate Me + privacy-safe approximate listing locations + Spiderfy
+fix + the universal confirm-property-location flow; and the report
+qualifying-interaction evidence fix) are all merged into `main`,
+migrations are live on production Supabase, and Render is deployed and
+healthy — but the production Netlify frontend has **not** been
+redeployed. The founder explicitly asked (2026-09-03) to batch this
 deploy with further work rather than ship it now, and to be reminded of
 it whenever the next PR completes. See `ai/current-state.md`'s top note
 and orchestrator backlog item `bl_fe4fda3a` for the full detail.

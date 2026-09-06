@@ -13,45 +13,86 @@ export const ALLOWED_AMENITIES = [
   'Private entrance', 'Basement unit', 'Balcony', 'Backyard access',
 ] as const;
 
-// `neighbourhood` is required on NEW listings (the Listing.neighbourhood DB
-// column itself stays nullable -- pre-existing production rows already have
-// it null and there is no real data to backfill them with, so a hard
-// NOT NULL migration would either crash on those rows or require fabricating
-// data; enforcing "required" at this API layer instead affects only new
-// writes, matching this codebase's usual DB-nullable/API-required pattern).
-// This is safe to make unconditional (not per-city) because every city in
-// prisma/seed.ts's CANADIAN_CITIES now has at least one seeded
-// src/data/neighbourhoods.ts entry to select -- see that file's coverage
-// comment. If a new city is ever added to CANADIAN_CITIES without a
-// matching neighbourhood, posting from that city would hit a dead end;
-// keep the two lists in sync.
-export const listingCreateSchema = z.object({
-  title:         z.string().min(5).max(200).trim(),
-  description:   z.string().min(20).max(5000).trim(),
-  price:         z.number().positive().max(50000),
-  bedrooms:      z.number().min(0).max(20),
-  bathrooms:     z.number().int().min(0).max(20),
-  audience:      z.nativeEnum(ListingAudience),
-  city:          z.string().min(1).max(100).trim(),
-  town:          z.string().max(100).trim().optional(),
-  province:      z.string().max(50).trim().optional(),
+// ─── Location model — TRANSITIONAL dual-shape support ──────────────────────
+// Two mutually exclusive request shapes are accepted right now, deliberately
+// never mixed or blended:
+//
+//   NEW shape (the actual architecture going forward): a real `address`
+//   (+ optional private `unit`). The route geocodes the address itself
+//   server-side (see utils/geocode.ts) -- `lat`/`lng` are never accepted
+//   from the client in this shape at all, since a landlord could otherwise
+//   submit any coordinates alongside any address with nothing tying the
+//   two together.
+//
+//   LEGACY shape (transitional ONLY): `neighbourhood` + client-supplied
+//   `lat`/`lng`, the pre-existing pre-geocoding contract. This exists
+//   solely because the production Netlify frontend has not yet been
+//   redeployed past this point (see CLAUDE.md's standing status flag /
+//   ai/current-state.md) and still submits this exact shape -- deploying
+//   this backend to the shared production Render service would otherwise
+//   break live listing creation. Delete this branch entirely, and the
+//   Listing.neighbourhood-as-input concept along with it, once that
+//   redeploy ships and every client submits the new shape.
+//
+// Each shape is its own `.strict()` object; listingCreateSchema is their
+// union. A payload satisfying neither exactly -- most importantly one
+// that mixes the two (e.g. `address` alongside `neighbourhood`/`lat`/`lng`)
+// -- is rejected outright by BOTH branches' `.strict()`, never silently
+// merged or partially applied.
+const listingCommonFields = {
+  title:       z.string().min(5).max(200).trim(),
+  description: z.string().min(20).max(5000).trim(),
+  price:       z.number().positive().max(50000),
+  bedrooms:    z.number().min(0).max(20),
+  bathrooms:   z.number().int().min(0).max(20),
+  audience:    z.nativeEnum(ListingAudience),
+  city:        z.string().min(1).max(100).trim(),
+  town:        z.string().max(100).trim().optional(),
+  province:    z.string().max(50).trim().optional(),
+  contactInfo: z.string().min(5).max(300).trim(),
+  // Amenities must be from the allowed set only
+  amenities:   z.array(z.enum(ALLOWED_AMENITIES)).max(20).optional(),
+  // Image URLs must be real URLs and are bounded
+  imageUrls:   z.array(z.string().url().max(2048)).max(10).optional(),
+};
+
+export const newListingCreateSchema = z.object({
+  ...listingCommonFields,
   // .trim() before .min(1) (not after) so a whitespace-only value is
   // actually rejected rather than passing the length check pre-trim and
   // silently becoming "" -- required must mean required.
-  neighbourhood: z.string().trim().min(1).max(100),
-  address:       z.string().max(200).trim().optional(),
-  lat:           z.number().min(-90).max(90),
-  lng:           z.number().min(-180).max(180),
-  contactInfo:   z.string().min(5).max(300).trim(),
-  // Amenities must be from the allowed set only
-  amenities:     z.array(z.enum(ALLOWED_AMENITIES)).max(20).optional(),
-  // Image URLs must be real URLs and are bounded
-  imageUrls:     z.array(z.string().url().max(2048)).max(10).optional(),
+  address: z.string().trim().min(3).max(200),
+  unit:    z.string().trim().max(50).optional(),
+  // Landlord-confirmed pin coordinates -- read by routes/listings.ts's
+  // universal confirm-property-location flow, required for EVERY new or
+  // address-changing listing regardless of geocode confidence. The route
+  // first geocodes the address, then returns a `needsLocationConfirmation`
+  // response (creating/updating nothing yet) if these aren't present; the
+  // client shows a draggable pin centered on the geocoder's matched point,
+  // and the landlord's confirmed placement is resubmitted here. Never
+  // trusted as an arbitrary coordinate on its own -- the route
+  // reverse-geocodes it and verifies it actually resolves to the entered
+  // city/province (see verifyConfirmedPinLocation in utils/geocode.ts)
+  // before storing it, rather than checking distance from the geocoder's
+  // own (possibly wrong) starting point.
+  confirmedLat: z.number().min(-90).max(90).optional(),
+  confirmedLng: z.number().min(-180).max(180).optional(),
 }).strict();
 
-// Updates may omit neighbourhood (partial edit of an existing listing that
-// predates this requirement); PATCH does not re-require it.
-export const listingUpdateSchema = listingCreateSchema.partial();
+export const legacyListingCreateSchema = z.object({
+  ...listingCommonFields,
+  neighbourhood: z.string().trim().min(1).max(100),
+  lat:           z.number().min(-90).max(90),
+  lng:           z.number().min(-180).max(180),
+}).strict();
+
+export const listingCreateSchema = z.union([newListingCreateSchema, legacyListingCreateSchema]);
+
+// PATCH may send any subset of fields (a partial edit) in either shape
+// (never mixed, same as create); the route itself decides whether an
+// `address`/`city`/`province` change requires re-geocoding, since that's
+// request-time behavior, not something a static schema can express.
+export const listingUpdateSchema = z.union([newListingCreateSchema.partial(), legacyListingCreateSchema.partial()]);
 
 // Query param schema for GET /listings — typed, bounded, no injection surface
 export const listingQuerySchema = z.object({
@@ -65,7 +106,11 @@ export const listingQuerySchema = z.object({
   maxPrice:  z.coerce.number().min(0).max(50000).optional(),
   lat:       z.coerce.number().min(-90).max(90).optional(),
   lng:       z.coerce.number().min(-180).max(180).optional(),
-  radiusKm:  z.coerce.number().min(1).max(500).optional(),
+  // 1-10km matches the renter-facing "search a location + radius" feature's
+  // slider exactly (see LocationRadiusSearch.tsx) -- deliberately no wider,
+  // now that the privacy-approximate location model (~200m jitter) makes a
+  // very large radius meaningless for neighbourhood-level search anyway.
+  radiusKm:  z.coerce.number().min(1).max(10).optional(),
   page:      z.coerce.number().int().min(1).max(1000).default(1),
   // Capped at 200, not 50 -- the map view (frontend src/app/map/page.tsx)
   // legitimately requests limit=200 to plot every active listing at once.

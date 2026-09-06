@@ -11,6 +11,9 @@ const { createMock, uploadImagesMock, deletePermanentMock } = vi.hoisted(() => (
 
 vi.mock('@/lib/api', () => ({
   listingsApi: { create: createMock, uploadImages: uploadImagesMock, deletePermanent: deletePermanentMock },
+  // Real implementation (not a mock) -- it's a pure discriminator over
+  // whatever createMock resolves to, same as production.
+  needsLocationConfirmation: (res: any) => res?.needsLocationConfirmation === true,
 }));
 
 vi.mock('@/store/authStore', () => ({
@@ -24,21 +27,23 @@ vi.mock('@/components/ui/use-toast', () => ({
 
 vi.mock('@/components/auth/AuthModal', () => ({ default: () => null }));
 
-// Stub the city/neighbourhood autocompletes -- their own fetch/search
-// behavior is covered by their own test files. Here we only need to
-// simulate picking a value, exposed as a plain button so tests don't need
-// a real backend.
-vi.mock('@/components/ui/CityAutocomplete', () => ({
-  default: ({ onChange }: { onChange: (city: string, coords?: [number, number]) => void }) => (
-    <button type="button" onClick={() => onChange('Toronto', [43.6532, -79.3832])}>
-      Pick Toronto
-    </button>
+// Stub the confirm-location map -- its own Leaflet wiring (draggable
+// marker, centering, drag reporting) is covered by ConfirmLocationMap's
+// own test file. Here we only need to simulate the landlord dragging the
+// pin, exposed as a plain button so tests don't need a real map.
+vi.mock('@/components/listings/ConfirmLocationMap', () => ({
+  default: ({ onChange }: { initialLat: number; initialLng: number; onChange: (lat: number, lng: number) => void }) => (
+    <button type="button" onClick={() => onChange(42.3035, -83.077)}>Simulate drag pin</button>
   ),
 }));
-vi.mock('@/components/ui/NeighbourhoodAutocomplete', () => ({
-  default: ({ onChange }: { onChange: (n: string, coords?: [number, number]) => void }) => (
-    <button type="button" onClick={() => onChange('Downtown', [43.6511, -79.3806])}>
-      Pick Downtown
+
+// Stub the city autocomplete -- its own fetch/search behavior is covered by
+// its own test file. Here we only need to simulate picking a value, exposed
+// as a plain button so tests don't need a real backend.
+vi.mock('@/components/ui/CityAutocomplete', () => ({
+  default: ({ onChange }: { onChange: (city: string, coords?: [number, number], province?: string) => void }) => (
+    <button type="button" onClick={() => onChange('Toronto', [43.6532, -79.3832], 'ON')}>
+      Pick Toronto
     </button>
   ),
 }));
@@ -69,7 +74,7 @@ describe('PostListingModal', () => {
   async function goToStep3(user: ReturnType<typeof userEvent.setup>) {
     await goToStep2(user);
     await user.click(screen.getByText('Pick Toronto'));
-    await user.click(screen.getByText('Pick Downtown'));
+    await user.type(screen.getByPlaceholderText(/123 Main Street/), '456 Spadina Avenue');
     await user.type(screen.getByPlaceholderText(/Phone, WhatsApp/), '555-0100');
     await user.click(screen.getByRole('button', { name: /Continue/ }));
     await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());
@@ -132,6 +137,18 @@ describe('PostListingModal', () => {
     await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
   });
 
+  it('includes the selected city\'s province in the create payload, tightening the server-side geocoding query', async () => {
+    const user = userEvent.setup();
+    render(<PostListingModal open onClose={vi.fn()} />);
+
+    await goToStep3(user);
+    await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ city: 'Toronto', province: 'ON', address: '456 Spadina Avenue' })
+    ));
+  });
+
   it('does not attempt an image upload when no images were selected', async () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
@@ -184,5 +201,103 @@ describe('PostListingModal', () => {
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({ variant: 'destructive', title: 'Could not post your listing' })
     );
+  });
+
+  // The universal confirm-property-location flow: EVERY address submission
+  // comes back as `needsLocationConfirmation` instead of a created listing
+  // (see routes/listings.ts's resolveGeocodedLocation) -- the frontend
+  // response shape carries no confidence info at all (just matchedLat/
+  // matchedLng), so the exact same UI/flow below handles a precise
+  // (house-level) match and a street-level-only match identically.
+  describe('universal confirm-property-location flow', () => {
+    beforeEach(() => {
+      createMock.mockReset();
+    });
+
+    it.each([
+      ['a precise (house-level) match', { matchedLat: 43.5789, matchedLng: -79.6583 }],
+      ['a street-level-only match', { matchedLat: 42.3023085, matchedLng: -83.0764497 }],
+    ])('shows the "Confirm property location" step and creates nothing for %s', async (_label, matched) => {
+      createMock.mockResolvedValueOnce({
+        success: true,
+        needsLocationConfirmation: true,
+        data: matched,
+      });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      expect(screen.getByText(/Make sure the pin is on the property\. Drag it if needed\. Your exact property location will remain private\./)).toBeInTheDocument();
+      expect(uploadImagesMock).not.toHaveBeenCalled();
+    });
+
+    it('resubmits with the dragged confirmedLat/confirmedLng and shows success once confirmed', async () => {
+      createMock
+        .mockResolvedValueOnce({
+          success: true,
+          needsLocationConfirmation: true,
+          data: { matchedLat: 42.3023085, matchedLng: -83.0764497 },
+        })
+        .mockResolvedValueOnce({ data: { id: 'listing-confirmed', title: 'Test' } });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Post listing' }));
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Simulate drag pin' }));
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(createMock).toHaveBeenCalledTimes(2));
+      expect(createMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ confirmedLat: 42.3035, confirmedLng: -83.077 })
+      );
+      await waitFor(() => expect(screen.getByText('Listing posted!')).toBeInTheDocument());
+    });
+
+    it('confirms with the geocoder-matched point unchanged if the landlord never drags the pin', async () => {
+      createMock
+        .mockResolvedValueOnce({
+          success: true,
+          needsLocationConfirmation: true,
+          data: { matchedLat: 42.3023085, matchedLng: -83.0764497 },
+        })
+        .mockResolvedValueOnce({ data: { id: 'listing-confirmed', title: 'Test' } });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Post listing' }));
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(createMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ confirmedLat: 42.3023085, confirmedLng: -83.0764497 })
+      ));
+    });
+
+    it('the "Back" button returns to the form without creating anything', async () => {
+      createMock.mockResolvedValueOnce({
+        success: true,
+        needsLocationConfirmation: true,
+        data: { matchedLat: 42.3023085, matchedLng: -83.0764497 },
+      });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Post listing' }));
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+
+      expect(screen.getByText('Post rental listing')).toBeInTheDocument();
+      expect(createMock).toHaveBeenCalledTimes(1); // only the original attempt -- nothing further submitted
+    });
   });
 });

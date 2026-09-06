@@ -35,10 +35,10 @@ import authRoutes    from './routes/auth';
 import listingRoutes from './routes/listings';
 import messageRoutes from './routes/messages';
 import cityRoutes    from './routes/cities';
-import neighbourhoodRoutes from './routes/neighbourhoods';
 import userRoutes    from './routes/users';
 import adminRoutes   from './routes/admin';
 import uploadRoutes  from './routes/uploads';
+import geocodeRoutes from './routes/geocode';
 
 // ─── Validate required env variables at startup ───────────────────────────────
 // Fails fast if critical secrets are missing, preventing silent misconfigurations.
@@ -156,10 +156,10 @@ app.use(`${v1}/auth`,     authRoutes);
 app.use(`${v1}/listings`, listingRoutes);
 app.use(`${v1}/messages`, messageRoutes);
 app.use(`${v1}/cities`,   cityRoutes);
-app.use(`${v1}/neighbourhoods`, neighbourhoodRoutes);
 app.use(`${v1}/users`,    userRoutes);
 app.use(`${v1}/admin`,    adminRoutes);
 app.use(`${v1}/uploads`,  uploadRoutes);
+app.use(`${v1}/geocode`,  geocodeRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {

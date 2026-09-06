@@ -17,7 +17,11 @@ const DEFAULT_FILTERS: ListingFilters = {
   minBeds: 0,
   minBaths: 0,
   maxPrice: 5000,
-  radiusKm: 80,
+  // Matches the location-search widget's 1-10km slider range (see
+  // LocationRadiusSearch.tsx) -- irrelevant until filters.lat/lng are also
+  // set (browse/map only ever send radiusKm alongside a real lat/lng), so
+  // this is just a sensible starting value for the slider itself.
+  radiusKm: 5,
   sort: 'newest',
   furnished: false,
   parking: false,

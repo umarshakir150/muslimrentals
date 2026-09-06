@@ -105,6 +105,12 @@ model Listing {
   province        String?
   neighbourhood   String?
   address         String?
+  // Unit/apartment number, kept fully separate from `address` so geocoding
+  // (which resolves the building/street, not a specific unit inside it)
+  // never has to parse or depend on it -- see utils/geocode.ts. Private,
+  // same as `address`: stripped from every public response alongside it in
+  // toPublicListingLocation(), never just hidden in the UI.
+  unit            String?
   lat             Float
   lng             Float
   contactInfo     String

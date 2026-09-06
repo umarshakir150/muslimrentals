@@ -7,7 +7,7 @@ import { citiesApi } from '@/lib/api';
 
 interface CityAutocompleteProps {
   value: string;
-  onChange: (city: string, coords?: [number, number]) => void;
+  onChange: (city: string, coords?: [number, number], province?: string) => void;
   placeholder?: string;
   className?: string;
 }
@@ -60,7 +60,7 @@ export default function CityAutocomplete({ value, onChange, placeholder = 'Searc
     setSuggestions([]);
     setOpen(false);
     const coords: [number, number] | undefined = city.lat && city.lng ? [city.lat, city.lng] : undefined;
-    onChange(city.name, coords);
+    onChange(city.name, coords, city.province);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

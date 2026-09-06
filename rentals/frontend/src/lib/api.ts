@@ -219,6 +219,23 @@ export const authApi = {
   refresh: () => api.post<{ data: { accessToken: string } }>('/auth/refresh', {}),
 };
 
+// Every create/update call with an address comes back this way first,
+// regardless of how confident the geocode match was (see routes/listings.ts's
+// universal confirm-property-location flow / resolveGeocodedLocation) --
+// nothing is created/updated until the landlord confirms a pin. The caller
+// must show the landlord a pin centered on matchedLat/matchedLng, then
+// resubmit the same payload with confirmedLat/confirmedLng added.
+export interface NeedsLocationConfirmationResponse {
+  success: true;
+  needsLocationConfirmation: true;
+  data: { matchedLat: number; matchedLng: number };
+}
+export type ListingWriteResponse = { data: any } | NeedsLocationConfirmationResponse;
+
+export function needsLocationConfirmation(res: ListingWriteResponse): res is NeedsLocationConfirmationResponse {
+  return (res as any)?.needsLocationConfirmation === true;
+}
+
 // ─── Listings API ─────────────────────────────────────────────────────────────
 export const listingsApi = {
   getAll: (params: Record<string, string | number | boolean | undefined>) => {
@@ -230,8 +247,8 @@ export const listingsApi = {
     return api.get<{ data: any[]; pagination: any }>(`/listings?${qs}`);
   },
   getById: (id: string) => api.get<{ data: any }>(`/listings/${id}`),
-  create: (data: any) => api.post<{ data: any }>('/listings', data),
-  update: (id: string, data: any) => api.patch<{ data: any }>(`/listings/${id}`, data),
+  create: (data: any) => api.post<ListingWriteResponse>('/listings', data),
+  update: (id: string, data: any) => api.patch<ListingWriteResponse>(`/listings/${id}`, data),
   delete: (id: string) => api.delete(`/listings/${id}`),
   // Permanent hard-delete -- distinct from `delete` above, which is the
   // existing soft-remove (status=REMOVED, admin-reversible).
@@ -264,13 +281,14 @@ export const citiesApi = {
   getAll: () => api.get<{ data: { name: string; province: string }[] }>('/cities/all'),
 };
 
-// ─── Neighbourhoods API ────────────────────────────────────────────────────────
-// Curated city+neighbourhood -> real lat/lng lookup (same pattern as
-// citiesApi.getAll, seeded server-side rather than geocoded live).
-export interface NeighbourhoodEntry { name: string; city: string; lat: number; lng: number; }
-export const neighbourhoodsApi = {
-  getAll: (city: string) =>
-    api.get<{ data: NeighbourhoodEntry[] }>(`/neighbourhoods/all?city=${encodeURIComponent(city)}`),
+// ─── Geocode API ──────────────────────────────────────────────────────────────
+// Ad-hoc place/address search for the "search a location + radius" filter --
+// same server-side geocoder listing creation uses, just without tying the
+// result to a listing. The search text itself is never sent anywhere else
+// or persisted; only the resolved lat/lng is used, client-side, to center
+// the map and filter listings.
+export const geocodeApi = {
+  search: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode?q=${encodeURIComponent(q)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

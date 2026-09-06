@@ -1,0 +1,77 @@
+{
+  "taskId": "20260904-053114-record-which-prior-interaction-path-qualified-a",
+  "objective": "Record which prior-interaction path qualified a user report as moderator-visible evidence\n\nPOST /users/:id/report enforces a real DB-backed prior-interaction gate (shared conversation OR listing interaction) before allowing a report, but which path qualified it is not persisted or surfaced anywhere in GET /admin/reports. Trust & Safety's design-review recommended surfacing this as evidence for moderators reviewing user reports; QA confirmed it was never implemented and flagged it as a non-blocking follow-up.\n\nWhy this matters (backlog rationale): Small, concrete, evidence-based gap on a feature that is now fully shipped (bl_e3162883, DONE) — improves moderator ability to judge report legitimacy without any new risk surface, but is polish rather than a safety-critical fix, so it should queue behind the currently-pending approval-required items rather than jump ahead of them.\n\nEvidence:\n- ai/tasks/20260901-234756-build-the-report-a-user-report-a-message-feature-as/qa.json: \"Trust & Safety's design-review recommendation to record which prior-interaction path... qualified a USER report as evidence for moderators was not implemented\"",
+  "requiredAgents": [
+    "backend",
+    "frontend",
+    "qa",
+    "security",
+    "trust_safety"
+  ],
+  "dependencies": {
+    "trust_safety": [],
+    "frontend": [
+      "trust_safety"
+    ],
+    "backend": [
+      "trust_safety"
+    ],
+    "qa": [
+      "trust_safety",
+      "frontend",
+      "backend"
+    ],
+    "security": [
+      "trust_safety",
+      "frontend",
+      "backend"
+    ]
+  },
+  "parallelGroups": [
+    [
+      "trust_safety"
+    ],
+    [
+      "frontend",
+      "backend"
+    ],
+    [
+      "qa",
+      "security"
+    ]
+  ],
+  "implementationScopes": [
+    {
+      "agent": "backend",
+      "expectedPaths": [
+        "rentals/backend/**"
+      ],
+      "allowedSharedPaths": []
+    },
+    {
+      "agent": "frontend",
+      "expectedPaths": [
+        "rentals/frontend/**"
+      ],
+      "allowedSharedPaths": []
+    }
+  ],
+  "approvalRequirements": {
+    "founderApprovalRequired": false,
+    "reasons": []
+  },
+  "expectedArtifacts": [
+    "Prisma migration adding a qualifying-path field to Report (e.g. enum/string: CONVERSATION | LISTING_INTERACTION)",
+    "Backend change to POST /users/:id/report to record which prior-interaction check passed",
+    "Backend change to GET /admin/reports to include the qualifying-path field",
+    "Frontend admin Reports panel change to display the qualifying-path evidence for USER-target reports",
+    "Updated task file under ai/tasks/ documenting requirements, plan, and review outcomes"
+  ],
+  "riskNotes": [
+    "Additive, non-destructive Prisma migration (new column) — no existing data affected, but any schema change should still be reviewed before merge per standard practice",
+    "Backend touches the moderation/admin surface (GET /admin/reports, report creation) — security review warranted per agents/security.md's admin/moderation focus area",
+    "Trust & Safety originally recommended this in the report-a-user/report-a-message design review — re-engage them to confirm the implementation matches original intent",
+    "Polish/follow-up item, not safety-critical — should queue behind currently-pending approval-required items per backlog rationale, not jump ahead of them",
+    "No founder approval needed for this task itself: no production deploy, no irreversible/destructive DB change, no auth/security rewrite, no spending"
+  ]
+}

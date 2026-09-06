@@ -22,6 +22,34 @@ vi.mock('@/components/ui/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+// ListingDetail now embeds ListingLocationMap (a compact Leaflet map), which
+// lazily imports 'leaflet' inside a useEffect -- mocked the same way every
+// other Leaflet-touching component's tests are (FullMap, ListingLocationMap's
+// own test file), so the real library never actually runs in jsdom here.
+// Without this, real Leaflet's bindTooltip/openTooltip genuinely renders the
+// privacy-circle tooltip's "Approximate location" text into the DOM,
+// duplicating (and making ambiguous) the assertions on ListingDetail's own
+// separate caption text below.
+vi.mock('leaflet', () => {
+  const mapInstance = { remove: vi.fn(), invalidateSize: vi.fn() };
+  const chainable = () => {
+    const obj: any = {};
+    obj.addTo = vi.fn(() => obj);
+    obj.bindTooltip = vi.fn(() => obj);
+    obj.openTooltip = vi.fn(() => obj);
+    return obj;
+  };
+  const L = {
+    map: vi.fn(() => mapInstance),
+    tileLayer: vi.fn(() => chainable()),
+    divIcon: vi.fn(() => ({})),
+    marker: vi.fn(() => chainable()),
+    circle: vi.fn(() => chainable()),
+    Icon: { Default: { prototype: {}, mergeOptions: vi.fn() } },
+  };
+  return { default: L };
+});
+
 // Real image rows pulled directly from production (Supabase project
 // mxpoenfnqrfwznquaibd, listing af96127c-2b38-4d53-9367-f63870bfdb72,
 // "testing photos") on 2026-09-01, while diagnosing why the gallery never
@@ -254,6 +282,59 @@ describe('ListingDetail image gallery', () => {
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.getAllByAltText('testing photos')[0]).toBeInTheDocument();
+  });
+});
+
+describe('ListingDetail approximate-location disclosure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the "approximate location" caption when the listing carries locationApproximate', async () => {
+    mockDetailFetch([]);
+    const listing = { ...makeListing([]), locationApproximate: true, locationPrecisionRadiusM: 200 };
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+    expect(screen.getByText(/exact address hidden for privacy/i)).toBeInTheDocument();
+  });
+
+  it('does not show the approximate-location caption for a listing without it (owner/staff view)', async () => {
+    mockDetailFetch([]);
+    const listing = makeListing([]); // locationApproximate left unset, as the owner/staff response shape does
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText(/approximate location/i)).not.toBeInTheDocument();
+  });
+
+  it('renders cleanly on a null neighbourhood (routine now that new listings are address-based, not neighbourhood-based), falling back to city + the approximate-location caption', async () => {
+    mockDetailFetch([]);
+    // makeListing's own city/province ('Mississauga' / null) -- with
+    // neighbourhood also null, the location line should fall back to just
+    // the city, never a literal "null" or a dangling comma.
+    const listing = {
+      ...makeListing([]),
+      neighbourhood: null,
+      locationApproximate: true,
+      locationPrecisionRadiusM: 200,
+    };
+    render(<ListingDetail listing={listing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.getByText('Mississauga')).toBeInTheDocument();
+    expect(screen.queryByText(/null/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+  });
+
+  it('never renders a street address, even if one were present on the listing object (defense in depth -- this modal has no address UI for any viewer)', async () => {
+    const listingWithAddress = { ...makeListing([]), address: '123 Real Street, Unit 4', locationApproximate: true, locationPrecisionRadiusM: 200 };
+    mockDetailFetch([], listingWithAddress);
+    render(<ListingDetail listing={listingWithAddress} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByText('123 Real Street, Unit 4')).not.toBeInTheDocument();
   });
 });
 

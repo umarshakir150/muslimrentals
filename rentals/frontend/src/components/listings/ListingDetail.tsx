@@ -12,6 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import DeleteListingDialog from './DeleteListingDialog';
 import ListingImageLightbox from './ListingImageLightbox';
 import ReportModal from '@/components/reports/ReportModal';
+import ListingLocationMap from './ListingLocationMap';
 
 const SWIPE_THRESHOLD = 50;
 
@@ -161,9 +162,21 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                 <p className="text-2xl font-bold text-brand-700 shrink-0">{formatCAD(listing.price)}<span className="text-sm font-normal text-muted">/mo</span></p>
               </div>
 
-              <div className="flex items-center gap-1.5 text-muted text-sm mb-4">
-                <MapPin size={14} className="shrink-0" />
-                <span>{[listing.neighbourhood, listing.city, listing.province].filter(Boolean).join(', ')}</span>
+              <div className="mb-4">
+                <div className="flex items-center gap-1.5 text-muted text-sm">
+                  <MapPin size={14} className="shrink-0" />
+                  <span>{[listing.neighbourhood, listing.city, listing.province].filter(Boolean).join(', ')}</span>
+                </div>
+                {listing.locationApproximate && (
+                  <p className="text-xs text-muted mt-1">
+                    <span className="font-semibold text-ink/70">Approximate location.</span>{' '}
+                    <span className="italic">Exact address hidden for privacy.</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="mb-5">
+                <ListingLocationMap listing={listing} />
               </div>
 
               <div className="flex flex-wrap gap-4 text-sm mb-5 pb-5 border-b border-ink/8">

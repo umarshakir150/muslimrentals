@@ -11,6 +11,7 @@ import { Listing } from '@/types';
 import { useFilterStore } from '@/store/filterStore';
 import { useIsAuthenticated } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
+import { buildListingSearchParams } from '@/lib/listingSearchParams';
 
 // FullMap is heavy - load client-side only. No SSR loading fallback needed
 // because the map container is always rendered with real dimensions.
@@ -29,17 +30,21 @@ function MapPageInner() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
 
+  // Shares the exact same filter-composition logic as /browse (keyword,
+  // city, audience, beds/baths, price, amenities, location-radius search)
+  // so the two pages' results stay consistent with each other -- this used
+  // to always fetch every active listing regardless of /browse's filters.
   const fetchListings = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await listingsApi.getAll({ limit: 200, sort: 'newest' });
+      const res = await listingsApi.getAll({ ...buildListingSearchParams(filters), limit: 200, sort: 'newest' });
       setListings(res.data);
     } catch {
       // Silently fail - map shows empty
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
 
@@ -137,9 +142,10 @@ function MapPageInner() {
           <FullMap
             listings={listings}
             center={mapCenter}
-            radiusKm={filters.radiusKm || 80}
             onCentreChange={setMapCenter}
             onListingClick={setSelectedListing}
+            searchCenter={filters.lat != null && filters.lng != null ? [filters.lat, filters.lng] : null}
+            searchRadiusKm={filters.radiusKm}
           />
         </div>
       </div>

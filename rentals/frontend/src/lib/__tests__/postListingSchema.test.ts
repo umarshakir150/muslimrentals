@@ -10,38 +10,58 @@ function validPayload(overrides: Record<string, unknown> = {}) {
     bathrooms: 1,
     audience: 'ALL',
     city: 'Toronto',
-    neighbourhood: 'Kensington Market',
+    address: '123 Main Street',
     contactInfo: 'email@example.com',
-    lat: 43.6532,
-    lng: -79.3832,
     ...overrides,
   };
 }
 
 describe('postListingSchema (client-side mirror of the backend listing-create schema)', () => {
-  it('accepts a valid payload including a neighbourhood', () => {
+  it('accepts a valid payload including an address', () => {
     const result = postListingSchema.safeParse(validPayload());
     expect(result.success).toBe(true);
   });
 
-  it('rejects a payload with no neighbourhood field at all', () => {
-    const { neighbourhood, ...rest } = validPayload();
+  it('rejects a payload with no address field at all', () => {
+    const { address, ...rest } = validPayload();
     const result = postListingSchema.safeParse(rest);
     expect(result.success).toBe(false);
   });
 
-  it('rejects an empty-string neighbourhood', () => {
-    const result = postListingSchema.safeParse(validPayload({ neighbourhood: '' }));
+  it('rejects an empty-string address', () => {
+    const result = postListingSchema.safeParse(validPayload({ address: '' }));
     expect(result.success).toBe(false);
   });
 
-  it('rejects a whitespace-only neighbourhood', () => {
-    const result = postListingSchema.safeParse(validPayload({ neighbourhood: '   ' }));
+  it('rejects a whitespace-only address', () => {
+    const result = postListingSchema.safeParse(validPayload({ address: '   ' }));
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an address shorter than 3 characters', () => {
+    const result = postListingSchema.safeParse(validPayload({ address: 'ab' }));
     expect(result.success).toBe(false);
   });
 
   it('still requires city as before', () => {
     const result = postListingSchema.safeParse(validPayload({ city: '' }));
     expect(result.success).toBe(false);
+  });
+
+  it('accepts an optional unit number', () => {
+    const result = postListingSchema.safeParse(validPayload({ unit: 'Unit 4B' }));
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts no unit at all (optional)', () => {
+    const { address, ...rest } = validPayload();
+    const result = postListingSchema.safeParse({ address, ...rest });
+    expect(result.success).toBe(true);
+  });
+
+  it('has no neighbourhood, lat, or lng fields any more', () => {
+    expect(postListingSchema.shape).not.toHaveProperty('neighbourhood');
+    expect(postListingSchema.shape).not.toHaveProperty('lat');
+    expect(postListingSchema.shape).not.toHaveProperty('lng');
   });
 });

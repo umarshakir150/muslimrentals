@@ -12,6 +12,7 @@ import { useFilterStore } from '@/store/filterStore';
 import { useIsAuthenticated } from '@/store/authStore';
 import AuthModal from '@/components/auth/AuthModal';
 import SendMessageModal from '@/components/messaging/SendMessageModal';
+import { buildListingSearchParams } from '@/lib/listingSearchParams';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
@@ -51,19 +52,10 @@ export default function BrowsePage() {
     }
     try {
       const params: Record<string, any> = {
-        ...(filters.keyword   && { keyword: filters.keyword }),
-        ...(filters.city      && { city: filters.city }),
-        ...(filters.audience && filters.audience !== 'all' && { audience: filters.audience }),
-        ...(filters.minBeds   && { minBeds: filters.minBeds }),
-        ...(filters.minBaths  && { minBaths: filters.minBaths }),
-        ...(filters.maxPrice  && { maxPrice: filters.maxPrice }),
-        ...(filters.furnished && { furnished: true }),
-        ...(filters.parking   && { parking: true }),
-        ...(filters.utilities && { utilities: true }),
+        ...buildListingSearchParams(filters),
         sort:  filters.sort  || 'newest',
         page,
         limit: 24,
-        ...(filters.lat && { lat: filters.lat, lng: filters.lng, radiusKm: filters.radiusKm }),
       };
       const res = await listingsApi.getAll(params);
       if (requestIdRef.current !== requestId) return; // superseded by a newer request

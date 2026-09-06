@@ -66,7 +66,7 @@ describe('CityAutocomplete', () => {
     const option = await suggestionNamed('Toronto');
     await user.click(option);
 
-    expect(onChange).toHaveBeenCalledWith('Toronto', [43.6532, -79.3832]);
+    expect(onChange).toHaveBeenCalledWith('Toronto', [43.6532, -79.3832], 'ON');
     expect(input).toHaveValue('Toronto');
   });
 

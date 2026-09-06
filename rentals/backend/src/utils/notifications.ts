@@ -46,28 +46,3 @@ export async function createNotification({ io, userId, type, title, body, data }
   io?.to(`user:${userId}`).emit('notification:new', notification);
   return notification;
 }
-
-// True if any of `userId`'s currently-connected sockets are joined to the
-// given conversation's Socket.IO room -- i.e. they already have that exact
-// conversation open in real time. Backed entirely by the `conv:${id}` room
-// Inbox.tsx already joins/leaves on opening/closing a conversation (see
-// socket/socketServer.ts's 'conversation:join'/'conversation:leave'
-// handlers, and Inbox.tsx's openConversation/cleanup) -- not a new
-// presence-tracking mechanism, just reading the one that already exists
-// for an unrelated purpose (join notifications, typing indicators).
-//
-// This is a real, direct check of live server state (Socket.IO's own room
-// adapter), not a heuristic or a client-reported claim -- a client cannot
-// spoof "I am viewing this conversation" to suppress someone else's
-// notification, since room membership is entirely server-controlled by
-// which authenticated socket actually joined it.
-export function isUserViewingConversation(io: any, userId: string, conversationId: string): boolean {
-  if (!io) return false;
-  const room = io.sockets?.adapter?.rooms?.get(`conv:${conversationId}`);
-  if (!room) return false;
-  for (const socketId of room) {
-    const socket = io.sockets.sockets.get(socketId);
-    if (socket?.userId === userId) return true;
-  }
-  return false;
-}

@@ -169,7 +169,13 @@ export const EscalationType = z.enum([
 ]);
 export type EscalationType = z.infer<typeof EscalationType>;
 
-export const ApprovalStatus = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
+// SUPERSEDED is distinct from REJECTED: it means the request was never
+// actually decided by the founder — it was a duplicate/stale re-escalation
+// of a decision already covered by another request (see approvalStore.ts's
+// get-or-create guard and the 2026-09-06 one-time dedup cleanup). Keeping it
+// separate from REJECTED preserves an honest audit trail: REJECTED always
+// means "the founder said no," never "the orchestrator tidied up a dupe."
+export const ApprovalStatus = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'SUPERSEDED']);
 export type ApprovalStatus = z.infer<typeof ApprovalStatus>;
 
 export const ApprovalRequest = z.object({

@@ -19,7 +19,7 @@ process.env.ORCHESTRATOR_AUTONOMY_DB = path.join(path.dirname(getAutonomyDbPath(
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
 import { runLeadPlanning } from '../src/autonomy/lead.js';
 import { createBacklogItem, getBacklogItem } from '../src/autonomy/backlogStore.js';
-import { getApprovalRequest, listApprovalRequests } from '../src/autonomy/approvalStore.js';
+import { createApprovalRequest, getApprovalRequest, listApprovalRequests } from '../src/autonomy/approvalStore.js';
 import type { LeadPlan } from '../src/autonomy/types.js';
 
 function freshDb(): void {
@@ -269,6 +269,107 @@ describe('runLeadPlanning', () => {
     const result = await runLeadPlanning({ invoker: leadInvoker(plan), cycleId: 'cyc_test9', signals: [] });
     expect(result.approvalRequestIds).toHaveLength(1);
     expect(listApprovalRequests('PENDING').some((r) => r.title === 'Ambiguous product direction')).toBe(true);
+  });
+
+  it('a truncated/invented escalation backlogItemId is dropped rather than persisted verbatim — it cannot create a phantom approval identity for a real backlog item (2026-09-06 dedup fix)', async () => {
+    const item = createBacklogItem({
+      title: 'Decide fate of unwired Google Sign-In scaffolding',
+      description: 'Finish wiring it up or remove it.',
+      source: 'test',
+      category: 'FEATURE_GAP',
+      userImpact: 2,
+      severity: 1,
+      confidence: 0.6,
+      effort: 2,
+      strategicRelevance: 2,
+      rationale: 'Ambiguous product call.',
+    });
+    // A truncated id (a real prefix of item.id, but not the real id itself) —
+    // exactly the shape observed for real from the Lead model.
+    const truncatedId = item.id.slice(0, item.id.indexOf('-'));
+    expect(truncatedId).not.toBe(item.id);
+
+    const plan: LeadPlan = {
+      ...emptyPlan,
+      escalations: [
+        {
+          type: 'AMBIGUOUS_HIGH_IMPACT_PRODUCT_DECISION',
+          title: 'Decide the fate of the unwired Google Sign-In scaffolding',
+          description: 'desc',
+          backlogItemId: truncatedId,
+          options: [],
+        },
+      ],
+    };
+    const result = await runLeadPlanning({ invoker: leadInvoker(plan), cycleId: 'cyc_test_trunc', signals: [] });
+    expect(result.approvalRequestIds).toHaveLength(1);
+    const created = getApprovalRequest(result.approvalRequestIds[0] as string);
+    // The bad id must not be persisted verbatim — that would create a second,
+    // unfindable "identity" for the same real backlog item.
+    expect(created?.backlogItemId).toBeUndefined();
+    expect(created?.backlogItemId).not.toBe(truncatedId);
+    // The real item's status is untouched by an escalation that couldn't resolve to it.
+    expect(getBacklogItem(item.id)?.status).toBe('CANDIDATE');
+  });
+
+  it('a later escalation with the CORRECT backlogItemId still dedupes against an existing pending approval for that item, even though an earlier truncated-id escalation could not be linked to it', async () => {
+    const item = createBacklogItem({
+      title: 'Add basic CI via GitHub Actions',
+      description: 'Lint/type-check/build/test.',
+      source: 'test',
+      category: 'TECH_DEBT',
+      userImpact: 2,
+      severity: 1,
+      confidence: 0.7,
+      effort: 2,
+      strategicRelevance: 2,
+      rationale: 'Would catch regressions earlier.',
+    });
+
+    const first = await runLeadPlanning({
+      invoker: leadInvoker({ ...emptyPlan, escalations: [{ type: 'FOUNDER_DECISION_REQUIRED', title: 'Approve adding CI', description: 'd1', backlogItemId: item.id }] }),
+      cycleId: 'cyc_ci_1',
+      signals: [],
+    });
+    const second = await runLeadPlanning({
+      invoker: leadInvoker({ ...emptyPlan, escalations: [{ type: 'SECURITY_ARCHITECTURE_APPROVAL_REQUIRED', title: 'Approve adding GitHub Actions CI so it can start', description: 'd2', backlogItemId: item.id }] }),
+      cycleId: 'cyc_ci_2',
+      signals: [],
+    });
+
+    expect(second.approvalRequestIds[0]).toBe(first.approvalRequestIds[0]);
+    expect(listApprovalRequests('PENDING').filter((r) => r.backlogItemId === item.id)).toHaveLength(1);
+  });
+
+  it("the Lead's prompt includes currently PENDING approval requests, with an instruction not to re-escalate them", async () => {
+    const item = createBacklogItem({
+      title: 'Decide fate of unwired Google Sign-In scaffolding',
+      description: 'Finish wiring it up or remove it.',
+      source: 'test',
+      category: 'FEATURE_GAP',
+      userImpact: 2,
+      severity: 1,
+      confidence: 0.6,
+      effort: 2,
+      strategicRelevance: 2,
+      rationale: 'Ambiguous product call.',
+    });
+    const existingApproval = createApprovalRequest({
+      type: 'AMBIGUOUS_HIGH_IMPACT_PRODUCT_DECISION',
+      title: 'Decide the fate of the unwired Google Sign-In scaffolding',
+      description: 'Already escalated in a prior cycle.',
+      backlogItemId: item.id,
+    });
+
+    const invoker = leadInvoker(emptyPlan);
+    await runLeadPlanning({ invoker, cycleId: 'cyc_context_test', signals: [] });
+
+    const call = invoker.callsFor('lead')[0];
+    expect(call).toBeDefined();
+    expect(call?.options.userPrompt).toContain('PENDING founder approval requests');
+    expect(call?.options.userPrompt).toContain(existingApproval.id);
+    expect(call?.options.userPrompt).toContain(item.id);
+    expect(call?.options.userPrompt).toMatch(/do not re-escalate/i);
   });
 
   it('an output that fails LeadPlan schema validation falls back to a safe no-op plan instead of throwing', async () => {

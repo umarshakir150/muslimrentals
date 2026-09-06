@@ -285,6 +285,54 @@ describe('approvalStore', () => {
     expect(getApprovalRequest(req.id)?.status).toBe('REJECTED');
     expect(() => decideApprovalRequest(req.id, 'APPROVED')).toThrow();
   });
+
+  it('repeated creation for the same backlog item reuses the existing PENDING approval instead of creating a duplicate (2026-09-06 dedup fix — regression: 17 PENDING rows observed for only 4 distinct decisions before this guard existed)', () => {
+    const item = createBacklogItem(baseItemInput({ title: 'Decide fate of unwired Google Sign-In scaffolding' }));
+    const first = createApprovalRequest({ type: 'AMBIGUOUS_HIGH_IMPACT_PRODUCT_DECISION', title: 'Decide the fate of the unwired Google Sign-In scaffolding', description: 'desc', backlogItemId: item.id });
+    // A later cycle re-escalating the same item, worded differently and even a different type —
+    // still must not create a second row.
+    const second = createApprovalRequest({ type: 'FOUNDER_DECISION_REQUIRED', title: 'Decide whether to finish wiring up Google Sign-In or remove the unused scaffolding', description: 'different wording, same underlying decision', backlogItemId: item.id });
+    const third = createApprovalRequest({ type: 'AMBIGUOUS_HIGH_IMPACT_PRODUCT_DECISION', title: 'Decide fate of unwired Google Sign-In scaffolding', description: 'desc', backlogItemId: item.id });
+
+    expect(second.id).toBe(first.id);
+    expect(third.id).toBe(first.id);
+    expect(listApprovalRequests('PENDING').filter((r) => r.backlogItemId === item.id)).toHaveLength(1);
+    // The reused row keeps its original title/type — a later duplicate call never mutates it.
+    expect(getApprovalRequest(first.id)?.title).toBe('Decide the fate of the unwired Google Sign-In scaffolding');
+  });
+
+  it('two different backlog items each get their own PENDING approval — the dedup guard is per-item, not global', () => {
+    const a = createBacklogItem(baseItemInput({ title: 'Item A' }));
+    const b = createBacklogItem(baseItemInput({ title: 'Item B' }));
+    const reqA = createApprovalRequest({ type: 'FOUNDER_DECISION_REQUIRED', title: 'Decide A', description: 'd', backlogItemId: a.id });
+    const reqB = createApprovalRequest({ type: 'FOUNDER_DECISION_REQUIRED', title: 'Decide B', description: 'd', backlogItemId: b.id });
+    expect(reqA.id).not.toBe(reqB.id);
+    expect(listApprovalRequests('PENDING')).toHaveLength(2);
+  });
+
+  it('once the existing approval for a backlog item is terminal (APPROVED/REJECTED/SUPERSEDED), a legitimately new future approval for that same item can still be created', () => {
+    const item = createBacklogItem(baseItemInput({ title: 'Add basic CI via GitHub Actions' }));
+    const first = createApprovalRequest({ type: 'FOUNDER_DECISION_REQUIRED', title: 'Approve adding CI', description: 'desc', backlogItemId: item.id });
+    decideApprovalRequest(first.id, 'APPROVED', 'Go ahead.');
+
+    const second = createApprovalRequest({ type: 'RECOVERY_REQUIRED', title: 'CI setup failed mid-execution', description: 'A genuinely new, later problem on the same item.', backlogItemId: item.id });
+    expect(second.id).not.toBe(first.id);
+    expect(listApprovalRequests('PENDING').map((r) => r.id)).toEqual([second.id]);
+
+    // Same holds after SUPERSEDED, not just APPROVED/REJECTED.
+    decideApprovalRequest(second.id, 'SUPERSEDED', 'Duplicate of another request.');
+    const third = createApprovalRequest({ type: 'RECOVERY_REQUIRED', title: 'CI setup failed again', description: 'desc', backlogItemId: item.id });
+    expect(third.id).not.toBe(second.id);
+    expect(getApprovalRequest(third.id)?.status).toBe('PENDING');
+  });
+
+  it('decideApprovalRequest accepts SUPERSEDED as a terminal status distinct from REJECTED', () => {
+    const req = createApprovalRequest({ type: 'FOUNDER_DECISION_REQUIRED', title: 'Duplicate escalation', description: 'desc' });
+    const decided = decideApprovalRequest(req.id, 'SUPERSEDED', 'Superseded by appr_canonical — duplicate of the same backlog item.');
+    expect(decided.status).toBe('SUPERSEDED');
+    expect(decided.decisionNote).toContain('Superseded by appr_canonical');
+    expect(() => decideApprovalRequest(req.id, 'APPROVED')).toThrow();
+  });
 });
 
 describe('eventLog', () => {

@@ -1,10 +1,8 @@
 /**
- * Unit coverage for the shared notification helpers (src/utils/notifications.ts):
- *  - createNotification writes the DB row and pushes it over the
- *    recipient's personal Socket.IO room, and tolerates a missing `io`
- *    (e.g. in contexts where the socket server isn't wired up).
- *  - isUserViewingConversation reads live Socket.IO room membership rather
- *    than any client-supplied claim.
+ * Unit coverage for the shared notification helper (src/utils/notifications.ts):
+ * createNotification writes the DB row and pushes it over the recipient's
+ * personal Socket.IO room, and tolerates a missing `io` (e.g. in contexts
+ * where the socket server isn't wired up).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -18,7 +16,7 @@ vi.mock('../../src/prisma/client', () => ({
   },
 }));
 
-import { createNotification, isUserViewingConversation } from '../../src/utils/notifications';
+import { createNotification } from '../../src/utils/notifications';
 
 beforeEach(() => {
   notificationCreateMock.mockReset();
@@ -58,42 +56,5 @@ describe('createNotification', () => {
       title: 'Listing saved',
       body: 'Someone saved your listing',
     })).resolves.toEqual({ id: 'n2' });
-  });
-});
-
-describe('isUserViewingConversation', () => {
-  function fakeIo(rooms: Record<string, string[]>) {
-    const roomsMap = new Map<string, Set<string>>();
-    const socketsMap = new Map<string, { userId: string }>();
-    let i = 0;
-    for (const [room, userIds] of Object.entries(rooms)) {
-      const set = new Set<string>();
-      for (const userId of userIds) {
-        const id = `s${i++}`;
-        socketsMap.set(id, { userId });
-        set.add(id);
-      }
-      roomsMap.set(room, set);
-    }
-    return { sockets: { adapter: { rooms: roomsMap }, sockets: socketsMap } };
-  }
-
-  it('returns true when the user has a socket joined to the conversation room', () => {
-    const io = fakeIo({ 'conv:c1': ['u1', 'u2'] });
-    expect(isUserViewingConversation(io, 'u1', 'c1')).toBe(true);
-  });
-
-  it('returns false when the user is not in the room', () => {
-    const io = fakeIo({ 'conv:c1': ['u2'] });
-    expect(isUserViewingConversation(io, 'u1', 'c1')).toBe(false);
-  });
-
-  it('returns false when the room does not exist at all', () => {
-    const io = fakeIo({});
-    expect(isUserViewingConversation(io, 'u1', 'c1')).toBe(false);
-  });
-
-  it('returns false when io itself is missing, rather than throwing', () => {
-    expect(isUserViewingConversation(undefined, 'u1', 'c1')).toBe(false);
   });
 });

@@ -82,25 +82,9 @@ function activeUser(id: string, overrides: Record<string, any> = {}) {
 // (`app.set('io', server)`), so the route handlers' `req.app.get('io')`
 // calls resolve to something real-shaped without booting an actual
 // Socket.IO server for these REST-only tests.
-// `viewers` maps conversationId -> userIds whose sockets are currently
-// joined to that conversation's room (Inbox.tsx's 'conversation:join'),
-// so tests can exercise isUserViewingConversation's real room-membership
-// check instead of just asserting it exists.
-function fakeIo(viewers: Record<string, string[]> = {}) {
+function fakeIo() {
   const to = vi.fn(() => ({ emit: vi.fn() }));
-  const rooms = new Map<string, Set<string>>();
-  const socketsById = new Map<string, { userId: string }>();
-  let counter = 0;
-  for (const [convId, userIds] of Object.entries(viewers)) {
-    const set = new Set<string>();
-    for (const userId of userIds) {
-      const socketId = `socket-${counter++}`;
-      socketsById.set(socketId, { userId });
-      set.add(socketId);
-    }
-    rooms.set(`conv:${convId}`, set);
-  }
-  return { to, __to: to, sockets: { adapter: { rooms }, sockets: socketsById } };
+  return { to, __to: to };
 }
 
 async function buildApp(io: ReturnType<typeof fakeIo>) {
@@ -231,29 +215,13 @@ describe('POST /messages/conversations (start a conversation)', () => {
     expect(conversationCreateMock).not.toHaveBeenCalled();
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
     // Reusing an existing conversation is, in practice, a reply -- the
-    // landlord gets notified just like on the reply endpoint below.
+    // landlord gets notified just like on the reply endpoint below. This
+    // fires unconditionally, even if the landlord is actively viewing the
+    // conversation -- Socket.IO room membership isn't reliable enough as
+    // presence state to suppress on.
     expect(notificationCreateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: USER_B, type: 'NEW_MESSAGE' }),
     }));
-  });
-
-  it('does not notify the landlord if they already have this exact conversation open', async () => {
-    userFindUniqueMock.mockResolvedValue(activeUser(USER_A));
-    listingFindUniqueMock.mockResolvedValue({ id: LISTING_ID, userId: USER_B, title: 'Cozy 2BR' });
-    conversationFindFirstMock.mockResolvedValue({ id: CONV_ID });
-    messageCreateMock.mockResolvedValue({ id: 'm2', conversationId: CONV_ID, senderId: USER_A, body: 'follow-up' });
-    conversationUpdateMock.mockResolvedValue({});
-
-    const io = fakeIo({ [CONV_ID]: [USER_B] });
-    const app = await buildApp(io);
-
-    const res = await request(app)
-      .post('/api/v1/messages/conversations')
-      .set('Authorization', `Bearer ${signToken(USER_A)}`)
-      .send({ listingId: LISTING_ID, body: 'follow-up' });
-
-    expect(res.status).toBe(200);
-    expect(notificationCreateMock).not.toHaveBeenCalled();
   });
 
   it('blocks starting a conversation with a listing owner who has restricted this sender from messaging them again', async () => {
@@ -317,31 +285,14 @@ describe('POST /messages/conversations/:id/messages (reply)', () => {
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
     // The other participant (A) is notified; the sender (B) never is --
     // notifying someone for their own action would be noise, not signal.
+    // This fires unconditionally, even if A is actively viewing the
+    // conversation -- Socket.IO room membership isn't reliable enough as
+    // presence state to suppress on (a redundant notification beats a
+    // missing one).
     expect(notificationCreateMock).toHaveBeenCalledTimes(1);
     expect(notificationCreateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: USER_A, type: 'NEW_MESSAGE' }),
     }));
-  });
-
-  it('does not notify a recipient who already has this exact conversation open in real time', async () => {
-    userFindUniqueMock.mockResolvedValue(activeUser(USER_B));
-    conversationFindUniqueMock.mockResolvedValue({
-      id: CONV_ID,
-      participants: [{ userId: USER_A }, { userId: USER_B }],
-    });
-    messageCreateMock.mockResolvedValue({ id: 'm3', conversationId: CONV_ID, senderId: USER_B, body: 'Sure, come by Friday' });
-    conversationUpdateMock.mockResolvedValue({});
-
-    const io = fakeIo({ [CONV_ID]: [USER_A] });
-    const app = await buildApp(io);
-
-    const res = await request(app)
-      .post(`/api/v1/messages/conversations/${CONV_ID}/messages`)
-      .set('Authorization', `Bearer ${signToken(USER_B)}`)
-      .send({ body: 'Sure, come by Friday' });
-
-    expect(res.status).toBe(201);
-    expect(notificationCreateMock).not.toHaveBeenCalled();
   });
 
   it('blocks a reply from a participant restricted from messaging the other participant again', async () => {

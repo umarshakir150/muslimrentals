@@ -21,6 +21,7 @@ import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
 import { geocodeAddress, verifyConfirmedPinLocation } from '../utils/geocode';
+import { createNotification } from '../utils/notifications';
 import { logger } from '../utils/logger';
 import {
   listingCreateSchema,
@@ -521,10 +522,26 @@ router.post('/:id/save', validateUuidParam('id'), authenticate, writeRateLimiter
     }
 
     // Verify listing exists before creating saved record
-    const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { id: true, userId: true, title: true } });
     if (!listing) throw new AppError('Listing not found.', 404);
 
     await prisma.savedListing.create({ data: { userId: req.user!.id, listingId: req.params.id } });
+
+    // Only the save transition notifies (never unsave, above), only the
+    // owner (never a permanently-deleted owner -- listing.userId is null
+    // in that case), and never the owner saving their own listing -- that
+    // would be notifying a user for their own action.
+    if (listing.userId && listing.userId !== req.user!.id) {
+      await createNotification({
+        io:     req.app.get('io'),
+        userId: listing.userId,
+        type:   'LISTING_SAVED',
+        title:  'Listing saved',
+        body:   `Someone saved your listing: ${listing.title}`,
+        data:   { listingId: listing.id },
+      });
+    }
+
     res.json({ success: true, saved: true });
   } catch (err) { next(err); }
 });

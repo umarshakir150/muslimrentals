@@ -316,6 +316,48 @@ router.get('/me/notifications', authenticate, async (req: AuthRequest, res: Resp
   } catch (err) { next(err); }
 });
 
+// ─── GET /users/me/notifications/unread-count ────────────────────────────────
+// Mirrors GET /messages/unread-count's exact shape/pattern -- a plain count,
+// no dedicated rate limiter (same as that route), so the frontend can poll
+// both the same way.
+router.get('/me/notifications/unread-count', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const count = await prisma.notification.count({ where: { userId: req.user!.id, isRead: false } });
+    res.json({ success: true, data: { count } });
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /users/me/notifications/read-all ──────────────────────────────────
+// Registered before the single-notification /:id/read route below only for
+// readability (grouping the two "mark read" routes together) -- Express
+// disambiguates them by path depth regardless of registration order
+// ('read-all' has one segment after /notifications/, ':id/read' has two).
+router.patch('/me/notifications/read-all', authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await prisma.notification.updateMany({
+      where: { userId: req.user!.id, isRead: false },
+      data:  { isRead: true },
+    });
+    res.json({ success: true, message: 'All notifications marked as read.' });
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /users/me/notifications/:id/read ──────────────────────────────────
+// Object-level authorization: looked up by id, then checked against
+// req.user.id server-side -- a notification that doesn't exist and one
+// that exists but belongs to someone else both 404 identically, so a
+// caller can never enumerate another user's notification ids by probing
+// for a 403-vs-404 difference.
+router.patch('/me/notifications/:id/read', validateUuidParam('id'), authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const notif = await prisma.notification.findUnique({ where: { id: req.params.id }, select: { id: true, userId: true } });
+    if (!notif || notif.userId !== req.user!.id) throw new AppError('Notification not found.', 404);
+
+    const updated = await prisma.notification.update({ where: { id: req.params.id }, data: { isRead: true } });
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
 // ─── DELETE /users/me/avatar — remove profile picture ─────────────────────────
 router.delete('/me/avatar', authenticate, writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

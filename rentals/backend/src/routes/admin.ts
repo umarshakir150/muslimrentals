@@ -19,6 +19,7 @@ import { AppError } from '../middleware/errorHandler';
 import { UserRole, ListingStatus, ReportStatus } from '@prisma/client';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { adminRateLimiter, writeRateLimiter } from '../middleware/rateLimiter';
+import { createNotification } from '../utils/notifications';
 import { logger } from '../utils/logger';
 
 const router = Router();
@@ -363,7 +364,7 @@ router.get('/listings', async (req, res: Response, next: NextFunction) => {
 router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { reason } = removeListingSchema.parse(req.body);
-    const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    const listing = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { id: true, userId: true, title: true } });
     if (!listing) throw new AppError('Listing not found.', 404);
 
     await prisma.listing.update({
@@ -378,6 +379,22 @@ router.delete('/listings/:id', validateUuidParam('id'), writeRateLimiter, async 
         moderationRestoredById:   null,
       },
     });
+
+    // Deliberately generic and free of the moderator's own `reason` text --
+    // that field is internal moderation record, not something to surface
+    // verbatim to the affected user. listing.title is fine to include: it's
+    // the owner's own already-known listing title, not privileged data.
+    if (listing.userId) {
+      await createNotification({
+        io:     req.app.get('io'),
+        userId: listing.userId,
+        type:   'LISTING_REMOVED',
+        title:  'Listing removed',
+        body:   `Your listing "${listing.title}" was removed by a moderator for violating our community guidelines.`,
+        data:   { listingId: listing.id },
+      });
+    }
+
     res.json({ success: true, message: 'Listing removed.' });
   } catch (err) { next(err); }
 });
@@ -398,7 +415,7 @@ router.patch('/listings/:id/restore', validateUuidParam('id'), writeRateLimiter,
   try {
     const listing = await prisma.listing.findUnique({
       where:  { id: req.params.id },
-      select: { id: true, moderationRemovedAt: true, moderationRestoredAt: true, user: { select: { isBanned: true } } },
+      select: { id: true, userId: true, title: true, moderationRemovedAt: true, moderationRestoredAt: true, user: { select: { isBanned: true } } },
     });
     if (!listing) throw new AppError('Listing not found.', 404);
     if (!listing.moderationRemovedAt || listing.moderationRestoredAt) {
@@ -421,6 +438,18 @@ router.patch('/listings/:id/restore', validateUuidParam('id'), writeRateLimiter,
         moderationRestoredById: req.user!.id,
       },
     });
+
+    // listing.userId is guaranteed non-null here -- the `!listing.user`
+    // check above already rejects a permanently-deleted owner.
+    await createNotification({
+      io:     req.app.get('io'),
+      userId: listing.userId!,
+      type:   'LISTING_RESTORED',
+      title:  'Listing restored',
+      body:   `Your listing "${listing.title}" has been restored and is live again.`,
+      data:   { listingId: listing.id },
+    });
+
     res.json({ success: true, message: 'Listing restored.' });
   } catch (err) { next(err); }
 });

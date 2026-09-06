@@ -382,6 +382,23 @@ export default function AdminPage() {
                                   {' '}{r.reporterHistory.dismissed} dismissed.
                                 </p>
                               )}
+                              {/* Which prior-interaction path satisfied the report-eligibility gate
+                                  (POST /users/:id/report) -- evidence for judging report legitimacy,
+                                  per Trust & Safety's design-review recommendation. GET /admin/reports
+                                  returns this as a plain enum string (Report.qualifyingInteraction),
+                                  not a nested object -- compare it directly. */}
+                              {r.qualifyingInteraction && (
+                                <p>
+                                  Qualifying interaction:{' '}
+                                  {r.qualifyingInteraction === 'SHARED_CONVERSATION'
+                                    ? 'Shared conversation with the reported user'
+                                    : r.qualifyingInteraction === 'LISTING_MESSAGED'
+                                    ? 'Messaged about their listing'
+                                    : r.qualifyingInteraction === 'LISTING_SAVED'
+                                    ? 'Saved their listing'
+                                    : r.qualifyingInteraction}
+                                </p>
+                              )}
                             </div>
                           )}
 

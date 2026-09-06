@@ -26,9 +26,11 @@ const LISTING_ID = '22222222-2222-4222-8222-222222222222';
 
 const geocodeAddressMock = vi.fn();
 const verifyConfirmedPinLocationMock = vi.fn();
+class GeocodingUnavailableError extends Error {}
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
   verifyConfirmedPinLocation: (...args: any[]) => verifyConfirmedPinLocationMock(...args),
+  GeocodingUnavailableError,
 }));
 
 const createMock = vi.fn();
@@ -285,6 +287,25 @@ describe('POST /listings — universal confirm-property-location flow', () => {
       .send(validPayload({ address: 'Not A Real Address Whatsoever' }));
 
     expect(res.status).toBe(422);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  // Regression coverage: a geocoding-provider rate-limit used to be
+  // indistinguishable from "this address doesn't exist", surfacing the
+  // exact same "check the street number and spelling" 422 -- actively
+  // misleading for an address that's actually fine.
+  it('returns a distinct 503 (never the address-spelling 422) when the forward geocode is rate-limited, and creates nothing', async () => {
+    geocodeAddressMock.mockRejectedValue(new GeocodingUnavailableError());
+    const app = await buildApp();
+
+    const res = await request(app)
+      .post('/api/v1/listings')
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send(validPayload({ address: '732 Mill St' }));
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/temporarily unavailable/i);
+    expect(res.body.message).not.toMatch(/spelling/i);
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -563,6 +584,25 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
     }));
   });
 
+  // Regression coverage: the reverse-geocode pin-verification step being
+  // rate-limited used to be indistinguishable from "pin resolves to the
+  // wrong city" (both surfaced as a generic reverse-geocoding-service-error
+  // 422), which could reject a perfectly valid, already-confirmed pin.
+  it('returns a distinct 503 (never a pin-rejection 422) when the reverse-geocode pin verification is rate-limited, and applies no update', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    verifyConfirmedPinLocationMock.mockRejectedValue(new GeocodingUnavailableError());
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '732 Mill St', city: 'Windsor', province: 'ON', confirmedLat: 42.3034, confirmedLng: -83.0765 });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/temporarily unavailable/i);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
   // Same regression as POST's "several kilometres from a badly-wrong
   // geocoded starting point" test above -- PATCH must follow the identical
   // rule, not a distance-from-the-geocoded-point check.
@@ -588,9 +628,8 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
     }));
   });
 
-  it('applies the edit using the landlord-confirmed pin when only city/province changed (re-geocoded from the existing stored address)', async () => {
+  it('applies the edit using the landlord-confirmed pin when only city/province changed (re-geocoded from the existing stored address), without re-running the forward geocode', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
-    geocodeAddressMock.mockResolvedValue({ lat: 49.2827, lng: -123.1207, confidence: 'precise' });
     updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...args.data, images: [], amenities: [], user: {} }));
     const app = await buildApp();
 
@@ -604,7 +643,12 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
 
     expect(res.status).toBe(200);
     expect(res.body.needsLocationConfirmation).toBeUndefined();
-    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Vancouver', 'ON', { requirePreciseMatch: true });
+    // A confirmed pin is already present, so the forward geocode (only ever
+    // needed to produce a STARTING point for confirmation) must never run --
+    // re-running it here would be pure waste, and previously meant a
+    // perfectly valid confirmed pin could be rejected by an unrelated,
+    // redundant forward-geocode failure (e.g. the provider rate-limiting).
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
     expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Vancouver', 'ON');
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, city: 'Vancouver' }),

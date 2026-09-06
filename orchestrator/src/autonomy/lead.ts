@@ -29,9 +29,9 @@ import { getStandingObjective } from './objective.js';
 import { createBacklogItem, findSimilarBacklogItems, getBacklogItem, listBacklogItems, mergeDuplicate, updateBacklogItem } from './backlogStore.js';
 import { getRelevantMemory } from './memoryStore.js';
 import { classifyRisk, type RiskClassification } from './riskClassification.js';
-import { createApprovalRequest } from './approvalStore.js';
+import { createApprovalRequest, listApprovalRequests } from './approvalStore.js';
 import { logAutonomyEvent } from './eventLog.js';
-import { AutonomyJsonSchemas, LeadPlan, type BacklogItem, type EscalationType, type Signal } from './types.js';
+import { AutonomyJsonSchemas, LeadPlan, type ApprovalRequest, type BacklogItem, type EscalationType, type Signal } from './types.js';
 
 const SELECTABLE_STATUSES = new Set(['CANDIDATE', 'TRIAGED', 'READY']);
 
@@ -52,7 +52,7 @@ Set it to null if nothing is currently safe/ready to start (that's a legitimate 
 
 selectionRationale: explain in plain language why this item, not another — cite its priority, evidence, and why it's safe to start now. This is what CLAUDE.md and the founder will actually read to understand your reasoning.
 
-escalations: use ONLY for genuine founder-level decisions — CLAUDE.md's own reserved categories (production deployment, irreversible production changes, deleting production data, permanent bans, publishing legal policy, spending money, major auth/security or architecture rewrites), ambiguous high-impact product direction, or anything you are not confident is safe to decide yourself. Do NOT escalate routine implementation details, ordinary component choices, obvious bug fixes, minor UX decisions, or normal agent/role selection — those are exactly what the existing team already handles without founder involvement. An empty escalations list is the normal, expected case most cycles.
+escalations: use ONLY for genuine founder-level decisions — CLAUDE.md's own reserved categories (production deployment, irreversible production changes, deleting production data, permanent bans, publishing legal policy, spending money, major auth/security or architecture rewrites), ambiguous high-impact product direction, or anything you are not confident is safe to decide yourself. Do NOT escalate routine implementation details, ordinary component choices, obvious bug fixes, minor UX decisions, or normal agent/role selection — those are exactly what the existing team already handles without founder involvement. An empty escalations list is the normal, expected case most cycles. Before adding an escalation for a backlog item, check the "Currently PENDING founder approval requests" list above: if that item already appears there (by its id), do NOT create another escalation for it, regardless of the type or phrasing you'd use — it is already sitting in the founder's queue awaiting a decision. Only escalate an item again after its existing pending request has actually been decided (it will no longer appear in that list) and something has genuinely changed.
 
 Remember: core MVP functionality and fixing broken user journeys generally outrank cosmetic polish; security, privacy, and trust & safety issues generally outrank both; testing/verification gaps deserve real priority once autonomous changes are happening, since they are what makes further autonomous work safe to trust.`;
 
@@ -75,6 +75,16 @@ function summarizeBacklogItem(item: BacklogItem) {
     dependencies: item.dependencies,
     relatedTasks: item.relatedTasks,
     lastEvaluatedAt: item.lastEvaluatedAt,
+  };
+}
+
+function summarizeApproval(request: ApprovalRequest) {
+  return {
+    id: request.id,
+    backlogItemId: request.backlogItemId,
+    type: request.type,
+    title: request.title,
+    createdAt: request.createdAt,
   };
 }
 
@@ -128,6 +138,7 @@ export async function runLeadPlanning(params: RunLeadPlanningParams): Promise<Le
   const objective = getStandingObjective();
   const backlog = listBacklogItems({ limit: 40 });
   const memory = getRelevantMemory({ limit: 15 });
+  const pendingApprovals = listApprovalRequests('PENDING');
 
   const profile = getProfile('lead');
   const bundle = buildContext({ role: 'lead', objective });
@@ -136,6 +147,7 @@ export async function runLeadPlanning(params: RunLeadPlanningParams): Promise<Le
   const contextBlock = [
     `## Standing founder objective\n\n${objective}`,
     `## Current backlog (${backlog.length} items, priority-sorted; full history of anything already worked on lives in ai/tasks/)\n\n${JSON.stringify(backlog.map(summarizeBacklogItem), null, 2)}`,
+    `## Currently PENDING founder approval requests (${pendingApprovals.length}) — already in the founder's queue, awaiting a decision; do not re-escalate any backlog item listed here\n\n${JSON.stringify(pendingApprovals.map(summarizeApproval), null, 2)}`,
     `## Signals available this cycle (${signals.length})\n\n${JSON.stringify(signals.map(summarizeSignal), null, 2)}`,
     `## Relevant organizational memory (${memory.length} records)\n\n${JSON.stringify(memory, null, 2)}`,
   ].join('\n\n');
@@ -265,24 +277,45 @@ export async function runLeadPlanning(params: RunLeadPlanningParams): Promise<Le
   // ── Resolve escalations into persisted ApprovalRequests ──
   const approvalRequestIds: string[] = [];
   for (const escalation of plan.escalations) {
+    // Same rigor as resolveSelectedId below: escalation.backlogItemId is
+    // free text from the model, not guaranteed to match a real backlog id
+    // verbatim. Observed for real (2026-09-06 dedup cleanup): the model
+    // sometimes truncates an id (e.g. "bl_8341eb1a" for
+    // "bl_8341eb1a-1682-4703-b0b9-6725f44258b0") or omits it while only
+    // mentioning the item in the title text. Persisting an unresolvable id
+    // verbatim would give the same real backlog item multiple approval
+    // "identities," defeating createApprovalRequest's get-or-create dedup
+    // (approvalStore.ts), which matches on exact backlogItemId. An
+    // unresolvable reference is dropped (undefined) rather than invented or
+    // guessed at — createApprovalRequest still creates the approval, just
+    // without a backlog-item link, matching how a genuinely id-less
+    // escalation already behaves.
+    const resolvedBacklogItemId = escalation.backlogItemId && getBacklogItem(escalation.backlogItemId) ? escalation.backlogItemId : undefined;
+    if (escalation.backlogItemId && !resolvedBacklogItemId) {
+      logAutonomyEvent({
+        type: 'BACKLOG_ITEM_UPDATED',
+        cycleId,
+        message: `Lead escalation referenced unresolvable backlog item id "${escalation.backlogItemId}" — approval created without a backlog-item link instead of inventing/guessing an id.`,
+      });
+    }
     const request = createApprovalRequest({
       type: escalation.type,
       title: escalation.title,
       description: escalation.description,
-      backlogItemId: escalation.backlogItemId,
+      backlogItemId: resolvedBacklogItemId,
       cycleId,
       options: escalation.options,
       recommendation: escalation.recommendation,
       tradeoffs: escalation.tradeoffs,
     });
     approvalRequestIds.push(request.id);
-    if (escalation.backlogItemId) {
-      const item = getBacklogItem(escalation.backlogItemId);
+    if (resolvedBacklogItemId) {
+      const item = getBacklogItem(resolvedBacklogItemId);
       if (item && item.status !== 'DONE' && item.status !== 'REJECTED' && item.status !== 'DUPLICATE') {
         updateBacklogItem(item.id, { status: 'APPROVAL_REQUIRED', changeReason: `Lead escalation: ${escalation.title}` });
       }
     }
-    logAutonomyEvent({ type: 'APPROVAL_REQUIRED', cycleId, backlogItemId: escalation.backlogItemId, message: escalation.title, data: { approvalRequestId: request.id, escalationType: escalation.type } });
+    logAutonomyEvent({ type: 'APPROVAL_REQUIRED', cycleId, backlogItemId: resolvedBacklogItemId, message: escalation.title, data: { approvalRequestId: request.id, escalationType: escalation.type } });
   }
 
   // ── Resolve the selection — the one place a HIGH-risk item is guaranteed to be blocked before any execution can start ──

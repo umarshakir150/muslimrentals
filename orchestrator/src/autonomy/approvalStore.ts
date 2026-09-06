@@ -41,7 +41,29 @@ export interface CreateApprovalInput {
   tradeoffs?: string;
 }
 
+/** Returns the existing PENDING approval for this backlog item, if any.
+ * Only PENDING matters here: once a request is APPROVED/REJECTED/SUPERSEDED
+ * the founder has already decided something about that item, and a
+ * genuinely new future ask for the same item must be free to create a fresh
+ * PENDING row rather than being silently swallowed by an old, resolved one. */
+function findPendingApprovalForBacklogItem(backlogItemId: string): ApprovalRequest | undefined {
+  return listApprovalRequests('PENDING').find((r) => r.backlogItemId === backlogItemId);
+}
+
+/** Get-or-create: every call site (the Lead's escalations, the Lead's
+ * HIGH-risk-selection block, cycle.ts's execution-time escalations) used to
+ * call this as a bare "always insert," so the same backlog item could pick
+ * up a fresh, differently-worded PENDING approval every cycle it was
+ * reconsidered — observed for real (2026-09-06 dedup cleanup: 17 PENDING
+ * rows covering only 4 distinct decisions). Guarding here, once, protects
+ * every caller uniformly instead of requiring each call site to remember to
+ * check first. Only guards when a `backlogItemId` is given — a freeform
+ * escalation with none is rarer and always allowed through as before. */
 export function createApprovalRequest(input: CreateApprovalInput): ApprovalRequest {
+  if (input.backlogItemId) {
+    const existing = findPendingApprovalForBacklogItem(input.backlogItemId);
+    if (existing) return existing;
+  }
   const request: ApprovalRequest = ApprovalRequest.parse({
     id: newId('appr'),
     ...input,
@@ -66,7 +88,7 @@ export function listApprovalRequests(status?: ApprovalStatus): ApprovalRequest[]
   return rows.map(rowToRequest);
 }
 
-export function decideApprovalRequest(id: string, status: 'APPROVED' | 'REJECTED', decisionNote?: string): ApprovalRequest {
+export function decideApprovalRequest(id: string, status: 'APPROVED' | 'REJECTED' | 'SUPERSEDED', decisionNote?: string): ApprovalRequest {
   const existing = getApprovalRequest(id);
   if (!existing) throw new Error(`decideApprovalRequest: no approval request "${id}"`);
   if (existing.status !== 'PENDING') throw new Error(`decideApprovalRequest: "${id}" is already ${existing.status}, not PENDING.`);

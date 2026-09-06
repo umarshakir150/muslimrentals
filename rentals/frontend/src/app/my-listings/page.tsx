@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Home, Trash2 } from 'lucide-react';
+import { Home, Trash2, Pencil } from 'lucide-react';
 import Navbar from '@/components/layout/Navbar';
 import AuthModal from '@/components/auth/AuthModal';
 import DeleteListingDialog from '@/components/listings/DeleteListingDialog';
@@ -14,6 +14,7 @@ import { useIsAuthenticated } from '@/store/authStore';
 import { formatCAD, cn } from '@/lib/utils';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
+const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
 
 const STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'Active',
@@ -35,6 +36,7 @@ export default function MyListingsPage() {
   const [hasError, setHasError] = useState(false);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Listing | null>(null);
+  const [editTarget, setEditTarget] = useState<Listing | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
 
   const isAuth = useIsAuthenticated();
@@ -61,6 +63,14 @@ export default function MyListingsPage() {
   function handleDeleted(listingId: string) {
     setListings(prev => prev.filter(l => l.id !== listingId));
     setDeleteTarget(null);
+  }
+
+  // Called by PostListingModal (mode="edit") once a PATCH save actually
+  // succeeds -- replaces just that one row in place rather than
+  // re-fetching the whole list, so the rest of the page's scroll
+  // position/state isn't disturbed by an edit elsewhere in the list.
+  function handleUpdated(updated: Listing) {
+    setListings(prev => prev.map(l => (l.id === updated.id ? { ...l, ...updated } : l)));
   }
 
   if (!isAuth) {
@@ -155,12 +165,20 @@ export default function MyListingsPage() {
                     </p>
                   </div>
 
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setDeleteTarget(listing); }}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 px-3 py-2 shrink-0"
-                  >
-                    <Trash2 size={14} /> Delete
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditTarget(listing); }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:text-brand-800 px-3 py-2"
+                    >
+                      <Pencil size={14} /> Edit
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(listing); }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 px-3 py-2"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -186,6 +204,14 @@ export default function MyListingsPage() {
           onDeleted={handleDeleted}
         />
       )}
+
+      <PostListingModal
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        mode="edit"
+        listing={editTarget ?? undefined}
+        onSaved={handleUpdated}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -14,15 +14,42 @@ import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
 import ConfirmLocationMap from '@/components/listings/ConfirmLocationMap';
 import { postListingSchema, PostListingFormData as FormData } from '@/lib/postListingSchema';
+import type { Listing, ListingImage } from '@/types';
 
-interface PostListingModalProps { open: boolean; onClose: () => void; }
+const MAX_PHOTOS = 10;
+
+interface PostListingModalProps {
+  open: boolean;
+  onClose: () => void;
+  // Absent/'create' (the default) posts a brand new listing. 'edit'
+  // reuses this exact same form/modal for an owner editing their own
+  // existing listing instead of building a second, parallel form -- the
+  // only real differences are: the form starts prefilled, the submit call
+  // is PATCH instead of POST, existing photos are shown and individually
+  // removable, and a failed post-save photo upload never rolls back an
+  // edit's already-saved field changes the way it rolls back a fresh
+  // create (there's no "undo" for an edit -- the listing already existed).
+  mode?: 'create' | 'edit';
+  // Required when mode='edit'. Comes from an owner-authenticated response
+  // (GET /users/me/listings or GET /listings/:id as the owner) that
+  // carries the REAL address/unit/lat/lng, never the public-redacted
+  // shape -- see toPublicListingLocation in utils/geo.ts. This component
+  // never fetches it itself.
+  listing?: Listing;
+  // Called once a PATCH edit actually succeeds (before the success
+  // animation/auto-close), so the caller's own listing list can reflect
+  // the change immediately rather than waiting for the modal to close.
+  // Never called in create mode -- PostListingModal has never reported
+  // its create result upward, and this PR doesn't change that.
+  onSaved?: (listing: any) => void;
+}
 
 // Set after every address submission (see routes/listings.ts's universal
 // confirm-property-location flow / resolveGeocodedLocation) -- nothing was
-// created yet, regardless of how confident the geocode match was.
+// created/changed yet, regardless of how confident the geocode match was.
 // `pinLat`/`pinLng` start at the geocoder's matched point and track the
-// landlord's drag; confirming resubmits the same form payload plus
-// confirmedLat/confirmedLng.
+// landlord's drag/click/search (see ConfirmLocationMap.tsx); confirming
+// resubmits the same form payload plus confirmedLat/confirmedLng.
 interface PendingLocationConfirmation {
   formData: FormData;
   matchedLat: number;
@@ -37,13 +64,22 @@ const AMENITIES = [
   'Private entrance', 'Basement unit', 'Balcony', 'Backyard access',
 ];
 
-export default function PostListingModal({ open, onClose }: PostListingModalProps) {
+export default function PostListingModal({ open, onClose, mode = 'create', listing, onSaved }: PostListingModalProps) {
   const isAuth = useIsAuthenticated();
   const [authOpen, setAuthOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  // Edit mode only: the listing's photos that already exist on the server.
+  // Removing one calls DELETE /uploads/listing-images/:id immediately (the
+  // endpoint is a real, immediate delete, not a staged batch) -- it is
+  // NOT gated behind pressing "Save changes" below, matching how the
+  // endpoint itself already behaves elsewhere in the app (e.g. avatar
+  // removal). A failed removal restores it to this list and shows a toast
+  // rather than silently leaving the UI out of sync with the server.
+  const [existingImages, setExistingImages] = useState<ListingImage[]>([]);
+  const [removingImageIds, setRemovingImageIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingLocationConfirmation | null>(null);
@@ -56,17 +92,55 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
 
   const city = watch('city');
 
+  // Populate the form from the listing being edited every time the modal
+  // opens for it -- deliberately keyed on `open` (not just `listing.id`)
+  // so reopening the SAME listing after a previous close/cancel always
+  // starts from its current server state again, not from whatever the
+  // form happened to be left at.
+  useEffect(() => {
+    if (!open || mode !== 'edit' || !listing) return;
+    reset({
+      title: listing.title,
+      description: listing.description,
+      price: listing.price,
+      bedrooms: listing.bedrooms,
+      bathrooms: listing.bathrooms,
+      audience: listing.audience,
+      city: listing.city,
+      town: listing.town ?? undefined,
+      province: listing.province ?? undefined,
+      // A legacy (pre-geocoding) listing has no real address on file --
+      // the field starts empty and the landlord has to supply one to save
+      // any edit, same as postListingSchema already requires for create.
+      // That's an intentional forced upgrade to the current address-based
+      // model, not a bug: this shared form has never supported the legacy
+      // neighbourhood-only shape as an input.
+      address: listing.address ?? '',
+      unit: listing.unit ?? undefined,
+      contactInfo: listing.contactInfo,
+    });
+    setSelectedAmenities(listing.amenities ?? []);
+    setExistingImages(listing.images ?? []);
+    setImages([]);
+    setImagePreviews([]);
+    setStep(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, listing?.id]);
+
+  const maxNewPhotos = Math.max(0, MAX_PHOTOS - (mode === 'edit' ? existingImages.length : 0));
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    const newFiles = [...images, ...acceptedFiles].slice(0, 10);
+    const newFiles = [...images, ...acceptedFiles].slice(0, maxNewPhotos);
     setImages(newFiles);
     setImagePreviews(newFiles.map(f => URL.createObjectURL(f)));
-  }, [images]);
+  }, [images, maxNewPhotos]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'image/jpeg': [], 'image/png': [], 'image/webp': [] },
-    maxFiles: 10,
+    maxFiles: maxNewPhotos,
     maxSize: 10 * 1024 * 1024,
+    disabled: maxNewPhotos === 0,
   });
 
   const removeImage = (i: number) => {
@@ -76,59 +150,88 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     setImagePreviews(newPreviews);
   };
 
+  async function removeExistingImage(image: ListingImage) {
+    setRemovingImageIds(prev => new Set(prev).add(image.id));
+    try {
+      await listingsApi.deleteImage(image.id);
+      setExistingImages(prev => prev.filter(img => img.id !== image.id));
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Could not remove photo', description: err.message });
+    } finally {
+      setRemovingImageIds(prev => { const next = new Set(prev); next.delete(image.id); return next; });
+    }
+  }
+
   const toggleAmenity = (a: string) => {
     setSelectedAmenities(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
   };
 
   // Shared by the direct-success path and the post-confirmation resubmit
-  // below -- both end the same way (upload photos, roll back on failure,
-  // show the success state).
-  async function finalizeListing(listing: any) {
+  // below -- both end by uploading any newly added photos, then showing
+  // the success state. Create and edit diverge only in what happens if
+  // that photo upload itself fails: a fresh create with no photos live
+  // yet is rolled back entirely (an orphaned, photo-less listing isn't a
+  // successful post), but an edit's field changes are already saved on
+  // the server by this point -- there is nothing to roll back, and doing
+  // so would destroy a real, already-live listing over an unrelated photo
+  // upload failure. The edit form is instead left open with the same
+  // pending photos so the owner can just retry Save.
+  async function finalizeSave(savedListing: any) {
     if (images.length > 0) {
       try {
-        await listingsApi.uploadImages(listing.id, images);
+        await listingsApi.uploadImages(savedListing.id, images);
       } catch (uploadErr: any) {
-        // A listing the poster explicitly attached photos to must not end
-        // up live without them -- that's a silently incomplete listing,
-        // not a successful post. Roll the listing back rather than leaving
-        // it orphaned (photo-less) behind a "Listing posted!" toast, and
-        // keep the form open with the entered data + selected images
-        // intact so the poster can just retry, instead of starting over.
-        try {
-          await listingsApi.deletePermanent(listing.id);
-        } catch {
-          // Best-effort rollback -- if it fails there's nothing more the
-          // client can do here; the listing may need manual cleanup, but
-          // we still must not tell the poster this succeeded.
+        if (mode === 'create') {
+          try {
+            await listingsApi.deletePermanent(savedListing.id);
+          } catch {
+            // Best-effort rollback -- if it fails there's nothing more the
+            // client can do here; the listing may need manual cleanup, but
+            // we still must not tell the poster this succeeded.
+          }
+          toast({
+            variant: 'destructive',
+            title: 'Could not post your listing',
+            description: uploadErr.message || 'Uploading your photo failed, so nothing was posted. Please try again.',
+          });
+          return;
         }
+        onSaved?.(savedListing);
         toast({
           variant: 'destructive',
-          title: 'Could not post your listing',
-          description: uploadErr.message || 'Uploading your photo failed, so nothing was posted. Please try again.',
+          title: 'Listing updated, but new photos failed to upload',
+          description: uploadErr.message || 'Your other changes were saved. Try saving again to retry the photos.',
         });
         return;
       }
     }
     setPendingConfirmation(null);
     setSuccess(true);
-    toast({ title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' });
-    setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
+    if (mode === 'edit') onSaved?.(savedListing);
+    toast(
+      mode === 'edit'
+        ? { title: 'Listing updated!', description: 'Your changes are live.' }
+        : { title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' }
+    );
+    setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setExistingImages([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
   }
 
   async function onSubmit(data: FormData) {
     if (!isAuth) { setAuthOpen(true); return; }
     setLoading(true);
     try {
-      const res = await listingsApi.create({
-        ...data,
-        amenities: selectedAmenities,
-        imageUrls: [],
-      });
+      const res = mode === 'edit'
+        ? await listingsApi.update(listing!.id, { ...data, amenities: selectedAmenities })
+        : await listingsApi.create({ ...data, amenities: selectedAmenities, imageUrls: [] });
       if (needsLocationConfirmation(res)) {
-        // Nothing was created -- every address requires the landlord to
-        // confirm the pin first, regardless of how confident the geocode
-        // match was. Show a pin on the geocoder's matched point and let
-        // them confirm/move it before anything is saved.
+        // Nothing was created/changed -- every new or address-changing
+        // listing requires the landlord to confirm the pin first,
+        // regardless of how confident the geocode match was. An edit that
+        // didn't touch address/city/province never reaches this branch at
+        // all (the backend only re-geocodes when one of those actually
+        // changed), so an unrelated field edit never triggers
+        // reconfirmation. Show a pin on the geocoder's matched point and
+        // let them confirm/move/search it before anything is saved.
         setPendingConfirmation({
           formData: data,
           matchedLat: res.data.matchedLat,
@@ -138,7 +241,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
         });
         return;
       }
-      await finalizeListing(res.data);
+      await finalizeSave(res.data);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error', description: err.message });
     } finally { setLoading(false); }
@@ -148,20 +251,27 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (!pendingConfirmation) return;
     setLoading(true);
     try {
-      const res = await listingsApi.create({
-        ...pendingConfirmation.formData,
-        amenities: selectedAmenities,
-        imageUrls: [],
-        confirmedLat: pendingConfirmation.pinLat,
-        confirmedLng: pendingConfirmation.pinLng,
-      });
+      const res = mode === 'edit'
+        ? await listingsApi.update(listing!.id, {
+            ...pendingConfirmation.formData,
+            amenities: selectedAmenities,
+            confirmedLat: pendingConfirmation.pinLat,
+            confirmedLng: pendingConfirmation.pinLng,
+          })
+        : await listingsApi.create({
+            ...pendingConfirmation.formData,
+            amenities: selectedAmenities,
+            imageUrls: [],
+            confirmedLat: pendingConfirmation.pinLat,
+            confirmedLng: pendingConfirmation.pinLng,
+          });
       if (needsLocationConfirmation(res)) {
         // Shouldn't happen (the same address now carries a confirmed pin),
-        // but guard rather than silently drop the listing if it ever does.
+        // but guard rather than silently drop the change if it ever does.
         toast({ variant: 'destructive', title: 'Error', description: 'Please try confirming the location again.' });
         return;
       }
-      await finalizeListing(res.data);
+      await finalizeSave(res.data);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Could not confirm location', description: err.message });
     } finally { setLoading(false); }
@@ -175,7 +285,7 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
     if (valid) setStep(s => s + 1);
   }
 
-  const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setSelectedAmenities([]); setPendingConfirmation(null); onClose(); } };
+  const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setExistingImages([]); setSelectedAmenities([]); setPendingConfirmation(null); onClose(); } };
 
   if (!isAuth && open) return (
     <>
@@ -210,7 +320,9 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
             {/* Header */}
             <div className="px-6 py-5 border-b border-ink/8 flex items-center justify-between shrink-0">
               <div>
-                <h2 className="font-serif text-xl">{pendingConfirmation ? 'Confirm property location' : 'Post rental listing'}</h2>
+                <h2 className="font-serif text-xl">
+                  {pendingConfirmation ? 'Confirm property location' : mode === 'edit' ? 'Edit listing' : 'Post rental listing'}
+                </h2>
                 {!pendingConfirmation && <p className="text-xs text-muted mt-0.5">Step {step} of 3</p>}
               </div>
               <button onClick={handleClose} className="p-2 rounded-full hover:bg-gray-100 transition-colors"><X size={18} /></button>
@@ -228,21 +340,24 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', duration: 0.5 }}
                   className="w-20 h-20 rounded-full bg-brand-50 flex items-center justify-center text-4xl mb-4">🎉</motion.div>
-                <h3 className="font-serif text-2xl mb-2">Listing posted!</h3>
-                <p className="text-muted">Your rental listing is now live.</p>
+                <h3 className="font-serif text-2xl mb-2">{mode === 'edit' ? 'Listing updated!' : 'Listing posted!'}</h3>
+                <p className="text-muted">{mode === 'edit' ? 'Your changes are live.' : 'Your rental listing is now live.'}</p>
               </div>
             )}
 
-            {/* Confirm-location step -- shown for EVERY new/edited address,
-                regardless of how confident the geocode match was (see the
-                universal confirm-property-location flow in
-                resolveGeocodedLocation, routes/listings.ts). Nothing has
-                been saved yet; confirming here is what actually creates
-                the listing. */}
+            {/* Confirm-location step -- shown for EVERY new or
+                address/city/province-changing edit, regardless of how
+                confident the geocode match was (see the universal
+                confirm-property-location flow in resolveGeocodedLocation,
+                routes/listings.ts). Nothing has been saved yet; confirming
+                here is what actually creates/updates the listing. Reuses
+                ConfirmLocationMap as-is (drag, click/tap, and search all
+                report through the same onChange below) -- identical in
+                create and edit mode. */}
             {!success && pendingConfirmation && (
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                 <p className="text-sm text-muted">
-                  Make sure the pin is on the property. Drag it if needed. Your exact property location will remain private.
+                  Make sure the pin is on the property. Drag, tap, or search for it below. Your exact property location will remain private.
                 </p>
                 <ConfirmLocationMap
                   initialLat={pendingConfirmation.matchedLat}
@@ -379,34 +494,65 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                   {step === 3 && (
                     <>
                       <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Photos (up to 10)</label>
-                        <div {...getRootProps()} className={cn(
-                          'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
-                          isDragActive ? 'border-brand-500 bg-brand-50' : 'border-ink/15 hover:border-brand-400 hover:bg-brand-50/30'
-                        )}>
-                          <input {...getInputProps()} />
-                          <Upload size={28} className="mx-auto text-muted mb-3" />
-                          <p className="text-sm font-semibold text-ink mb-1">{isDragActive ? 'Drop here' : 'Drag photos here, or click to browse'}</p>
-                          <p className="text-xs text-muted">JPEG, PNG, WEBP · Max 10MB each · Up to 10 photos</p>
-                        </div>
+                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Photos (up to {MAX_PHOTOS})</label>
+                        {maxNewPhotos > 0 ? (
+                          <div {...getRootProps()} className={cn(
+                            'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
+                            isDragActive ? 'border-brand-500 bg-brand-50' : 'border-ink/15 hover:border-brand-400 hover:bg-brand-50/30'
+                          )}>
+                            <input {...getInputProps()} />
+                            <Upload size={28} className="mx-auto text-muted mb-3" />
+                            <p className="text-sm font-semibold text-ink mb-1">{isDragActive ? 'Drop here' : 'Drag photos here, or click to browse'}</p>
+                            <p className="text-xs text-muted">JPEG, PNG, WEBP · Max 10MB each · Up to {MAX_PHOTOS} photos total</p>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted">
+                            You're at the {MAX_PHOTOS}-photo limit. Remove one below to add another.
+                          </p>
+                        )}
                       </div>
+
+                      {/* Existing photos (edit mode only) -- each removes
+                          immediately via DELETE /uploads/listing-images/:id,
+                          independent of pressing "Save changes" below. */}
+                      {mode === 'edit' && existingImages.length > 0 && (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                          {existingImages.map((img, i) => (
+                            <div key={img.id} className="relative aspect-square rounded-xl overflow-hidden group">
+                              <img src={img.url} alt="" className="w-full h-full object-cover" />
+                              <button
+                                type="button"
+                                aria-label="Remove photo"
+                                disabled={removingImageIds.has(img.id)}
+                                onClick={() => removeExistingImage(img)}
+                                className="absolute inset-0 bg-ink/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity disabled:opacity-100"
+                              >
+                                {removingImageIds.has(img.id) ? <Loader2 size={18} className="text-white animate-spin" /> : <X size={18} className="text-white" />}
+                              </button>
+                              {i === 0 && imagePreviews.length === 0 && (
+                                <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-full bg-white/90 text-[10px] font-bold text-brand-700">Cover</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {imagePreviews.length > 0 && (
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                           {imagePreviews.map((src, i) => (
                             <div key={i} className="relative aspect-square rounded-xl overflow-hidden group">
                               <img src={src} alt="" className="w-full h-full object-cover" />
-                              <button type="button" onClick={() => removeImage(i)}
+                              <button type="button" aria-label="Remove photo" onClick={() => removeImage(i)}
                                 className="absolute inset-0 bg-ink/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                 <X size={18} className="text-white" />
                               </button>
-                              {i === 0 && <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-full bg-white/90 text-[10px] font-bold text-brand-700">Cover</span>}
+                              {i === 0 && existingImages.length === 0 && <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-full bg-white/90 text-[10px] font-bold text-brand-700">Cover</span>}
                             </div>
                           ))}
                         </div>
                       )}
 
-                      {imagePreviews.length === 0 && (
+                      {imagePreviews.length === 0 && existingImages.length === 0 && (
                         <div className="text-center py-4 text-sm text-muted">
                           <ImageIcon size={40} className="mx-auto mb-3 opacity-20" />
                           <p>No photos yet. Listings with photos get 3× more inquiries.</p>
@@ -441,7 +587,9 @@ export default function PostListingModal({ open, onClose }: PostListingModalProp
                     </button>
                   ) : (
                     <button key="submit" type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
-                      {loading ? <><Loader2 size={16} className="animate-spin" /> Posting...</> : 'Post listing'}
+                      {loading
+                        ? <><Loader2 size={16} className="animate-spin" /> {mode === 'edit' ? 'Saving...' : 'Posting...'}</>
+                        : mode === 'edit' ? 'Save changes' : 'Post listing'}
                     </button>
                   )}
                 </div>

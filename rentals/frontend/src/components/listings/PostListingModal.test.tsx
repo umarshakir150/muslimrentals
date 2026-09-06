@@ -3,16 +3,24 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PostListingModal from './PostListingModal';
 
-const { createMock, uploadImagesMock, deletePermanentMock } = vi.hoisted(() => ({
+const { createMock, updateMock, uploadImagesMock, deletePermanentMock, deleteImageMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
+  updateMock: vi.fn(),
   uploadImagesMock: vi.fn(),
   deletePermanentMock: vi.fn(),
+  deleteImageMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
-  listingsApi: { create: createMock, uploadImages: uploadImagesMock, deletePermanent: deletePermanentMock },
+  listingsApi: {
+    create: createMock,
+    update: updateMock,
+    uploadImages: uploadImagesMock,
+    deletePermanent: deletePermanentMock,
+    deleteImage: deleteImageMock,
+  },
   // Real implementation (not a mock) -- it's a pure discriminator over
-  // whatever createMock resolves to, same as production.
+  // whatever createMock/updateMock resolves to, same as production.
   needsLocationConfirmation: (res: any) => res?.needsLocationConfirmation === true,
 }));
 
@@ -51,12 +59,16 @@ vi.mock('@/components/ui/CityAutocomplete', () => ({
 describe('PostListingModal', () => {
   beforeEach(() => {
     createMock.mockReset();
+    updateMock.mockReset();
     uploadImagesMock.mockReset();
     deletePermanentMock.mockReset();
+    deleteImageMock.mockReset();
     toastMock.mockReset();
     createMock.mockResolvedValue({ data: { id: 'listing-1', title: 'Test' } });
+    updateMock.mockResolvedValue({ data: { id: 'listing-1', title: 'Test (edited)' } });
     uploadImagesMock.mockResolvedValue({ success: true, data: [] });
     deletePermanentMock.mockResolvedValue({ success: true, message: 'Listing permanently deleted.' });
+    deleteImageMock.mockResolvedValue({ success: true, message: 'Image deleted.' });
   });
 
   async function fillStep1(user: ReturnType<typeof userEvent.setup>) {
@@ -230,7 +242,7 @@ describe('PostListingModal', () => {
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
-      expect(screen.getByText(/Make sure the pin is on the property\. Drag it if needed\. Your exact property location will remain private\./)).toBeInTheDocument();
+      expect(screen.getByText(/Make sure the pin is on the property\./)).toBeInTheDocument();
       expect(uploadImagesMock).not.toHaveBeenCalled();
     });
 
@@ -298,6 +310,164 @@ describe('PostListingModal', () => {
 
       expect(screen.getByText('Post rental listing')).toBeInTheDocument();
       expect(createMock).toHaveBeenCalledTimes(1); // only the original attempt -- nothing further submitted
+    });
+  });
+
+  describe('edit mode', () => {
+    const EXISTING_LISTING = {
+      id: 'listing-42',
+      title: 'Existing listing title',
+      description: 'An existing description that is definitely long enough to pass validation.',
+      price: 1800,
+      bedrooms: 2,
+      bathrooms: 1,
+      audience: 'ALL' as const,
+      city: 'Toronto',
+      province: 'ON',
+      town: null,
+      address: '123 Existing Street',
+      unit: 'Unit 2',
+      contactInfo: 'existing@example.com',
+      amenities: ['Parking', 'Furnished'],
+      images: [
+        { id: 'img-1', url: 'https://example.com/1.jpg', alt: null, order: 0 },
+        { id: 'img-2', url: 'https://example.com/2.jpg', alt: null, order: 1 },
+      ],
+    } as any;
+
+    it('prefills every field from the listing prop', async () => {
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      expect(screen.getByDisplayValue('Existing listing title')).toBeInTheDocument();
+      expect(screen.getByDisplayValue(EXISTING_LISTING.description)).toBeInTheDocument();
+      expect(screen.getByDisplayValue('1800')).toBeInTheDocument();
+    });
+
+    it('shows "Edit listing" / "Save changes" instead of the create-mode copy', async () => {
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      expect(screen.getByText('Edit listing')).toBeInTheDocument();
+      const user = userEvent.setup();
+      await goToStep3(user, /* alreadyFilled */ true);
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+    });
+
+    // Reuses the same step-3 navigation helper, but the fields are already
+    // prefilled in edit mode -- Continue just needs valid data, which the
+    // prefilled listing already provides, so no re-typing is needed.
+    async function goToStep3(user: ReturnType<typeof userEvent.setup>, _alreadyFilled = true) {
+      await user.click(screen.getByRole('button', { name: /Continue/ }));
+      await waitFor(() => expect(screen.getByText('Step 2 of 3')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /Continue/ }));
+      await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());
+    }
+
+    it('submits via listingsApi.update (PATCH), never create, and reports the saved listing via onSaved', async () => {
+      const onSaved = vi.fn();
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(updateMock).toHaveBeenCalledWith('listing-42', expect.objectContaining({ title: 'Existing listing title' })));
+      expect(createMock).not.toHaveBeenCalled();
+      await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' })));
+    });
+
+    it('an address/city/province change that needs confirmation shows the SAME confirm-location step as create, and confirming resubmits via update with confirmedLat/Lng', async () => {
+      updateMock.mockResolvedValueOnce({
+        success: true,
+        needsLocationConfirmation: true,
+        data: { matchedLat: 43.7, matchedLng: -79.4 },
+      });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      await user.click(screen.getByText('Simulate drag pin'));
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(updateMock).toHaveBeenLastCalledWith(
+        'listing-42',
+        expect.objectContaining({ confirmedLat: 42.3035, confirmedLng: -83.077 })
+      ));
+    });
+
+    it('an edit that does not need location confirmation never shows the confirm-location step at all', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(updateMock).toHaveBeenCalled());
+      expect(screen.queryByText('Confirm property location')).not.toBeInTheDocument();
+    });
+
+    it('renders existing photos and removes one immediately via listingsApi.deleteImage on click', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+      await goToStep3(user);
+
+      expect(document.querySelectorAll('img')).toHaveLength(2);
+
+      const removeButtons = screen.getAllByRole('button', { name: 'Remove photo' });
+      await user.click(removeButtons[0]);
+
+      await waitFor(() => expect(deleteImageMock).toHaveBeenCalledWith('img-1'));
+      await waitFor(() => expect(document.querySelectorAll('img')).toHaveLength(1));
+    });
+
+    it('restores the photo and shows a toast if removing an existing photo fails', async () => {
+      deleteImageMock.mockRejectedValueOnce(new Error('Not authorized.'));
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+      await goToStep3(user);
+
+      const removeButtons = screen.getAllByRole('button', { name: 'Remove photo' });
+      await user.click(removeButtons[0]);
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive', title: 'Could not remove photo' })));
+      expect(document.querySelectorAll('img')).toHaveLength(2); // never actually removed
+    });
+
+    it('uploads newly added photos to the SAME listing id after a successful save', async () => {
+      const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+      await goToStep3(user);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, file);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
+    });
+
+    it('a failed photo upload after a successful edit save does NOT roll back the listing (no deletePermanent call), and reports the save via onSaved anyway', async () => {
+      uploadImagesMock.mockRejectedValueOnce(new Error('Upload failed.'));
+      const onSaved = vi.fn();
+      const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+      await goToStep3(user);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, file);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
+        variant: 'destructive',
+        title: 'Listing updated, but new photos failed to upload',
+      })));
+      expect(deletePermanentMock).not.toHaveBeenCalled();
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' }));
+      // Never shows the "Listing updated!" success screen for a partial failure.
+      expect(screen.queryByText('Listing updated!')).not.toBeInTheDocument();
     });
   });
 });

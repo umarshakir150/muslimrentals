@@ -18,10 +18,24 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@/store/authStore', () => ({ useIsAuthenticated: () => true }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
+let mockListingId: string | null = null;
+const routerReplaceMock = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: routerReplaceMock }),
+  useSearchParams: () => ({ get: (key: string) => (key === 'listingId' ? mockListingId : null) }),
+}));
+
+const toastMock = vi.fn();
+vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }));
 vi.mock('@/components/layout/Navbar', () => ({ default: () => null }));
 vi.mock('@/components/auth/AuthModal', () => ({ default: () => null }));
-vi.mock('@/components/listings/ListingDetail', () => ({ default: () => null }));
+// Rendered by the page only when selectedListing is truthy, so its mere
+// presence in the DOM (with the right listing id) is enough to confirm the
+// ?listingId= deep link actually opened the right listing's detail view.
+vi.mock('@/components/listings/ListingDetail', () => ({
+  default: ({ listing }: any) => <div data-testid="listing-detail" data-listing-id={listing?.id} />,
+}));
 vi.mock('@/components/listings/DeleteListingDialog', () => ({ default: () => null }));
 
 // Stub PostListingModal so this test only asserts on the props the page
@@ -45,6 +59,9 @@ const LISTING_B = { id: 'listing-b', title: 'Sunny 1BR', status: 'ACTIVE', price
 beforeEach(() => {
   getMyListingsMock.mockReset();
   getMyListingsMock.mockResolvedValue({ data: [LISTING_A, LISTING_B] });
+  mockListingId = null;
+  routerReplaceMock.mockReset();
+  toastMock.mockReset();
 });
 
 describe('MyListingsPage — Edit entry point', () => {
@@ -113,5 +130,36 @@ describe('MyListingsPage — Edit entry point', () => {
 
     await user.click(screen.getByText('Simulate close'));
     expect(screen.queryByTestId('edit-modal')).not.toBeInTheDocument();
+  });
+});
+
+describe('MyListingsPage — ?listingId= deep link (from a notification)', () => {
+  it('opens that listing\'s detail view when the id is in the loaded list', async () => {
+    mockListingId = 'listing-b';
+    render(<MyListingsPage />);
+
+    await waitFor(() => expect(screen.getByTestId('listing-detail')).toBeInTheDocument());
+    expect(screen.getByTestId('listing-detail')).toHaveAttribute('data-listing-id', 'listing-b');
+    // The query param is cleared from the URL once handled, same as /map's
+    // existing ?listingId= deep link.
+    expect(routerReplaceMock).toHaveBeenCalledWith('/my-listings', { scroll: false });
+  });
+
+  it('shows a graceful toast (never a crash) when the id is not found -- e.g. permanently deleted', async () => {
+    mockListingId = 'listing-does-not-exist';
+    render(<MyListingsPage />);
+
+    await waitFor(() => expect(getMyListingsMock).toHaveBeenCalled());
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Listing not found' })));
+    expect(screen.queryByTestId('listing-detail')).not.toBeInTheDocument();
+  });
+
+  it('does nothing when there is no listingId param', async () => {
+    render(<MyListingsPage />);
+    await waitFor(() => expect(screen.getByText('Cozy 2BR')).toBeInTheDocument());
+
+    expect(screen.queryByTestId('listing-detail')).not.toBeInTheDocument();
+    expect(toastMock).not.toHaveBeenCalled();
+    expect(routerReplaceMock).not.toHaveBeenCalled();
   });
 });

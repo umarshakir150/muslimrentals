@@ -99,13 +99,41 @@ describe('getApproximateLocation', () => {
     expect(PRIVACY_RADIUS_METERS - MAX_DISPLACEMENT_METERS).toBeGreaterThanOrEqual(5);
   });
 
-  // Explicit regression guard for the founder's literal ask ("change the
-  // public listing privacy radius from 500m to 250m") -- a silent drift in
-  // either constant should fail loudly here rather than only be noticed by
-  // eyeballing the map.
-  it('is configured for a 250m displayed privacy circle with the public marker kept close (max 50m) to the real point', () => {
+  // Explicit regression guard for the 2026-09-06 area-uniformity pass
+  // (50m max/250m circle -> 200m max/250m circle, same circle, wider and
+  // now area-uniform displacement) -- a silent drift in either constant
+  // should fail loudly here rather than only be noticed by eyeballing the
+  // map.
+  it('is configured for a 250m displayed privacy circle with the public marker spread across most of it (max 200m)', () => {
     expect(PRIVACY_RADIUS_METERS).toBe(250);
-    expect(MAX_DISPLACEMENT_METERS).toBe(50);
+    expect(MAX_DISPLACEMENT_METERS).toBe(200);
+  });
+
+  // Proves the actual point of this pass: the public dot is no longer
+  // clustered near the real property. Splitting [MIN, MAX] at its linear
+  // midpoint m = (MIN + MAX) / 2: a radius-uniform (pre-fix) draw puts
+  // exactly 50% of samples at or above m, by definition of "uniform over
+  // the range." An area-uniform draw's CDF is (r^2 - MIN^2) / (MAX^2 -
+  // MIN^2), so the fraction at or above m is 1 - (m^2 - MIN^2) / (MAX^2 -
+  // MIN^2) -- with MIN=15, MAX=200 that's ~71.5%, well above the old
+  // scheme's 50%. The 0.55 threshold below sits ~4.5 standard deviations
+  // above the old (radius-uniform) mean and ~16 standard deviations below
+  // the new (area-uniform) mean at this sample size, so this reliably
+  // catches a reversion to radius-uniform sampling without ever flaking on
+  // the current, correct implementation.
+  it('spreads samples across the outer part of the allowed displacement range, not just the inner part (area-uniform, not radius-uniform)', () => {
+    const SAMPLE_COUNT = 2000;
+    const midpoint = (MAX_DISPLACEMENT_METERS + 15) / 2; // 15 = MIN_DISPLACEMENT_METERS (not exported)
+    let outerHalfCount = 0;
+
+    for (let i = 0; i < SAMPLE_COUNT; i++) {
+      const p = getApproximateLocation(`area-uniform-check-${i}`, TORONTO.lat, TORONTO.lng);
+      const offsetMeters = distKm(TORONTO.lat, TORONTO.lng, p.lat, p.lng) * 1000;
+      if (offsetMeters >= midpoint) outerHalfCount++;
+    }
+
+    const outerHalfFraction = outerHalfCount / SAMPLE_COUNT;
+    expect(outerHalfFraction).toBeGreaterThan(0.55);
   });
 
   it('different listing ids at the same real coordinates get different approximate points', () => {

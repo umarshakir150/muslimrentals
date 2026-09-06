@@ -61,13 +61,23 @@ export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): 
 // a precise geocode match or an explicit human placement, never an
 // unconfirmed guess), the jitter itself can stay small while the displayed
 // circle still does the actual privacy work. Previous passes: 180m
-// max/200m circle, then 120m max/130m circle, then 50m max/500m circle.
-// Per founder direction (2026-09-04), the circle has been tightened to
-// 250m now that every stored coordinate is confirmation-backed -- 50m max
-// displacement/250m circle: the public dot still sits within half a block
-// of the real property, inside a tighter but still honest "somewhere in
-// this area" zone.
-export const MAX_DISPLACEMENT_METERS = 50;
+// max/200m circle, then 120m max/130m circle, then 50m max/500m circle,
+// then 50m max/250m circle.
+//
+// Per founder direction (2026-09-06): the 50m-max/250m-circle pass above
+// left the public dot clustering in only the innermost ~4% of the drawn
+// circle's AREA (50^2/250^2), because 50m max out of a 250m radius is a
+// much smaller fraction of *area* than it looks like as a fraction of
+// *radius* -- a circle's area grows with the square of its radius, so a
+// circle that visually promises "the property could be anywhere in here"
+// was in practice only ever placing the dot in a small disk at its center.
+// That's a real privacy gap, not just a cosmetic one: it lets a motivated
+// viewer infer the real property is almost certainly within ~50m of the
+// shown point, far tighter than the 250m the circle implies. Raised to
+// 200m max -- still strictly, comfortably inside the unchanged 250m circle
+// (see the proof on getApproximateLocation below), but now covering
+// (200/250)^2 = 64% of the circle's area instead of 4%.
+export const MAX_DISPLACEMENT_METERS = 200;
 const MIN_DISPLACEMENT_METERS = 15;
 export const PRIVACY_RADIUS_METERS = 250;
 
@@ -106,11 +116,24 @@ export interface ApproximateLocation {
 }
 
 // Deterministically offsets (lat, lng) by a pseudo-random distance in
-// [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS) -- i.e. [15, 50)
+// [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS) -- i.e. [15, 200)
 // meters currently -- at a pseudo-random angle, seeded by `seed` (pass the
 // listing's id) plus the real coordinates themselves (so moving a listing's
 // real address changes its public point too, rather than the point
 // sticking to a stale id-only seed forever).
+//
+// ── Area-uniform distance sampling, not radius-uniform ────────────────────
+// A naive `distance = MIN + rand() * (MAX - MIN)` samples uniformly over the
+// *radius* value, but the area of an annulus at radius r grows with r (its
+// area element is proportional to r dr), so radius-uniform sampling packs
+// points much more densely near MIN than near MAX -- the opposite of "evenly
+// spread across the allowed area." The standard inverse-CDF fix for
+// sampling a point uniformly BY AREA within an annulus [MIN, MAX] is
+// `distance = sqrt(MIN^2 + rand() * (MAX^2 - MIN^2))` (the disk case,
+// MIN = 0, is the familiar `R * sqrt(rand())`). That's what `distance`
+// below computes, so the public dot is now genuinely, uniformly likely to
+// land anywhere in the annulus the circle implies -- not clustered near its
+// center the way a naive linear draw (or the previous small-MAX pass) would.
 //
 // ── Why the real point is GUARANTEED to lie inside the displayed circle ───
 // The public map draws a circle of radius PRIVACY_RADIUS_METERS centered on
@@ -120,9 +143,10 @@ export interface ApproximateLocation {
 // always, not "almost always":
 //
 //   1. `distance` (the value fed into the offset construction below) is
-//      drawn from [MIN_DISPLACEMENT_METERS, MAX_DISPLACEMENT_METERS), i.e.
-//      strictly < MAX_DISPLACEMENT_METERS by construction (rand() < 1).
-//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (250 > 50),
+//      strictly < MAX_DISPLACEMENT_METERS by construction: it's
+//      sqrt(MIN^2 + rand() * (MAX^2 - MIN^2)) with rand() < 1, so
+//      distance^2 < MIN^2 + (MAX^2 - MIN^2) = MAX^2, i.e. distance < MAX.
+//      Since PRIVACY_RADIUS_METERS > MAX_DISPLACEMENT_METERS (250 > 200),
 //      `distance` is therefore also strictly < PRIVACY_RADIUS_METERS. This
 //      alone would be sufficient if the offset were built directly on a
 //      flat plane.
@@ -134,12 +158,13 @@ export interface ApproximateLocation {
 //      approximation's relative error for a great-circle path of length d
 //      on a sphere of radius R_earth is O((d / R_earth)^2) (from the
 //      Taylor expansion of the spherical law of cosines around d = 0). At
-//      d = 50m and R_earth = 6,371,000m that's on the order of
-//      (50 / 6_371_000)^2 ~= 6.2e-11, i.e. a sub-millimeter absolute error
-//      -- utterly swallowed by the 200m margin between MAX_DISPLACEMENT_METERS
-//      (50) and PRIVACY_RADIUS_METERS (250). So the real geodesic distance
-//      is, for every practical and floating-point purpose, still strictly
-//      less than PRIVACY_RADIUS_METERS.
+//      d = 200m and R_earth = 6,371,000m that's on the order of
+//      (200 / 6_371_000)^2 ~= 9.9e-10, i.e. still a sub-millimeter absolute
+//      error -- utterly swallowed by the 50m margin between
+//      MAX_DISPLACEMENT_METERS (200) and PRIVACY_RADIUS_METERS (250). So
+//      the real geodesic distance is, for every practical and
+//      floating-point purpose, still strictly less than
+//      PRIVACY_RADIUS_METERS.
 //
 // Combined: real geodesic distance(realPoint, approxPoint) < PRIVACY_RADIUS_METERS
 // for every input, at every latitude -- which is exactly "the real point is
@@ -149,7 +174,9 @@ export interface ApproximateLocation {
 // separately-implemented formula from the equirectangular offset built
 // here) across hundreds of deterministic samples spanning equatorial,
 // mid-latitude, and near-polar coordinates in both hemispheres, plus a set
-// of Canadian city/latitude samples specifically.
+// of Canadian city/latitude samples specifically, and by a histogram-style
+// check that samples actually spread across the outer part of the allowed
+// range, not just the inner part.
 //
 // The lower bound (MIN_DISPLACEMENT_METERS) is a separate, non-mathematical
 // privacy/UX choice: it keeps the jitter from ever landing suspiciously
@@ -158,7 +185,7 @@ export interface ApproximateLocation {
 export function getApproximateLocation(seed: string, lat: number, lng: number): ApproximateLocation {
   const rand = mulberry32(hashSeed(`${seed}:${lat.toFixed(6)}:${lng.toFixed(6)}`));
   const angle = rand() * 2 * Math.PI;
-  const distance = MIN_DISPLACEMENT_METERS + rand() * (MAX_DISPLACEMENT_METERS - MIN_DISPLACEMENT_METERS);
+  const distance = Math.sqrt(MIN_DISPLACEMENT_METERS ** 2 + rand() * (MAX_DISPLACEMENT_METERS ** 2 - MIN_DISPLACEMENT_METERS ** 2));
 
   const dLat = (distance * Math.cos(angle)) / METERS_PER_DEG_LAT;
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);

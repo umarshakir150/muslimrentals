@@ -214,6 +214,14 @@ describe('POST /messages/conversations (start a conversation)', () => {
     expect(res.body.data.conversationId).toBe(CONV_ID);
     expect(conversationCreateMock).not.toHaveBeenCalled();
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
+    // Reusing an existing conversation is, in practice, a reply -- the
+    // landlord gets notified just like on the reply endpoint below. This
+    // fires unconditionally, even if the landlord is actively viewing the
+    // conversation -- Socket.IO room membership isn't reliable enough as
+    // presence state to suppress on.
+    expect(notificationCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: USER_B, type: 'NEW_MESSAGE' }),
+    }));
   });
 
   it('blocks starting a conversation with a listing owner who has restricted this sender from messaging them again', async () => {
@@ -275,6 +283,16 @@ describe('POST /messages/conversations/:id/messages (reply)', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.senderId).toBe(USER_B);
     expect(io.__to).toHaveBeenCalledWith(`conv:${CONV_ID}`);
+    // The other participant (A) is notified; the sender (B) never is --
+    // notifying someone for their own action would be noise, not signal.
+    // This fires unconditionally, even if A is actively viewing the
+    // conversation -- Socket.IO room membership isn't reliable enough as
+    // presence state to suppress on (a redundant notification beats a
+    // missing one).
+    expect(notificationCreateMock).toHaveBeenCalledTimes(1);
+    expect(notificationCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: USER_A, type: 'NEW_MESSAGE' }),
+    }));
   });
 
   it('blocks a reply from a participant restricted from messaging the other participant again', async () => {

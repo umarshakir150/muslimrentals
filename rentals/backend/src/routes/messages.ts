@@ -18,6 +18,7 @@ import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { messageReportSchema } from '../validation/reportSchemas';
 import { isRestrictedFromMessaging } from '../utils/moderation';
+import { createNotification } from '../utils/notifications';
 
 const router = Router();
 
@@ -142,6 +143,24 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
       const io = req.app.get('io');
       io?.to(`conv:${existing.id}`).emit('message:new', message);
 
+      // Reusing an existing conversation (this branch) is, in practice, a
+      // reply -- the recipient gets the same NEW_MESSAGE treatment a reply
+      // via POST /conversations/:id/messages below gets. Always notified,
+      // even if they're actively viewing the conversation: Socket.IO room
+      // membership isn't reliable enough as a presence signal to suppress
+      // on (an abrupt disconnect leaves a stale room entry until the
+      // ping-timeout evicts it, which would incorrectly swallow a real
+      // notification) -- a redundant notification is preferable to a
+      // missing one.
+      await createNotification({
+        io,
+        userId: listing.userId,
+        type:   'NEW_MESSAGE',
+        title:  'New message',
+        body:   `Someone messaged about your listing: ${listing.title}`,
+        data:   { conversationId: existing.id },
+      });
+
       return res.json({ success: true, data: { conversationId: existing.id, message } });
     }
 
@@ -160,14 +179,13 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
     const io = req.app.get('io');
     io?.to(`user:${listing.userId}`).emit('conversation:new', conv);
 
-    await prisma.notification.create({
-      data: {
-        userId: listing.userId,
-        type:   'NEW_MESSAGE',
-        title:  'New message',
-        body:   `Someone messaged about your listing: ${listing.title}`,
-        data:   { conversationId: conv.id },
-      },
+    await createNotification({
+      io,
+      userId: listing.userId,
+      type:   'NEW_MESSAGE',
+      title:  'New message',
+      body:   `Someone messaged about your listing: ${listing.title}`,
+      data:   { conversationId: conv.id },
     });
 
     res.status(201).json({ success: true, data: { conversationId: conv.id, message: conv.messages[0] } });
@@ -202,6 +220,22 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
 
     const io = req.app.get('io');
     io?.to(`conv:${conv.id}`).emit('message:new', message);
+
+    // One notification per OTHER participant (never the sender -- that
+    // would be notifying a user for their own action). Always sent, even
+    // to a participant actively viewing the conversation -- see the
+    // comment above the existing-conversation branch for why suppression
+    // based on Socket.IO room membership was dropped.
+    for (const recipientId of otherParticipantIds) {
+      await createNotification({
+        io,
+        userId: recipientId,
+        type:   'NEW_MESSAGE',
+        title:  'New message',
+        body:   `${message.sender?.name || 'Someone'} sent you a message.`,
+        data:   { conversationId: conv.id },
+      });
+    }
 
     res.status(201).json({ success: true, data: message });
   } catch (err) { next(err); }

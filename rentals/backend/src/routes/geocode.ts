@@ -12,7 +12,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
-import { geocodeAddress } from '../utils/geocode';
+import { geocodeAddress, GeocodingUnavailableError } from '../utils/geocode';
 
 const router = Router();
 
@@ -31,7 +31,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       throw new AppError('Could not find that location. Try a different search.', 404);
     }
     res.json({ success: true, data: result });
-  } catch (err) { next(err); }
+  } catch (err) {
+    // Distinct from "no match" (404 above) -- the provider itself refused
+    // the request (rate-limited), so telling the searcher to "try a
+    // different search" would be actively misleading about what's wrong.
+    if (err instanceof GeocodingUnavailableError) {
+      return next(new AppError('Location search is temporarily unavailable. Please try again in a minute.', 503));
+    }
+    next(err);
+  }
 });
 
 export default router;

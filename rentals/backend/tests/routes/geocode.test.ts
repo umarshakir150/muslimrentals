@@ -9,8 +9,10 @@ import express from 'express';
 import request from 'supertest';
 
 const geocodeAddressMock = vi.fn();
+class GeocodingUnavailableError extends Error {}
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
+  GeocodingUnavailableError,
 }));
 
 async function buildApp() {
@@ -61,6 +63,20 @@ describe('GET /geocode', () => {
 
     expect(res.status).toBe(404);
     expect(geocodeAddressMock).toHaveBeenCalled();
+  });
+
+  // Regression coverage: the geocoding provider being rate-limited used to
+  // be indistinguishable from "no match" (both surfaced as a plain 404
+  // "could not find that location"), misleading the searcher into thinking
+  // their query was wrong when the real problem was the provider itself.
+  it('returns a distinct 503 (never the generic 404) when the geocoding provider is rate-limited', async () => {
+    geocodeAddressMock.mockRejectedValue(new GeocodingUnavailableError());
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode').query({ q: 'Some Real Place' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/temporarily unavailable/i);
   });
 
   it('rejects a query shorter than 2 characters', async () => {

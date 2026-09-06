@@ -1,8 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useCallback, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useCallback, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import { Home, Trash2, Pencil } from 'lucide-react';
 import Navbar from '@/components/layout/Navbar';
@@ -12,6 +12,7 @@ import { usersApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useIsAuthenticated } from '@/store/authStore';
 import { formatCAD, cn } from '@/lib/utils';
+import { useToast } from '@/components/ui/use-toast';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
@@ -30,7 +31,7 @@ const STATUS_STYLE: Record<string, string> = {
   REMOVED: 'bg-red-50 text-red-700',
 };
 
-export default function MyListingsPage() {
+function MyListingsPageInner() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -41,6 +42,8 @@ export default function MyListingsPage() {
 
   const isAuth = useIsAuthenticated();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   const fetchMyListings = useCallback(async () => {
     setLoading(true);
@@ -59,6 +62,27 @@ export default function MyListingsPage() {
     if (isAuth) fetchMyListings();
     else setAuthOpen(true);
   }, [isAuth, fetchMyListings]);
+
+  // Deep-link support: /my-listings?listingId=<id>, from a notification
+  // about one of this user's own listings (saved/removed/restored -- see
+  // components/layout/NotificationBell.tsx). Same pattern as /map's
+  // existing ?listingId= deep link: match against the already-loaded list,
+  // and fall back to a toast (never a crash) if it's not there -- e.g. the
+  // listing was since permanently deleted.
+  useEffect(() => {
+    if (loading) return;
+    const listingId = searchParams.get('listingId');
+    if (!listingId) return;
+
+    const target = listings.find(l => l.id === listingId);
+    if (target) {
+      setSelectedListing(target);
+    } else {
+      toast({ title: 'Listing not found', description: 'This listing may have been permanently deleted.' });
+    }
+    router.replace('/my-listings', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, listings, searchParams]);
 
   function handleDeleted(listingId: string) {
     setListings(prev => prev.filter(l => l.id !== listingId));
@@ -213,5 +237,16 @@ export default function MyListingsPage() {
         onSaved={handleUpdated}
       />
     </div>
+  );
+}
+
+// useSearchParams() (used above for the ?listingId= deep link) requires a
+// Suspense boundary -- same wrapping /map/page.tsx already uses for the
+// same reason.
+export default function MyListingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <MyListingsPageInner />
+    </Suspense>
   );
 }

@@ -4,11 +4,12 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon, Home } from 'lucide-react';
+import { MessageSquare, Menu, X, LogOut, User, Settings, BookmarkIcon, Home } from 'lucide-react';
 import { useAuthStore, useUser } from '@/store/authStore';
 import { authApi, messagesApi } from '@/lib/api';
 import { cn, initials } from '@/lib/utils';
 import AuthModal from '@/components/auth/AuthModal';
+import NotificationBell from '@/components/layout/NotificationBell';
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -127,10 +128,14 @@ export default function Navbar() {
                   )}
                 </Link>
 
+                {/* Notifications */}
+                <NotificationBell />
+
                 {/* Mobile menu toggle -- placed here (between Messages and the
                     account menu) so mobile's visible order is
-                    Messages -> hamburger -> Profile/account, not hidden by
-                    md:hidden on desktop where position doesn't matter. */}
+                    Messages -> Notifications -> hamburger -> Profile/account,
+                    not hidden by md:hidden on desktop where position doesn't
+                    matter. */}
                 <button
                   onClick={() => setMobileOpen(!mobileOpen)}
                   className="md:hidden p-2.5 rounded-full hover:bg-brand-50 transition-colors"

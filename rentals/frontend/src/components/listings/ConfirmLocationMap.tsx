@@ -152,11 +152,19 @@ export default function ConfirmLocationMap({ initialLat, initialLng, onChange }:
       mapRef.current?.setView([lat, lng], CONFIRM_MAP_ZOOM);
       markerRef.current?.setLatLng([lat, lng]);
       onChangeRef.current(lat, lng);
-    } catch {
+    } catch (err: any) {
+      // Distinct from a genuine zero-result search: a 503 here means the
+      // backend's geocoding provider itself is rate-limited (see
+      // GeocodingUnavailableError in utils/geocode.ts), not that this
+      // address doesn't exist -- telling the landlord to "try a different
+      // search" would be actively misleading about what's wrong.
+      const isProviderUnavailable = err?.status === 503;
       toast({
         variant: 'destructive',
-        title: "Couldn't find that location",
-        description: 'Try a different search, or drag/tap the pin directly.',
+        title: isProviderUnavailable ? 'Location search is temporarily unavailable' : "Couldn't find that location",
+        description: isProviderUnavailable
+          ? 'Please try again shortly or move the pin manually.'
+          : 'Try a different search, or drag/tap the pin directly.',
       });
     } finally {
       setSearching(false);

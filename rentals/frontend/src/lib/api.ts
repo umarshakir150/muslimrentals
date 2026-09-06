@@ -258,6 +258,10 @@ export const listingsApi = {
     files.forEach(f => formData.append('images', f));
     return api.upload<{ success: boolean; data: any[] }>(`/uploads/listing-images/${listingId}`, formData);
   },
+  // Removes one existing photo immediately (owner-checked server-side) --
+  // distinct from the local-only removeImage() in PostListingModal, which
+  // only ever discards a not-yet-uploaded File before it's ever sent.
+  deleteImage: (imageId: string) => api.delete<{ success: boolean; message: string }>(`/uploads/listing-images/${imageId}`),
   save: (id: string) => api.post<{ success: boolean; saved: boolean }>(`/listings/${id}/save`, {}),
   report: (id: string, reason: string, description?: string) =>
     api.post(`/listings/${id}/report`, { reason, description }),

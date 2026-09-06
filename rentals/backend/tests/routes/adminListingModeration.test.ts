@@ -35,6 +35,7 @@ const listingUpdateManyMock = vi.fn();
 const listingFindManyMock = vi.fn();
 const listingCountMock = vi.fn();
 const transactionMock = vi.fn((ops: Promise<any>[]) => Promise.all(ops));
+const notificationCreateMock = vi.fn();
 
 vi.mock('../../src/prisma/client', () => ({
   prisma: {
@@ -48,6 +49,9 @@ vi.mock('../../src/prisma/client', () => ({
       updateMany: (...args: any[]) => listingUpdateManyMock(...args),
       findMany:   (...args: any[]) => listingFindManyMock(...args),
       count:      (...args: any[]) => listingCountMock(...args),
+    },
+    notification: {
+      create: (...args: any[]) => notificationCreateMock(...args),
     },
     $transaction: (...args: any[]) => transactionMock(...args),
   },
@@ -88,6 +92,7 @@ beforeEach(() => {
   listingFindManyMock.mockReset().mockResolvedValue([]);
   listingCountMock.mockReset().mockResolvedValue(0);
   transactionMock.mockReset().mockImplementation((ops: Promise<any>[]) => Promise.all(ops));
+  notificationCreateMock.mockReset().mockResolvedValue({});
 });
 
 describe('DELETE /admin/listings/:id — remove from public visibility', () => {
@@ -196,6 +201,40 @@ describe('DELETE /admin/listings/:id — remove from public visibility', () => {
     expect(res.status).toBe(200);
     expect(listingUpdateMock.mock.calls[0][0].data.status).toBe('REMOVED');
   });
+
+  it('notifies the owner with a generic message that never leaks the moderator\'s internal reason text', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    listingFindUniqueMock.mockResolvedValue({ id: LISTING_ID, userId: OWNER_ID, title: 'Cozy 2BR' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .delete(`/api/v1/admin/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Suspected fraud - payment outside platform' });
+
+    expect(res.status).toBe(200);
+    expect(notificationCreateMock).toHaveBeenCalledTimes(1);
+    const [{ data }] = notificationCreateMock.mock.calls[0];
+    expect(data.userId).toBe(OWNER_ID);
+    expect(data.type).toBe('LISTING_REMOVED');
+    expect(data.title).not.toMatch(/fraud|payment outside platform/i);
+    expect(data.body).not.toMatch(/fraud|payment outside platform/i);
+    expect(data.data).toEqual({ listingId: LISTING_ID });
+  });
+
+  it('does not notify when the listing has no owner (account permanently deleted)', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    listingFindUniqueMock.mockResolvedValue({ id: LISTING_ID, userId: null, title: 'Orphaned listing' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .delete(`/api/v1/admin/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({ reason: 'Valid reason, no owner left' });
+
+    expect(res.status).toBe(200);
+    expect(notificationCreateMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('PATCH /admin/listings/:id/restore — reverse a moderator removal', () => {
@@ -224,6 +263,29 @@ describe('PATCH /admin/listings/:id/restore — reverse a moderator removal', ()
       }),
     });
     expect(listingUpdateMock.mock.calls[0][0].data.moderationRestoredAt).toBeInstanceOf(Date);
+  });
+
+  it('notifies the owner that their listing was restored', async () => {
+    mockUsersById({ [ADMIN_ID]: actingUser(ADMIN_ID, 'ADMIN') });
+    listingFindUniqueMock.mockResolvedValue({
+      id: LISTING_ID,
+      userId: OWNER_ID,
+      title: 'Cozy 2BR',
+      moderationRemovedAt: new Date('2026-09-01T00:00:00.000Z'),
+      moderationRestoredAt: null,
+      user: { isBanned: false },
+    });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/admin/listings/${LISTING_ID}/restore`)
+      .set('Authorization', `Bearer ${signToken(ADMIN_ID, 'ADMIN')}`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(notificationCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: OWNER_ID, type: 'LISTING_RESTORED', data: { listingId: LISTING_ID } }),
+    }));
   });
 
   it('a plain USER cannot restore a listing (blocked by the router-wide role gate)', async () => {

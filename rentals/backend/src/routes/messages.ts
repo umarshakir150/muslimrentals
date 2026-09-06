@@ -18,6 +18,7 @@ import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { messageReportSchema } from '../validation/reportSchemas';
 import { isRestrictedFromMessaging } from '../utils/moderation';
+import { createNotification, isUserViewingConversation } from '../utils/notifications';
 
 const router = Router();
 
@@ -142,6 +143,21 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
       const io = req.app.get('io');
       io?.to(`conv:${existing.id}`).emit('message:new', message);
 
+      // Reusing an existing conversation (this branch) is, in practice, a
+      // reply -- the recipient gets the same NEW_MESSAGE treatment a reply
+      // via POST /conversations/:id/messages below gets, including the
+      // same "don't notify if they're already looking at it" suppression.
+      if (!isUserViewingConversation(io, listing.userId, existing.id)) {
+        await createNotification({
+          io,
+          userId: listing.userId,
+          type:   'NEW_MESSAGE',
+          title:  'New message',
+          body:   `Someone messaged about your listing: ${listing.title}`,
+          data:   { conversationId: existing.id },
+        });
+      }
+
       return res.json({ success: true, data: { conversationId: existing.id, message } });
     }
 
@@ -160,14 +176,17 @@ router.post('/conversations', authenticate, writeRateLimiter, async (req: AuthRe
     const io = req.app.get('io');
     io?.to(`user:${listing.userId}`).emit('conversation:new', conv);
 
-    await prisma.notification.create({
-      data: {
-        userId: listing.userId,
-        type:   'NEW_MESSAGE',
-        title:  'New message',
-        body:   `Someone messaged about your listing: ${listing.title}`,
-        data:   { conversationId: conv.id },
-      },
+    // A brand-new conversation: the recipient cannot already be viewing it
+    // (it didn't exist a moment ago), so no presence check is needed here
+    // -- but isUserViewingConversation is still the same one check every
+    // NEW_MESSAGE site uses, kept consistent rather than special-cased.
+    await createNotification({
+      io,
+      userId: listing.userId,
+      type:   'NEW_MESSAGE',
+      title:  'New message',
+      body:   `Someone messaged about your listing: ${listing.title}`,
+      data:   { conversationId: conv.id },
     });
 
     res.status(201).json({ success: true, data: { conversationId: conv.id, message: conv.messages[0] } });
@@ -202,6 +221,23 @@ router.post('/conversations/:id/messages', validateUuidParam('id'), authenticate
 
     const io = req.app.get('io');
     io?.to(`conv:${conv.id}`).emit('message:new', message);
+
+    // One notification per OTHER participant (never the sender -- that
+    // would be notifying a user for their own action), skipped for anyone
+    // currently viewing this exact conversation in real time -- they
+    // already see the message live via the 'message:new' emit above, so a
+    // bell notification for it would be pure noise, not new information.
+    for (const recipientId of otherParticipantIds) {
+      if (isUserViewingConversation(io, recipientId, conv.id)) continue;
+      await createNotification({
+        io,
+        userId: recipientId,
+        type:   'NEW_MESSAGE',
+        title:  'New message',
+        body:   `${message.sender?.name || 'Someone'} sent you a message.`,
+        data:   { conversationId: conv.id },
+      });
+    }
 
     res.status(201).json({ success: true, data: message });
   } catch (err) { next(err); }

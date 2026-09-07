@@ -21,7 +21,6 @@ import { validateUuidParam } from '../middleware/validateUuid';
 import { adminRateLimiter, writeRateLimiter } from '../middleware/rateLimiter';
 import { createNotification } from '../utils/notifications';
 import { logger } from '../utils/logger';
-import { geocodeAddress, verifyConfirmedPinLocation } from '../utils/geocode';
 
 const router = Router();
 
@@ -106,54 +105,6 @@ router.get('/stats', async (_req, res: Response, next: NextFunction) => {
       prisma.message.count(),
     ]);
     res.json({ success: true, data: { users, activeListings: listings, pendingReports: reports, messages } });
-  } catch (err) { next(err); }
-});
-
-// ─── GET /admin/geocodio-live-validation — TEMPORARY, evaluation-spike only ───
-// Not a permanent admin feature -- exists only to run a real, one-time
-// forward/reverse geocoding validation against whichever provider this
-// Render service currently has GEOCODING_PROVIDER set to (Geocodio during
-// this evaluation), using the exact same geocodeAddress/
-// verifyConfirmedPinLocation functions the listing-posting flow calls. No
-// mocks, no fixtures. ADMIN-only (escalated past the router's own
-// ADMIN|MODERATOR default, same as /users) since it makes real outbound
-// requests against a paid, rate-limited third-party API on every call.
-// Never reads, logs, or returns the provider API key -- only the same
-// coordinates/accuracy/validation fields the public routes already expose.
-// To be removed once this evaluation's live validation is complete.
-router.get('/geocodio-live-validation', requireRole(UserRole.ADMIN), async (_req, res: Response, next: NextFunction) => {
-  try {
-    async function runForward(label: string, address: string, city: string, province: string) {
-      try {
-        const result = await geocodeAddress(address, city, province, { requirePreciseMatch: true });
-        return { label, address, city, province, result };
-      } catch (err: any) {
-        return { label, address, city, province, error: `${err.constructor.name}: ${err.message}` };
-      }
-    }
-
-    async function runReverse(label: string, lat: number, lng: number, city: string, province: string) {
-      try {
-        const result = await verifyConfirmedPinLocation(lat, lng, city, province);
-        return { label, lat, lng, city, province, result };
-      } catch (err: any) {
-        return { label, lat, lng, city, province, error: `${err.constructor.name}: ${err.message}` };
-      }
-    }
-
-    const forward = [
-      await runForward('1051 Cedarglen Gate, Mississauga, ON', '1051 Cedarglen Gate', 'Mississauga', 'ON'),
-      await runForward('732 Mill St, Windsor, ON', '732 Mill St', 'Windsor', 'ON'),
-      await runForward('1031 Askin, Windsor, ON (bare street name)', '1031 Askin', 'Windsor', 'ON'),
-      await runForward('1031 Askin Avenue, Windsor, ON (full street name)', '1031 Askin Avenue', 'Windsor', 'ON'),
-    ];
-
-    const reverse = [
-      await runReverse('Legitimate Windsor, ON pin -- should PASS', 42.3149, -83.0364, 'Windsor', 'ON'),
-      await runReverse('Deliberately wrong-city pin (Toronto coords, checked against Windsor) -- should FAIL', 43.6532, -79.3832, 'Windsor', 'ON'),
-    ];
-
-    res.json({ success: true, data: { provider: process.env.GEOCODING_PROVIDER || 'nominatim', forward, reverse } });
   } catch (err) { next(err); }
 });
 

@@ -14,6 +14,7 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
     "retention:redact-snapshots": "ts-node src/scripts/redactExpiredMessageSnapshots.ts",
+    "geocodio:live-validation": "ts-node src/scripts/geocodioLiveValidation.ts",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:watch": "vitest"

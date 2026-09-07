@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geocodeAddress, verifyConfirmedPinLocation } from '../../src/utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation, GeocodingUnavailableError } from '../../src/utils/geocode';
 
 const originalFetch = globalThis.fetch;
 
@@ -58,11 +58,31 @@ describe('geocodeAddress', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when the geocoding API responds with a non-OK status', async () => {
-    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => [] }));
+  it('returns null when the geocoding API responds with a genuine client-error status (not a rate-limit/outage)', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 400, json: async () => [] }));
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON');
     expect(result).toBeNull();
+  });
+
+  // Regression coverage: a 429 used to be treated exactly like "no
+  // results" (silently returning null), making a provider rate-limit
+  // indistinguishable from a genuinely nonexistent address at every call
+  // site -- this is the on-the-wire condition that caused real founder-
+  // reported "couldn't find that location" / "couldn't verify that exact
+  // address" failures that had nothing to do with the address itself.
+  it('throws GeocodingUnavailableError (never returns null) when the API responds 429', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 429, json: async () => [] }));
+
+    await expect(geocodeAddress('123 Main Street', 'Toronto', 'ON')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  // Same classification as 429 -- a provider's own 5xx means the SERVICE is
+  // having trouble, not that this particular address doesn't exist.
+  it('throws GeocodingUnavailableError (never returns null) when the API responds with a 5xx server error', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => [] }));
+
+    await expect(geocodeAddress('123 Main Street', 'Toronto', 'ON')).rejects.toThrow(GeocodingUnavailableError);
   });
 
   it('returns null when the network request itself fails', async () => {
@@ -309,6 +329,23 @@ describe('geocodeAddress with { requirePreciseMatch: true }', () => {
 
     expect(result).toEqual({ lat: 43.6532, lng: -79.3832, confidence: 'precise' });
     expect(callCount()).toBe(2);
+  });
+
+  // Regression coverage: once the provider says 429, every further attempt
+  // in the same call (free-text fallback, then up to 10 sequential
+  // street-suffix-expansion requests) would also just 429 -- continuing to
+  // fire them anyway only makes an already-rate-limited provider worse and
+  // adds seconds of pointless latency. A 429 on the very first (structured)
+  // attempt must abort immediately, not fall through to the free-text
+  // fallback.
+  it('stops immediately on a 429 from the structured query -- never attempts the free-text fallback', async () => {
+    const { callCount } = mockFetchSequence(
+      { ok: false, status: 429, json: async () => [] },
+    );
+
+    await expect(geocodeAddress('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true }))
+      .rejects.toThrow(GeocodingUnavailableError);
+    expect(callCount()).toBe(1);
   });
 
   it('rejects when neither the structured nor the free-text fallback resolves to the requested street', async () => {
@@ -580,12 +617,31 @@ describe('verifyConfirmedPinLocation', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('fails closed (rejects) when the reverse-geocoding API responds with a non-OK status', async () => {
-    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => ({}) }));
+  it('fails closed (rejects) when the reverse-geocoding API responds with a genuine client-error status', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 400, json: async () => ({}) }));
 
     const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
 
     expect(result.ok).toBe(false);
+  });
+
+  // Same classification as 429 -- a provider's own 5xx means the SERVICE is
+  // having trouble, not that this pin is wrong.
+  it('throws GeocodingUnavailableError when the reverse-geocoding API responds with a 5xx server error', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => ({}) }));
+
+    await expect(verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  // Regression coverage: same distinction as geocodeAddress -- a 429 here
+  // used to collapse into the same generic "reverse geocoding service
+  // error" rejection as any other failure, which routes/listings.ts then
+  // surfaced as "that pin doesn't look right", spuriously rejecting an
+  // already-correct, already-confirmed pin.
+  it('throws GeocodingUnavailableError (never a plain rejection) when the API responds 429', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 429, json: async () => ({}) }));
+
+    await expect(verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON')).rejects.toThrow(GeocodingUnavailableError);
   });
 
   it('never includes the actual coordinate in its rejection reason (sanitized, log-safe text only)', async () => {

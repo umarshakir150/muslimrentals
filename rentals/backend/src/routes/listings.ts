@@ -20,7 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validateUuidParam } from '../middleware/validateUuid';
 import { writeRateLimiter } from '../middleware/rateLimiter';
 import { distKm, getApproximateLocation, toPublicListingLocation } from '../utils/geo';
-import { geocodeAddress, verifyConfirmedPinLocation } from '../utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation, GeocodingUnavailableError } from '../utils/geocode';
 import { createNotification } from '../utils/notifications';
 import { logger } from '../utils/logger';
 import {
@@ -51,17 +51,13 @@ const s3 = AWS_CONFIGURED
 const router = Router();
 
 // ─── Universal confirm-property-location flow ──────────────────────────────
-// Every new listing, AND every edit through the shared Post/Edit Listing
-// form (not just one that changes address/city/province), requires the
-// landlord to confirm (or drag) a pin before its exact private coordinate
-// is ever stored -- regardless of geocodeAddress's `confidence` for the
-// match. geocodeAddress still finds the best available STARTING point for
-// a genuinely new/changed address (a 'precise' house-level match makes for
-// a better starting pin than a 'street'-level one, but either way the
-// landlord confirms it); an edit whose address/city/province is unchanged
-// instead starts from the listing's own current PRIVATE exact coordinate
-// (never the public randomized one -- see PATCH /:id below). Either way,
-// nothing is created/updated until a confirmed pin is submitted.
+// Every new or address-changing listing requires the landlord to confirm
+// (or drag) a pin before its exact private coordinate is ever stored --
+// regardless of geocodeAddress's `confidence` for the match. geocodeAddress
+// still finds the best available STARTING point (a 'precise' house-level
+// match makes for a better starting pin than a 'street'-level one, but
+// either way the landlord confirms it): nothing is created/updated until a
+// confirmed pin is submitted.
 //
 // The confirmed pin is validated against the ENTERED CITY/PROVINCE (via
 // verifyConfirmedPinLocation's reverse-geocode check), never against
@@ -81,31 +77,60 @@ type LocationResolution =
   | { kind: 'resolved'; lat: number; lng: number }
   | { kind: 'needsConfirmation'; matchedLat: number; matchedLng: number };
 
+// `getStartingPoint` is a callback, not a precomputed value: it must only
+// ever run the (up to ~12-request) forward geocode when a starting pin is
+// actually still needed. Once confirmedLat/confirmedLng are present (the
+// landlord has already confirmed or dragged a pin and is resubmitting),
+// the starting point is no longer used for anything -- re-running the
+// forward geocode on that resubmit was pure waste, and, worse, a real bug:
+// a confirmed pin the landlord had already placed correctly could be
+// spuriously rejected if that redundant, unrelated forward geocode
+// happened to fail (wrong address text, or -- the regression this fixes --
+// the geocoding provider temporarily rate-limiting the request), even
+// though the actual confirmation check below never needed it at all.
 async function resolveGeocodedLocation(
-  geocoded: { lat: number; lng: number },
+  getStartingPoint: () => Promise<{ lat: number; lng: number } | null>,
   confirmedLat: number | undefined,
   confirmedLng: number | undefined,
   city: string,
   province: string | null | undefined
 ): Promise<LocationResolution> {
-  if (confirmedLat === undefined || confirmedLng === undefined) {
-    return { kind: 'needsConfirmation', matchedLat: geocoded.lat, matchedLng: geocoded.lng };
-  }
+  try {
+    if (confirmedLat === undefined || confirmedLng === undefined) {
+      const geocoded = await getStartingPoint();
+      if (!geocoded) {
+        throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
+      }
+      return { kind: 'needsConfirmation', matchedLat: geocoded.lat, matchedLng: geocoded.lng };
+    }
 
-  // Never trust the confirmed pin outright -- verify it actually resolves
-  // to the entered city/province, so manually placing the pin somewhere
-  // unrelated to the entered address is rejected rather than silently
-  // stored, no matter how far (or how close) it is from the geocoder's own
-  // starting guess.
-  const verification = await verifyConfirmedPinLocation(confirmedLat, confirmedLng, city, province);
-  if (!verification.ok) {
-    throw new AppError(
-      `That pin doesn't look right for ${city}${province ? `, ${province}` : ''} -- ${verification.reason}. Please move it to the property's actual location.`,
-      422
-    );
-  }
+    // Never trust the confirmed pin outright -- verify it actually resolves
+    // to the entered city/province, so manually placing the pin somewhere
+    // unrelated to the entered address is rejected rather than silently
+    // stored, no matter how far (or how close) it is from the geocoder's own
+    // starting guess.
+    const verification = await verifyConfirmedPinLocation(confirmedLat, confirmedLng, city, province);
+    if (!verification.ok) {
+      throw new AppError(
+        `That pin doesn't look right for ${city}${province ? `, ${province}` : ''} -- ${verification.reason}. Please move it to the property's actual location.`,
+        422
+      );
+    }
 
-  return { kind: 'resolved', lat: confirmedLat, lng: confirmedLng };
+    return { kind: 'resolved', lat: confirmedLat, lng: confirmedLng };
+  } catch (err) {
+    // Distinct from "this address/pin doesn't resolve" (422s above) -- the
+    // geocoding provider itself refused the request (rate-limited), so
+    // telling the landlord to check their spelling or move the pin would be
+    // actively misleading about what's actually wrong.
+    if (err instanceof GeocodingUnavailableError) {
+      throw new AppError(
+        'Location verification is temporarily unavailable (our geocoding provider is rate-limiting us). Please wait a minute and try again.',
+        503
+      );
+    }
+    throw err;
+  }
 }
 
 // A pin the landlord left exactly where the confirmation map preloaded it
@@ -118,6 +143,7 @@ const COORDINATE_EPSILON = 1e-7;
 function coordinatesMatch(a: number, b: number): boolean {
   return Math.abs(a - b) < COORDINATE_EPSILON;
 }
+
 
 // ─── GET /listings ────────────────────────────────────────────────────────────
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -281,12 +307,10 @@ router.post('/', authenticate, writeRateLimiter, async (req: AuthRequest, res: R
 
     let location: { address?: string; unit?: string; neighbourhood?: string; lat: number; lng: number };
     if ('address' in data) {
-      const geocoded = await geocodeAddress(data.address, data.city, data.province, { requirePreciseMatch: true });
-      if (!geocoded) {
-        throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
-      }
-
-      const resolution = await resolveGeocodedLocation(geocoded, data.confirmedLat, data.confirmedLng, data.city, data.province);
+      const resolution = await resolveGeocodedLocation(
+        () => geocodeAddress(data.address, data.city, data.province, { requirePreciseMatch: true }),
+        data.confirmedLat, data.confirmedLng, data.city, data.province
+      );
       if (resolution.kind === 'needsConfirmation') {
         // Nothing is created yet -- the landlord must confirm the pin first
         // (see resolveGeocodedLocation above). The client resubmits this
@@ -377,17 +401,8 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
       const nextProvince = rest.province !== undefined ? rest.province : listing.province;
       const locationChanging = addressChanging || cityChanging || provinceChanging;
-
-      let startingPoint: { lat: number; lng: number };
-      if (locationChanging || !Number.isFinite(listing.lat) || !Number.isFinite(listing.lng)) {
-        const newGeocoded = await geocodeAddress(rest.address, nextCity, nextProvince, { requirePreciseMatch: true });
-        if (!newGeocoded) {
-          throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
-        }
-        startingPoint = newGeocoded;
-      } else {
-        startingPoint = { lat: listing.lat, lng: listing.lng };
-      }
+      const hasValidStoredCoordinate = Number.isFinite(listing.lat) && Number.isFinite(listing.lng);
+      const address = rest.address;
 
       // A pin left exactly where the confirmation map preloaded it (the
       // listing's own current coordinate, only possible when nothing about
@@ -396,12 +411,25 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       // is what keeps "open Edit, change nothing about location, Save"
       // from spending a real geocoding-provider request on every edit.
       if (
-        !locationChanging && confirmedLat !== undefined && confirmedLng !== undefined &&
+        !locationChanging && hasValidStoredCoordinate &&
+        confirmedLat !== undefined && confirmedLng !== undefined &&
         coordinatesMatch(confirmedLat, listing.lat) && coordinatesMatch(confirmedLng, listing.lng)
       ) {
         geocoded = { lat: listing.lat, lng: listing.lng };
       } else {
-        const resolution = await resolveGeocodedLocation(startingPoint, confirmedLat, confirmedLng, nextCity, nextProvince);
+        // The starting-point callback is only ever INVOKED by
+        // resolveGeocodedLocation when confirmedLat/confirmedLng are still
+        // undefined (the first submit) -- once they're present (a
+        // resubmit after confirming, whether the location changed or
+        // not), this callback is never called at all, so a confirmed
+        // edit never spends a redundant forward-geocode request. See
+        // resolveGeocodedLocation's own comment for why that matters.
+        const resolution = await resolveGeocodedLocation(
+          () => (locationChanging || !hasValidStoredCoordinate)
+            ? geocodeAddress(address, nextCity, nextProvince, { requirePreciseMatch: true })
+            : Promise.resolve({ lat: listing.lat, lng: listing.lng }),
+          confirmedLat, confirmedLng, nextCity, nextProvince
+        );
         if (resolution.kind === 'needsConfirmation') {
           // Nothing is applied yet, including any other fields in this same
           // PATCH -- the landlord must confirm the pin first, then resubmit
@@ -433,12 +461,11 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
       // rename a city would be a regression for those rows.
       const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
       const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-      const newGeocoded = await geocodeAddress(listing.address, nextCity, nextProvince, { requirePreciseMatch: true });
-      if (!newGeocoded) {
-        throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
-      }
-
-      const resolution = await resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng, nextCity, nextProvince);
+      const address = listing.address;
+      const resolution = await resolveGeocodedLocation(
+        () => geocodeAddress(address, nextCity, nextProvince, { requirePreciseMatch: true }),
+        confirmedLat, confirmedLng, nextCity, nextProvince
+      );
       if (resolution.kind === 'needsConfirmation') {
         return res.status(200).json({
           success: true,

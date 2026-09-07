@@ -217,6 +217,33 @@ describe('ConfirmLocationMap', () => {
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' })));
+      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't find that location" }));
+      expect(onChange).not.toHaveBeenCalled();
+      expect(markerInstances[0].setLatLng).not.toHaveBeenCalled();
+    });
+
+    // Regression coverage: a 503 from GET /geocode means the backend's
+    // geocoding provider itself is rate-limited (see
+    // GeocodingUnavailableError), not that this specific address doesn't
+    // exist -- must never be presented as the generic "couldn't find that
+    // location" / "try a different search", which is actively misleading
+    // when the real problem is the provider, not the query.
+    it('on a 503 (geocoding provider rate-limited): shows a distinct "temporarily unavailable" toast, not the generic not-found one', async () => {
+      const rateLimitedError: any = new Error('Location search is temporarily unavailable. Please try again in a minute.');
+      rateLimitedError.status = 503;
+      geocodeSearchMock.mockRejectedValue(rateLimitedError);
+      const onChange = vi.fn();
+      const user = userEvent.setup();
+      const { markerInstances } = await renderMap({ initialLat: 42.3, initialLng: -83.07, onChange });
+
+      await user.type(screen.getByPlaceholderText(/search an address or place/i), 'Some Real Address');
+      await user.click(screen.getByRole('button', { name: 'Search' }));
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
+        variant:     'destructive',
+        title:       'Location search is temporarily unavailable',
+        description: 'Please try again shortly or move the pin manually.',
+      })));
       expect(onChange).not.toHaveBeenCalled();
       expect(markerInstances[0].setLatLng).not.toHaveBeenCalled();
     });

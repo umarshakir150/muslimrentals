@@ -14,7 +14,14 @@ vi.mock('@/lib/api', () => ({
   api: { get: getMock, patch: patchMock, post: postMock, delete: deleteMock },
   messagesApi: { getUnreadCount: vi.fn().mockResolvedValue({ data: { count: 0 } }) },
   authApi: { logout: vi.fn() },
+  usersApi: {
+    getNotificationsUnreadCount: vi.fn().mockResolvedValue({ data: { count: 0 } }),
+    getNotifications: vi.fn().mockResolvedValue({ data: [] }),
+    markNotificationRead: vi.fn().mockResolvedValue({ data: {} }),
+    markAllNotificationsRead: vi.fn().mockResolvedValue({ success: true }),
+  },
 }));
+vi.mock('@/lib/socket', () => ({ connectSocket: vi.fn(() => ({ on: vi.fn(), off: vi.fn() })) }));
 
 // Stable references, matching the real useUser (a Zustand selector, which
 // only changes identity when the underlying user actually changes) -- a

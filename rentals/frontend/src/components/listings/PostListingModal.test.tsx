@@ -40,8 +40,13 @@ vi.mock('@/components/auth/AuthModal', () => ({ default: () => null }));
 // own test file. Here we only need to simulate the landlord dragging the
 // pin, exposed as a plain button so tests don't need a real map.
 vi.mock('@/components/listings/ConfirmLocationMap', () => ({
-  default: ({ onChange }: { initialLat: number; initialLng: number; onChange: (lat: number, lng: number) => void }) => (
-    <button type="button" onClick={() => onChange(42.3035, -83.077)}>Simulate drag pin</button>
+  default: ({ initialLat, initialLng, onChange }: { initialLat: number; initialLng: number; onChange: (lat: number, lng: number) => void }) => (
+    <div>
+      {/* Exposes exactly what the map was preloaded with, so tests can
+          assert the preload source without needing a real Leaflet map. */}
+      <p data-testid="confirm-map-initial">{initialLat},{initialLng}</p>
+      <button type="button" onClick={() => onChange(42.3035, -83.077)}>Simulate drag pin</button>
+    </div>
   ),
 }));
 
@@ -362,25 +367,118 @@ describe('PostListingModal', () => {
       await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());
     }
 
-    it('submits via listingsApi.update (PATCH), never create, and reports the saved listing via onSaved', async () => {
-      const onSaved = vi.fn();
+    // Milestone follow-up: Edit must show the same final
+    // confirm-property-location step as Post, on EVERY save -- including
+    // one that doesn't touch address/city/province at all. The backend
+    // (routes/listings.ts) now always returns needsLocationConfirmation on
+    // an edit-form PATCH's first call; these tests exercise the resulting
+    // two-step save this component already handles generically (the same
+    // pendingConfirmation/confirmPendingLocation code path as create).
+    function mockNeedsConfirmationThenSaved(matched: { matchedLat: number; matchedLng: number }) {
+      updateMock.mockResolvedValueOnce({ success: true, needsLocationConfirmation: true, data: matched });
+    }
+
+    async function saveAndConfirm(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+    }
+
+    it('always shows "Confirm property location" after Save changes, even when address/city/province are unchanged (the removed shortcut)', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
       const user = userEvent.setup();
-      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
       await goToStep3(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
-      await waitFor(() => expect(updateMock).toHaveBeenCalledWith('listing-42', expect.objectContaining({ title: 'Existing listing title' })));
-      expect(createMock).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      expect(uploadImagesMock).not.toHaveBeenCalled();
+    });
+
+    // Literal reproduction of the founder's bug report against the PR #16
+    // preview: clicking "Save changes" appeared to complete the edit and
+    // close the modal immediately, with no confirm-location map at all.
+    // Given the contract PATCH /listings/:id now returns
+    // (needsLocationConfirmation: true + matchedLat/matchedLng), this proves
+    // the frontend transitions to the SHARED ConfirmLocationMap step instead
+    // of finalizing anything -- no success toast, no onClose, no onSaved --
+    // until a second submit with confirmedLat/confirmedLng actually
+    // completes the PATCH.
+    it('given the PATCH response needs confirmation, Save Changes does NOT complete the edit or close the modal -- it shows the map; only confirming completes it', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      const onClose = vi.fn();
+      const onSaved = vi.fn();
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={onClose} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      // First submit: must land on the confirm-location step, not a
+      // completed/closed edit.
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      expect(screen.getByTestId('confirm-map-initial')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(onSaved).not.toHaveBeenCalled();
+      expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Listing updated!' }));
+      expect(screen.queryByText('Listing updated!')).not.toBeInTheDocument();
+      expect(updateMock).toHaveBeenCalledTimes(1); // only the first (unconfirmed) submit so far
+
+      // Second submit, now WITH confirmedLat/confirmedLng: this is the one
+      // that actually completes the PATCH and reports the save.
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(2));
+      expect(updateMock).toHaveBeenLastCalledWith('listing-42', expect.objectContaining({
+        confirmedLat: 43.6532, confirmedLng: -79.3832,
+      }));
       await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' })));
     });
 
-    it('an address/city/province change that needs confirmation shows the SAME confirm-location step as create, and confirming resubmits via update with confirmedLat/Lng', async () => {
-      updateMock.mockResolvedValueOnce({
-        success: true,
-        needsLocationConfirmation: true,
-        data: { matchedLat: 43.7, matchedLng: -79.4 },
-      });
+    it('preloads the confirmation pin at the server-provided coordinate (the listing\'s current private exact coordinate), never something read off the listing prop directly', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.65321234, matchedLng: -79.38321234 });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(screen.getByTestId('confirm-map-initial')).toHaveTextContent('43.65321234,-79.38321234'));
+    });
+
+    it('never uses the listing prop\'s own lat/lng for the confirmation pin -- only ever the server-returned coordinate (guards against ever wiring in the public/approximate value)', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      const user = userEvent.setup();
+      // A caller mistakenly passing the PUBLIC/approximate shape -- if the
+      // modal ever read lat/lng off the listing prop for the preload, this
+      // would leak the redacted point into the "confirm exact location" step.
+      const approximateListing = { ...EXISTING_LISTING, lat: 40.0, lng: -80.0, locationApproximate: true };
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={approximateListing} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(screen.getByTestId('confirm-map-initial')).toHaveTextContent('43.6532,-79.3832'));
+      expect(screen.getByTestId('confirm-map-initial')).not.toHaveTextContent('40');
+    });
+
+    it('leaving the pin unchanged resubmits the SAME server-provided coordinate as confirmedLat/Lng', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      await goToStep3(user);
+      await saveAndConfirm(user);
+
+      await waitFor(() => expect(updateMock).toHaveBeenLastCalledWith(
+        'listing-42',
+        expect.objectContaining({ confirmedLat: 43.6532, confirmedLng: -79.3832 })
+      ));
+    });
+
+    it('dragging the pin resubmits the NEW coordinate as confirmedLat/Lng, via the same confirm-location step as create', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.7, matchedLng: -79.4 });
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
@@ -397,15 +495,38 @@ describe('PostListingModal', () => {
       ));
     });
 
-    it('an edit that does not need location confirmation never shows the confirm-location step at all', async () => {
+    it('shows a destructive toast and keeps the confirm step open (does not save) when the moved pin fails city/province verification', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      updateMock.mockRejectedValueOnce(new Error("That pin doesn't look right for Toronto, ON -- that location appears to be in Ottawa, not Toronto."));
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
       await goToStep3(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
 
-      await waitFor(() => expect(updateMock).toHaveBeenCalled());
-      expect(screen.queryByText('Confirm property location')).not.toBeInTheDocument();
+      await user.click(screen.getByText('Simulate drag pin'));
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
+        variant: 'destructive',
+        title: 'Could not confirm location',
+      })));
+      expect(screen.getByText('Confirm property location')).toBeInTheDocument();
+    });
+
+    it('submits via listingsApi.update (PATCH), never create, and reports the saved listing via onSaved once the location is confirmed', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      const onSaved = vi.fn();
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+
+      await goToStep3(user);
+      await saveAndConfirm(user);
+
+      expect(updateMock).toHaveBeenNthCalledWith(1, 'listing-42', expect.objectContaining({ title: 'Existing listing title' }));
+      expect(createMock).not.toHaveBeenCalled();
+      await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' })));
     });
 
     it('renders existing photos and removes one immediately via listingsApi.deleteImage on click', async () => {
@@ -435,7 +556,8 @@ describe('PostListingModal', () => {
       expect(document.querySelectorAll('img')).toHaveLength(2); // never actually removed
     });
 
-    it('uploads newly added photos to the SAME listing id after a successful save', async () => {
+    it('uploads newly added photos to the SAME listing id after a successful save (post-confirmation)', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
       const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
@@ -443,12 +565,13 @@ describe('PostListingModal', () => {
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       await user.upload(fileInput, file);
-      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+      await saveAndConfirm(user);
 
       await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
     });
 
     it('a failed photo upload after a successful edit save does NOT roll back the listing (no deletePermanent call), and reports the save via onSaved anyway', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
       uploadImagesMock.mockRejectedValueOnce(new Error('Upload failed.'));
       const onSaved = vi.fn();
       const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
@@ -458,7 +581,7 @@ describe('PostListingModal', () => {
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       await user.upload(fileInput, file);
-      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+      await saveAndConfirm(user);
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
         variant: 'destructive',

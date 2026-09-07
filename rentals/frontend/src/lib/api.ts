@@ -1,5 +1,6 @@
 import { useAuthStore } from '@/store/authStore';
 import { disconnectSocket } from '@/lib/socket';
+import { Notification } from '@/types';
 
 // ─── Base URL normalisation ───────────────────────────────────────────────────
 // NEXT_PUBLIC_API_URL may be set as either:
@@ -302,7 +303,10 @@ export const usersApi = {
   changePassword: (data: any) => api.post('/users/me/change-password', data),
   getSaved: () => api.get<{ data: any[] }>('/users/me/saved'),
   getMyListings: () => api.get<{ data: any[] }>('/users/me/listings'),
-  getNotifications: () => api.get<{ data: any[] }>('/users/me/notifications'),
+  getNotifications: () => api.get<{ data: Notification[] }>('/users/me/notifications'),
+  getNotificationsUnreadCount: () => api.get<{ data: { count: number } }>('/users/me/notifications/unread-count'),
+  markNotificationRead: (id: string) => api.patch<{ data: Notification }>(`/users/me/notifications/${id}/read`, {}),
+  markAllNotificationsRead: () => api.patch<{ success: boolean; message: string }>('/users/me/notifications/read-all', {}),
   uploadAvatar: (file: File) => {
     const formData = new FormData();
     formData.append('avatar', file);

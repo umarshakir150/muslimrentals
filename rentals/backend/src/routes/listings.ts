@@ -51,13 +51,17 @@ const s3 = AWS_CONFIGURED
 const router = Router();
 
 // ─── Universal confirm-property-location flow ──────────────────────────────
-// Every new or address-changing listing requires the landlord to confirm
-// (or drag) a pin before its exact private coordinate is ever stored --
-// regardless of geocodeAddress's `confidence` for the match. geocodeAddress
-// still finds the best available STARTING point (a 'precise' house-level
-// match makes for a better starting pin than a 'street'-level one, but
-// either way the landlord confirms it): nothing is created/updated until a
-// confirmed pin is submitted.
+// Every new listing, AND every edit through the shared Post/Edit Listing
+// form (not just one that changes address/city/province), requires the
+// landlord to confirm (or drag) a pin before its exact private coordinate
+// is ever stored -- regardless of geocodeAddress's `confidence` for the
+// match. geocodeAddress still finds the best available STARTING point for
+// a genuinely new/changed address (a 'precise' house-level match makes for
+// a better starting pin than a 'street'-level one, but either way the
+// landlord confirms it); an edit whose address/city/province is unchanged
+// instead starts from the listing's own current PRIVATE exact coordinate
+// (never the public randomized one -- see PATCH /:id below). Either way,
+// nothing is created/updated until a confirmed pin is submitted.
 //
 // The confirmed pin is validated against the ENTERED CITY/PROVINCE (via
 // verifyConfirmedPinLocation's reverse-geocode check), never against
@@ -104,6 +108,16 @@ async function resolveGeocodedLocation(
   return { kind: 'resolved', lat: confirmedLat, lng: confirmedLng };
 }
 
+// A pin the landlord left exactly where the confirmation map preloaded it
+// (the listing's own current coordinate) needs no reverse-geocode
+// verification call at all -- only a genuinely MOVED pin does (see PATCH
+// /:id below). COORDINATE_EPSILON is far tighter than any real pin
+// adjustment (well under a metre at these latitudes), so it only ever
+// absorbs float round-tripping through JSON, never a genuine landlord nudge.
+const COORDINATE_EPSILON = 1e-7;
+function coordinatesMatch(a: number, b: number): boolean {
+  return Math.abs(a - b) < COORDINATE_EPSILON;
+}
 
 // ─── GET /listings ────────────────────────────────────────────────────────────
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -341,24 +355,53 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     let geocoded: { lat: number; lng: number } | undefined;
 
     if ('address' in rest && rest.address !== undefined) {
-      // Re-geocode only when something that could change the real-world
-      // location actually changed -- editing just the unit, price, title,
-      // etc. must never trigger (or need) a new geocoding lookup. Comparing
-      // against the currently stored values (not just "was address sent")
-      // also avoids a needless re-geocode when a client resubmits the same
-      // address unchanged.
+      // Every edit through the shared Post/Edit Listing form requires
+      // landlord confirmation of the location pin -- not just when
+      // address/city/province actually changed (that old shortcut is
+      // exactly what this block used to do, and exactly what the
+      // milestone's "Edit must match Post" requirement removed). What
+      // still differs based on whether the address/city/province changed
+      // is only WHERE the starting pin for that confirmation comes from:
+      //   - changed -> geocode the new address, same as always.
+      //   - unchanged -> start from the listing's own current PRIVATE
+      //     exact coordinate (never the public randomized one) -- no need
+      //     to re-geocode an address that hasn't moved. Falls back to a
+      //     fresh geocode of that same (unchanged) address only if the
+      //     stored coordinate isn't a valid, finite pair (a legacy/data
+      //     edge case) -- so an invalid stored coordinate still never
+      //     surfaces the public randomized point as an editable "private"
+      //     source.
       const addressChanging  = rest.address  !== listing.address;
       const cityChanging     = rest.city     !== undefined && rest.city     !== listing.city;
       const provinceChanging = rest.province !== undefined && rest.province !== listing.province;
-      if (addressChanging || cityChanging || provinceChanging) {
-        const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
-        const nextProvince = rest.province !== undefined ? rest.province : listing.province;
+      const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
+      const nextProvince = rest.province !== undefined ? rest.province : listing.province;
+      const locationChanging = addressChanging || cityChanging || provinceChanging;
+
+      let startingPoint: { lat: number; lng: number };
+      if (locationChanging || !Number.isFinite(listing.lat) || !Number.isFinite(listing.lng)) {
         const newGeocoded = await geocodeAddress(rest.address, nextCity, nextProvince, { requirePreciseMatch: true });
         if (!newGeocoded) {
           throw new AppError('We couldn\'t verify that exact address. Please check the street number and spelling and try again.', 422);
         }
+        startingPoint = newGeocoded;
+      } else {
+        startingPoint = { lat: listing.lat, lng: listing.lng };
+      }
 
-        const resolution = await resolveGeocodedLocation(newGeocoded, confirmedLat, confirmedLng, nextCity, nextProvince);
+      // A pin left exactly where the confirmation map preloaded it (the
+      // listing's own current coordinate, only possible when nothing about
+      // the location was otherwise changing) needs no reverse-geocode
+      // verification call at all -- only a genuinely MOVED pin does. This
+      // is what keeps "open Edit, change nothing about location, Save"
+      // from spending a real geocoding-provider request on every edit.
+      if (
+        !locationChanging && confirmedLat !== undefined && confirmedLng !== undefined &&
+        coordinatesMatch(confirmedLat, listing.lat) && coordinatesMatch(confirmedLng, listing.lng)
+      ) {
+        geocoded = { lat: listing.lat, lng: listing.lng };
+      } else {
+        const resolution = await resolveGeocodedLocation(startingPoint, confirmedLat, confirmedLng, nextCity, nextProvince);
         if (resolution.kind === 'needsConfirmation') {
           // Nothing is applied yet, including any other fields in this same
           // PATCH -- the landlord must confirm the pin first, then resubmit

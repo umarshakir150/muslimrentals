@@ -17,10 +17,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-const { clearAuthMock, logoutMock, getUnreadCountMock } = vi.hoisted(() => ({
+const { clearAuthMock, logoutMock, getUnreadCountMock, getNotificationsUnreadCountMock, getNotificationsMock, connectSocketMock } = vi.hoisted(() => ({
   clearAuthMock: vi.fn(),
   logoutMock: vi.fn().mockResolvedValue({}),
   getUnreadCountMock: vi.fn().mockResolvedValue({ data: { count: 0 } }),
+  getNotificationsUnreadCountMock: vi.fn().mockResolvedValue({ data: { count: 0 } }),
+  getNotificationsMock: vi.fn().mockResolvedValue({ data: [] }),
+  connectSocketMock: vi.fn(() => ({ on: vi.fn(), off: vi.fn() })),
 }));
 
 vi.mock('@/store/authStore', () => ({
@@ -31,7 +34,15 @@ vi.mock('@/store/authStore', () => ({
 vi.mock('@/lib/api', () => ({
   authApi: { logout: logoutMock },
   messagesApi: { getUnreadCount: getUnreadCountMock },
+  usersApi: {
+    getNotificationsUnreadCount: getNotificationsUnreadCountMock,
+    getNotifications: getNotificationsMock,
+    markNotificationRead: vi.fn().mockResolvedValue({ data: {} }),
+    markAllNotificationsRead: vi.fn().mockResolvedValue({ success: true }),
+  },
 }));
+
+vi.mock('@/lib/socket', () => ({ connectSocket: connectSocketMock }));
 
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
@@ -39,6 +50,9 @@ beforeEach(() => {
   clearAuthMock.mockReset();
   logoutMock.mockReset().mockResolvedValue({});
   getUnreadCountMock.mockReset().mockResolvedValue({ data: { count: 0 } });
+  getNotificationsUnreadCountMock.mockReset().mockResolvedValue({ data: { count: 0 } });
+  getNotificationsMock.mockReset().mockResolvedValue({ data: [] });
+  connectSocketMock.mockReset().mockReturnValue({ on: vi.fn(), off: vi.fn() });
 });
 
 describe('Navbar: account dropdown open/close behavior', () => {

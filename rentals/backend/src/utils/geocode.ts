@@ -1,5 +1,19 @@
 import { logger } from './logger';
 
+// Thrown (never silently swallowed as "no results") when Nominatim itself
+// says 429 -- a distinct condition from "no candidate matched" that must
+// never be presented to a landlord/renter as "check your spelling"/"could
+// not find that location". Also serves as the fail-fast signal that stops
+// geocodeAddress's free-text fallback and tryStreetSuffixExpansion's
+// up-to-10-request loop from continuing to hammer an already-rate-limited
+// provider with more requests that would just 429 too.
+export class GeocodingUnavailableError extends Error {
+  constructor(message = 'Geocoding provider rate-limited this request.') {
+    super(message);
+    this.name = 'GeocodingUnavailableError';
+  }
+}
+
 /**
  * Server-side address -> precise-coordinate geocoding, the first stage of
  * the location pipeline this app now uses end to end:
@@ -311,6 +325,11 @@ export async function verifyConfirmedPinLocation(
     clearTimeout(timeout);
   }
 
+  if (response.status === 429) {
+    logger.error(`Reverse geocoding API rate-limited (429) for ${description}`);
+    throw new GeocodingUnavailableError();
+  }
+
   if (!response.ok) {
     logger.error(`Reverse geocoding API returned ${response.status} for ${description}`);
     return { ok: false, reason: "we couldn't verify that location right now (reverse geocoding service error)" };
@@ -559,6 +578,11 @@ async function fetchNominatimCandidates(url: string, queryDescription: string): 
     return [];
   } finally {
     clearTimeout(timeout);
+  }
+
+  if (response.status === 429) {
+    logger.error(`Geocoding API rate-limited (429) for ${queryDescription}`);
+    throw new GeocodingUnavailableError();
   }
 
   if (!response.ok) {

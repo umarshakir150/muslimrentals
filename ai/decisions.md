@@ -1693,3 +1693,17 @@ No new fields were exposed anywhere outside the existing ADMIN/MODERATOR-gated `
 **Impact:** restores a Trust & Safety feature (moderator evidence for why a user report qualified) that was live but silently non-functional since the prior task merged. No production deploy occurred — this is backend/frontend code merged to a feature branch only.
 
 **Revisit when:** the founder reviews and either merges or requests changes to PR #10.
+
+## 2026-09-07 — Autonomous cycle closed a flagged .gitignore secret-leak gap; PR #20 opened
+
+**Decision:** A routine 4h autonomy cycle found the backlog's three open items all sitting in the founder's pending-approval queue (CI setup, Google Sign-In fate, MODERATOR-role regression test) with no new decision to act on, and the 162 signals reviewed were overwhelmingly historical confirmations of already-shipped, healthy code. Rather than a no-op, direct file inspection turned up one concrete, previously-unflagged, zero-risk gap already named in `ai/roadmap.md`'s "Now" section: `rentals/backend/.gitignore` only excluded the literal `.env` filename, not `.env.local` or other dotenv variants, while `rentals/frontend/.gitignore` already excluded both — leaving a real (if narrow) path for a developer using the common `.env.local` convention to accidentally commit real secrets (`JWT_SECRET`, `DATABASE_URL`, `RESEND_API_KEY`, AWS/S3 credentials).
+
+**Fix** (task `20260907-123728-add-envlocal-and-other-env-variants`, branch `agents/20260907-123728-add-envlocal-and-other-env-variants/backend`): one-line-class change adding `.env.local`, `.env.development`, `.env.production`, `.env.*.local` to `rentals/backend/.gitignore`, matching the frontend's existing pattern exactly. No code/behavior change, no migration, no production surface touched.
+
+**Review:** QA PASS, Security APPROVED, 0 correction cycles.
+
+**PR opened, not merged:** PR #20 opened against `main` from the pushed branch using this session's own GitHub tools (the worker subprocesses have no GitHub/MCP access). Left for founder review per `CLAUDE.md` — no agent merges or deploys unilaterally.
+
+**Impact:** closes a real secret-leak-prevention gap on the backend side that had been sitting named-but-unfixed in the roadmap.
+
+**Revisit when:** the founder reviews and merges (or requests changes to) PR #20.

@@ -29,7 +29,7 @@ import { logger } from './logger';
  * coordinate verified against nothing: every confirmed pin is checked
  * against the same city/province the address was actually entered under.
  *
- * ─── Provider plumbing (Geocodio evaluation spike, 2026-09) ─────────────
+ * ─── Provider plumbing (Geocodio evaluation spike, 2026-09) ─────────────────
  * Two providers are supported behind this exact same public interface
  * (geocodeAddress/verifyConfirmedPinLocation/GeocodeResult/
  * PinLocationVerification/GeocodingUnavailableError never change shape no
@@ -207,7 +207,7 @@ interface MatchEvaluation {
   reason: string;
 }
 
-// ─── Canadian address component normalization ─────────────────────────
+// ─── Canadian address component normalization ──────────────────────────────
 // Goal: get a geographically useful coordinate for the entered address, not
 // certify house-number-level building data against the provider. So instead
 // of gating on the provider's own precision metadata (which penalizes a
@@ -227,7 +227,7 @@ const STREET_TYPE_ALIASES: Record<string, string> = {
 
 const MUNICIPALITY_PREFIXES = /^(city|town|township|municipality|village|district)\s+of\s+/i;
 
-// ─── Missing-street-suffix fallback ─────────────────────────────
+// ─── Missing-street-suffix fallback ─────────────────────────────────────────
 // A landlord who types "1031 Askin" instead of "1031 Askin Ave" gets no
 // match at all from a literal query -- neither provider guesses a suffix on
 // its own for a STRUCTURED query. This is the real, motivating case (a
@@ -322,7 +322,7 @@ export interface PinLocationVerification {
   reason: string;
 }
 
-// ─── Provider selection ──────────────────────────────────────────────────
+// ─── Provider selection ─────────────────────────────────────────────────────
 // Read lazily (not cached at module load) so tests can flip
 // process.env.GEOCODING_PROVIDER per-test without needing to re-import this
 // module -- the same pattern every other env-driven check in this codebase
@@ -369,7 +369,7 @@ function classifyProviderFailure(status: number): 'auth' | 'unavailable' | null 
   return null;
 }
 
-// ─── Nominatim provider ────────────────────────────────────────────
+// ─── Nominatim provider ──────────────────────────────────────────────────────
 
 async function fetchNominatimJson(url: string, providerLabel: string, queryDescription: string): Promise<unknown | null> {
   const controller = new AbortController();
@@ -429,7 +429,7 @@ async function nominatimReverse(lat: number, lng: number, description: string): 
   return result?.address ?? null;
 }
 
-// ─── Geocodio provider ──────────────────────────────────────────────
+// ─── Geocodio provider ───────────────────────────────────────────────────────
 // https://api.geocod.io/v2/{geocode,reverse} -- REST + API key in the query
 // string (server-side only, see getGeocodioApiKey), JSON in/out, no SDK.
 // Response shape (default, non-"simple" format):
@@ -571,7 +571,7 @@ async function geocodioReverse(lat: number, lng: number, description: string): P
   return { city: c.city, state: c.state };
 }
 
-// ─── Provider-agnostic candidate fetch ────────────────────────────────────
+// ─── Provider-agnostic candidate fetch ──────────────────────────────────────
 // Builds the actual provider-specific request (URL, params, API key) and
 // returns normalized candidates -- everything above this point in the file
 // (evaluateAddressMatch, pickBestCandidate, tryStreetSuffixExpansion,
@@ -834,7 +834,7 @@ export async function geocodeAddress(
   // ── Listing address pipeline: structured query, then a free-text
   // fallback, each pulling multiple candidates and evaluated against the
   // requested street/city/province (not against the provider's own
-  // precision metadata alone -- see pickBestCandidate). ───────────────────
+  // precision metadata alone -- see pickBestCandidate). ────────────────────
   const provinceName = province ? (PROVINCE_NAMES[province.trim().toUpperCase()] ?? province) : undefined;
 
   const structuredDescription = `street="${address}", city="${city}", state="${provinceName ?? ''}", country="Canada" (structured)`;
@@ -881,7 +881,7 @@ export async function geocodeAddress(
   return toGeocodeResult(freeTextBest.candidate, freeTextDescription, freeTextBest.status);
 }
 
-// ─── Landlord-confirmed-pin geography check ────────────────────────
+// ─── Landlord-confirmed-pin geography check ────────────────────────────────
 // The universal confirm-property-location flow (routes/listings.ts) cannot
 // validate a landlord-placed pin by measuring its distance from
 // geocodeAddress's own starting point -- that point is exactly what

@@ -29,7 +29,6 @@ import { logger } from './utils/logger';
 import { setupSocketIO } from './socket/socketServer';
 import { validateEnv } from './utils/validateEnv';
 import { makeNetlifyPreviewOriginMatcher, makeOriginChecker } from './utils/corsOrigins';
-import { runGeocodioStartupValidation } from './scripts/geocodioStartupValidation';
 
 // Routes
 import authRoutes    from './routes/auth';
@@ -179,12 +178,6 @@ server.listen(PORT, () => {
   if (isNetlifyPreviewOrigin) {
     logger.info('🔗 Also allowing this site\'s Netlify Deploy Preview / branch-deploy origins (*--<site>.netlify.app).');
   }
-
-  // TEMPORARY: one-time live Geocodio evaluation, gated by
-  // RUN_GEOCODIO_LIVE_VALIDATION=true -- a no-op unless that flag is set.
-  // Fire-and-forget: never blocks server startup or affects request
-  // handling either way. See scripts/geocodioStartupValidation.ts.
-  runGeocodioStartupValidation().catch((err) => logger.error('Geocodio startup validation crashed unexpectedly:', err));
 });
 
 export default app;

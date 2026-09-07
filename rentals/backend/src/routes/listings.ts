@@ -133,6 +133,17 @@ async function resolveGeocodedLocation(
   }
 }
 
+// A pin the landlord left exactly where the confirmation map preloaded it
+// (the listing's own current coordinate) needs no reverse-geocode
+// verification call at all -- only a genuinely MOVED pin does (see PATCH
+// /:id below). COORDINATE_EPSILON is far tighter than any real pin
+// adjustment (well under a metre at these latitudes), so it only ever
+// absorbs float round-tripping through JSON, never a genuine landlord nudge.
+const COORDINATE_EPSILON = 1e-7;
+function coordinatesMatch(a: number, b: number): boolean {
+  return Math.abs(a - b) < COORDINATE_EPSILON;
+}
+
 
 // ─── GET /listings ────────────────────────────────────────────────────────────
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -368,21 +379,55 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     let geocoded: { lat: number; lng: number } | undefined;
 
     if ('address' in rest && rest.address !== undefined) {
-      // Re-geocode only when something that could change the real-world
-      // location actually changed -- editing just the unit, price, title,
-      // etc. must never trigger (or need) a new geocoding lookup. Comparing
-      // against the currently stored values (not just "was address sent")
-      // also avoids a needless re-geocode when a client resubmits the same
-      // address unchanged.
+      // Every edit through the shared Post/Edit Listing form requires
+      // landlord confirmation of the location pin -- not just when
+      // address/city/province actually changed (that old shortcut is
+      // exactly what this block used to do, and exactly what the
+      // milestone's "Edit must match Post" requirement removed). What
+      // still differs based on whether the address/city/province changed
+      // is only WHERE the starting pin for that confirmation comes from:
+      //   - changed -> geocode the new address, same as always.
+      //   - unchanged -> start from the listing's own current PRIVATE
+      //     exact coordinate (never the public randomized one) -- no need
+      //     to re-geocode an address that hasn't moved. Falls back to a
+      //     fresh geocode of that same (unchanged) address only if the
+      //     stored coordinate isn't a valid, finite pair (a legacy/data
+      //     edge case) -- so an invalid stored coordinate still never
+      //     surfaces the public randomized point as an editable "private"
+      //     source.
       const addressChanging  = rest.address  !== listing.address;
       const cityChanging     = rest.city     !== undefined && rest.city     !== listing.city;
       const provinceChanging = rest.province !== undefined && rest.province !== listing.province;
-      if (addressChanging || cityChanging || provinceChanging) {
-        const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
-        const nextProvince = rest.province !== undefined ? rest.province : listing.province;
-        const address      = rest.address;
+      const nextCity     = rest.city     !== undefined ? rest.city     : listing.city;
+      const nextProvince = rest.province !== undefined ? rest.province : listing.province;
+      const locationChanging = addressChanging || cityChanging || provinceChanging;
+      const hasValidStoredCoordinate = Number.isFinite(listing.lat) && Number.isFinite(listing.lng);
+      const address = rest.address;
+
+      // A pin left exactly where the confirmation map preloaded it (the
+      // listing's own current coordinate, only possible when nothing about
+      // the location was otherwise changing) needs no reverse-geocode
+      // verification call at all -- only a genuinely MOVED pin does. This
+      // is what keeps "open Edit, change nothing about location, Save"
+      // from spending a real geocoding-provider request on every edit.
+      if (
+        !locationChanging && hasValidStoredCoordinate &&
+        confirmedLat !== undefined && confirmedLng !== undefined &&
+        coordinatesMatch(confirmedLat, listing.lat) && coordinatesMatch(confirmedLng, listing.lng)
+      ) {
+        geocoded = { lat: listing.lat, lng: listing.lng };
+      } else {
+        // The starting-point callback is only ever INVOKED by
+        // resolveGeocodedLocation when confirmedLat/confirmedLng are still
+        // undefined (the first submit) -- once they're present (a
+        // resubmit after confirming, whether the location changed or
+        // not), this callback is never called at all, so a confirmed
+        // edit never spends a redundant forward-geocode request. See
+        // resolveGeocodedLocation's own comment for why that matters.
         const resolution = await resolveGeocodedLocation(
-          () => geocodeAddress(address, nextCity, nextProvince, { requirePreciseMatch: true }),
+          () => (locationChanging || !hasValidStoredCoordinate)
+            ? geocodeAddress(address, nextCity, nextProvince, { requirePreciseMatch: true })
+            : Promise.resolve({ lat: listing.lat, lng: listing.lng }),
           confirmedLat, confirmedLng, nextCity, nextProvince
         );
         if (resolution.kind === 'needsConfirmation') {

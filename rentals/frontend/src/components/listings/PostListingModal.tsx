@@ -224,14 +224,15 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
         ? await listingsApi.update(listing!.id, { ...data, amenities: selectedAmenities })
         : await listingsApi.create({ ...data, amenities: selectedAmenities, imageUrls: [] });
       if (needsLocationConfirmation(res)) {
-        // Nothing was created/changed -- every new or address-changing
-        // listing requires the landlord to confirm the pin first,
-        // regardless of how confident the geocode match was. An edit that
-        // didn't touch address/city/province never reaches this branch at
-        // all (the backend only re-geocodes when one of those actually
-        // changed), so an unrelated field edit never triggers
-        // reconfirmation. Show a pin on the geocoder's matched point and
-        // let them confirm/move/search it before anything is saved.
+        // Nothing was created/changed -- every new listing AND every edit
+        // through this shared form requires the landlord to confirm the pin
+        // first, regardless of how confident the geocode match was or
+        // whether address/city/province even changed (see the universal
+        // confirm-property-location flow in routes/listings.ts). For an
+        // edit whose location didn't change, matchedLat/Lng here is the
+        // listing's own current private coordinate, not a fresh geocode --
+        // so the pin preloads on where it already privately is. Show that
+        // pin and let them confirm/move/search it before anything is saved.
         setPendingConfirmation({
           formData: data,
           matchedLat: res.data.matchedLat,
@@ -345,15 +346,20 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
               </div>
             )}
 
-            {/* Confirm-location step -- shown for EVERY new or
-                address/city/province-changing edit, regardless of how
-                confident the geocode match was (see the universal
-                confirm-property-location flow in resolveGeocodedLocation,
-                routes/listings.ts). Nothing has been saved yet; confirming
-                here is what actually creates/updates the listing. Reuses
-                ConfirmLocationMap as-is (drag, click/tap, and search all
-                report through the same onChange below) -- identical in
-                create and edit mode. */}
+            {/* Confirm-location step -- shown for EVERY new listing AND
+                EVERY edit through this shared form, regardless of whether
+                address/city/province changed or how confident the geocode
+                match was (see the universal confirm-property-location flow
+                in resolveGeocodedLocation, routes/listings.ts). An edit
+                whose location didn't change preloads the pin at the
+                listing's own current private coordinate rather than
+                re-geocoding; a legacy listing with no valid stored
+                coordinate preloads from a fresh geocode of its address
+                instead of ever exposing the public randomized point. Nothing
+                has been saved yet; confirming here is what actually
+                creates/updates the listing. Reuses ConfirmLocationMap as-is
+                (drag, click/tap, and search all report through the same
+                onChange below) -- identical in create and edit mode. */}
             {!success && pendingConfirmation && (
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                 <p className="text-sm text-muted">

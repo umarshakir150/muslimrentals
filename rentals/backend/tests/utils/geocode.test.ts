@@ -58,8 +58,8 @@ describe('geocodeAddress', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when the geocoding API responds with a non-OK status', async () => {
-    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => [] }));
+  it('returns null when the geocoding API responds with a genuine client-error status (not a rate-limit/outage)', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 400, json: async () => [] }));
 
     const result = await geocodeAddress('123 Main Street', 'Toronto', 'ON');
     expect(result).toBeNull();
@@ -73,6 +73,14 @@ describe('geocodeAddress', () => {
   // address" failures that had nothing to do with the address itself.
   it('throws GeocodingUnavailableError (never returns null) when the API responds 429', async () => {
     mockFetchOnce(() => ({ ok: false, status: 429, json: async () => [] }));
+
+    await expect(geocodeAddress('123 Main Street', 'Toronto', 'ON')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  // Same classification as 429 -- a provider's own 5xx means the SERVICE is
+  // having trouble, not that this particular address doesn't exist.
+  it('throws GeocodingUnavailableError (never returns null) when the API responds with a 5xx server error', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => [] }));
 
     await expect(geocodeAddress('123 Main Street', 'Toronto', 'ON')).rejects.toThrow(GeocodingUnavailableError);
   });
@@ -609,12 +617,20 @@ describe('verifyConfirmedPinLocation', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('fails closed (rejects) when the reverse-geocoding API responds with a non-OK status', async () => {
-    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => ({}) }));
+  it('fails closed (rejects) when the reverse-geocoding API responds with a genuine client-error status', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 400, json: async () => ({}) }));
 
     const result = await verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON');
 
     expect(result.ok).toBe(false);
+  });
+
+  // Same classification as 429 -- a provider's own 5xx means the SERVICE is
+  // having trouble, not that this pin is wrong.
+  it('throws GeocodingUnavailableError when the reverse-geocoding API responds with a 5xx server error', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 503, json: async () => ({}) }));
+
+    await expect(verifyConfirmedPinLocation(42.31, -83.05, 'Windsor', 'ON')).rejects.toThrow(GeocodingUnavailableError);
   });
 
   // Regression coverage: same distinction as geocodeAddress -- a 429 here

@@ -429,17 +429,24 @@ describe('PATCH /listings/:id — re-geocodes only when the location actually ch
     }));
   });
 
-  it('does not re-geocode when the address is resubmitted unchanged', async () => {
+  it('does not re-geocode when the address is resubmitted unchanged, but still requires confirmation (no immediate update)', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
-    updateMock.mockResolvedValue({ id: LISTING_ID, ...existingListing(), images: [], amenities: [], user: {} });
     const app = await buildApp();
 
-    await request(app)
+    const res = await request(app)
       .patch(`/api/v1/listings/${LISTING_ID}`)
       .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
       .send({ address: '123 Main Street' }); // identical to the stored value
 
     expect(geocodeAddressMock).not.toHaveBeenCalled();
+    // The old shortcut used to no-op and apply the edit immediately here --
+    // the milestone's "Edit must match Post" requirement removes that: an
+    // unchanged address still requires the landlord to confirm the pin,
+    // preloaded from the listing's own current coordinate.
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(res.body.data).toEqual({ matchedLat: 43.6532, matchedLng: -79.3832 });
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('re-geocodes (and requires confirmation) when only the city changes (address text reused against a new city)', async () => {
@@ -627,6 +634,119 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
 
     expect(res.status).toBe(422);
     expect(res.body.message).toContain('Toronto');
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+});
+
+// Coverage for the milestone follow-up: Edit Listing must always show the
+// same final location-confirmation step as Post Listing, even when
+// address/city/province are unchanged -- removing the old shortcut that
+// skipped it. See the "edit always requires confirmation" block above for
+// the base case; these cover preload source, unchanged-vs-moved-pin
+// handling, rejection, and the legacy-coordinate fallback.
+describe('PATCH /listings/:id — edit always confirms, seeded from the private coordinate (never the public one)', () => {
+  function existingListing(overrides: Record<string, any> = {}) {
+    return {
+      id: LISTING_ID, userId: OWNER_ID, status: 'ACTIVE',
+      title: 'Old title', city: 'Toronto', province: 'ON', address: '123 Main Street', unit: null,
+      lat: 43.6532, lng: -79.3832,
+      ...overrides,
+    };
+  }
+
+  it('preloads the confirmation pin at the listing\'s own current private coordinate, not a re-geocoded or public-randomized point', async () => {
+    findUniqueMock.mockResolvedValue(existingListing({ lat: 43.65321234, lng: -79.38321234 }));
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '123 Main Street', city: 'Toronto', province: 'ON' });
+
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(res.body.data).toEqual({ matchedLat: 43.65321234, matchedLng: -79.38321234 });
+
+    // The public/randomized view of this exact same row is deterministically
+    // different from the private coordinate PATCH just preloaded -- proving
+    // the preload came from the private column, never the public one.
+    const { toPublicListingLocation } = await import('../../src/utils/geo');
+    const publicView = toPublicListingLocation({ id: LISTING_ID, lat: 43.65321234, lng: -79.38321234 });
+    expect(publicView.lat).not.toBe(res.body.data.matchedLat);
+    expect(publicView.lng).not.toBe(res.body.data.matchedLng);
+  });
+
+  it('leaving the pin exactly where it preloaded applies the update with the same coordinate and skips reverse-geocode verification', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...existingListing(), ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '123 Main Street', confirmedLat: 43.6532, confirmedLng: -79.3832 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(verifyConfirmedPinLocationMock).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: 43.6532, lng: -79.3832 }),
+    }));
+  });
+
+  it('moving the pin on an otherwise-unchanged edit runs reverse-geocode verification and stores the new coordinate', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...existingListing(), ...args.data, images: [], amenities: [], user: {} }));
+    const app = await buildApp();
+
+    const confirmedLat = 43.6540;
+    const confirmedLng = -79.3800;
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '123 Main Street', confirmedLat, confirmedLng });
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBeUndefined();
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Toronto', 'ON');
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng }),
+    }));
+  });
+
+  it('rejects a moved pin that fails city/province verification on an otherwise-unchanged edit and applies no update', async () => {
+    findUniqueMock.mockResolvedValue(existingListing());
+    verifyConfirmedPinLocationMock.mockResolvedValue({
+      ok: false,
+      reason: 'that location appears to be in Ottawa, not Toronto',
+    });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '123 Main Street', confirmedLat: 45.4215, confirmedLng: -75.6972 });
+
+    expect(res.status).toBe(422);
+    expect(res.body.message).toContain('Ottawa');
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a fresh geocode of the unchanged address (never the public randomized coordinate) when the stored coordinate is invalid, e.g. a legacy/data-edge-case row', async () => {
+    findUniqueMock.mockResolvedValue(existingListing({ lat: NaN, lng: NaN }));
+    geocodeAddressMock.mockResolvedValue({ lat: 43.6540, lng: -79.3800, confidence: 'precise' });
+    const app = await buildApp();
+
+    const res = await request(app)
+      .patch(`/api/v1/listings/${LISTING_ID}`)
+      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
+      .send({ address: '123 Main Street' }); // unchanged address, but no valid stored coordinate
+
+    expect(res.status).toBe(200);
+    expect(res.body.needsLocationConfirmation).toBe(true);
+    expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
+    expect(res.body.data).toEqual({ matchedLat: 43.6540, matchedLng: -79.3800 });
     expect(updateMock).not.toHaveBeenCalled();
   });
 });

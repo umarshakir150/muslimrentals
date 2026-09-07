@@ -1,0 +1,14 @@
+{
+  "role": "qa",
+  "taskId": "20260907-123728-add-envlocal-and-other-env-variants",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "rentals/backend/.gitignore now includes .env, .env.local, .env.development, .env.production, and .env.*.local — matches/exceeds the frontend's existing .env/.env.local pattern.",
+      "evidence": "git show HEAD (commit b405d88) diff: +4 lines added (.env.local, .env.development, .env.production, .env.*.local); confirmed no .env* secret files are currently tracked in git (git ls-files backend has none; only .env.example exists on disk, which is intentionally committed as a template).",
+      "recommendedAction": "None — config-only, non-destructive, correctly scoped fix."
+    }
+  ],
+  "notes": "Verification level: CODE_REVIEWED (diff inspection + git history + working-tree file listing). No app behavior change to test since this only affects git tracking rules. Change is committed on branch agents/20260907-123728-add-envlocal-and-other-env-variants/backend as b405d88, working tree clean."
+}

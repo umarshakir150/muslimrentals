@@ -396,6 +396,46 @@ describe('PostListingModal', () => {
       expect(uploadImagesMock).not.toHaveBeenCalled();
     });
 
+    // Literal reproduction of the founder's bug report against the PR #16
+    // preview: clicking "Save changes" appeared to complete the edit and
+    // close the modal immediately, with no confirm-location map at all.
+    // Given the contract PATCH /listings/:id now returns
+    // (needsLocationConfirmation: true + matchedLat/matchedLng), this proves
+    // the frontend transitions to the SHARED ConfirmLocationMap step instead
+    // of finalizing anything -- no success toast, no onClose, no onSaved --
+    // until a second submit with confirmedLat/confirmedLng actually
+    // completes the PATCH.
+    it('given the PATCH response needs confirmation, Save Changes does NOT complete the edit or close the modal -- it shows the map; only confirming completes it', async () => {
+      mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
+      const onClose = vi.fn();
+      const onSaved = vi.fn();
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={onClose} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
+
+      await goToStep3(user);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      // First submit: must land on the confirm-location step, not a
+      // completed/closed edit.
+      await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
+      expect(screen.getByTestId('confirm-map-initial')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(onSaved).not.toHaveBeenCalled();
+      expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Listing updated!' }));
+      expect(screen.queryByText('Listing updated!')).not.toBeInTheDocument();
+      expect(updateMock).toHaveBeenCalledTimes(1); // only the first (unconfirmed) submit so far
+
+      // Second submit, now WITH confirmedLat/confirmedLng: this is the one
+      // that actually completes the PATCH and reports the save.
+      await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+
+      await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(2));
+      expect(updateMock).toHaveBeenLastCalledWith('listing-42', expect.objectContaining({
+        confirmedLat: 43.6532, confirmedLng: -79.3832,
+      }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' })));
+    });
+
     it('preloads the confirmation pin at the server-provided coordinate (the listing\'s current private exact coordinate), never something read off the listing prop directly', async () => {
       mockNeedsConfirmationThenSaved({ matchedLat: 43.65321234, matchedLng: -79.38321234 });
       const user = userEvent.setup();

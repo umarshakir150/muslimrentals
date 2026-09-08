@@ -196,10 +196,13 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
 
   return (
     <div className="p-4 bg-white border border-ink/8 rounded-2xl shadow-card">
-      {/* Stacks (controls, then map) on mobile/narrow layouts -- the map
-          naturally lands under the radius slider in DOM order; becomes a
-          2-column layout with the map beside the controls at lg+. */}
-      <div className="lg:grid lg:grid-cols-2 lg:gap-5 lg:items-start">
+      {/* The grid (and the mini-map itself) only exists once a location is
+          active -- showing an empty map before any search feels redundant,
+          so the widget starts in its plain, compact single-column form and
+          only grows into the 2-column layout on a successful resolve. Once
+          shown, it stacks under the radius slider on mobile/narrow layouts
+          (natural DOM order) and sits beside the controls at lg+. */}
+      <div className={hasActiveLocation ? 'lg:grid lg:grid-cols-2 lg:gap-5 lg:items-start' : undefined}>
       <div>
       <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
         Search a location
@@ -303,12 +306,14 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
       )}
       </div>
 
-      <SearchRadiusMiniMap
-        center={miniMapCenter}
-        radiusKm={miniMapRadiusKm}
-        listings={listings}
-        className="mt-4 lg:mt-0"
-      />
+      {hasActiveLocation && (
+        <SearchRadiusMiniMap
+          center={miniMapCenter}
+          radiusKm={miniMapRadiusKm}
+          listings={listings}
+          className="mt-4 lg:mt-0"
+        />
+      )}
       </div>
     </div>
   );

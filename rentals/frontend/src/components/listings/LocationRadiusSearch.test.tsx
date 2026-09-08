@@ -334,17 +334,28 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
     expect(screen.getByText(/the selected location/i)).toBeInTheDocument();
   });
 
-  describe('embedded mini-map preview', () => {
-    it('always renders the mini-map, even before any location is selected (default/empty state)', () => {
+  describe('embedded mini-map preview (hidden until a location resolves)', () => {
+    it('does not render the mini-map before any location has been searched -- showing an empty map upfront felt redundant', () => {
       render(<LocationRadiusSearch />);
 
-      const stub = screen.getByTestId('mini-map-stub');
-      expect(stub).toBeInTheDocument();
-      expect(stub.dataset.center).toBe('null');
-      expect(stub.dataset.radius).toBe('');
+      expect(screen.queryByTestId('mini-map-stub')).not.toBeInTheDocument();
     });
 
-    it('passes the resolved location and radius to the mini-map once a suggestion is selected', async () => {
+    it('does not render the mini-map while the user is still typing/has an open suggestions dropdown, only once one is actually selected', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Toldo Lancer Centre, Windsor, Ontario'); // dropdown open, nothing selected yet
+
+      expect(screen.queryByTestId('mini-map-stub')).not.toBeInTheDocument();
+    });
+
+    it('appears with the resolved location and radius once a suggestion is selected', async () => {
       geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
       render(<LocationRadiusSearch />);
       const input = screen.getByLabelText('Search a location');
@@ -360,34 +371,64 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
       expect(stub.dataset.radius).toBe('5');
     });
 
-    it('updates the mini-map radius immediately when the slider changes', () => {
+    it('appears once a location is already active on mount too (e.g. set by the City picker elsewhere)', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
+      render(<LocationRadiusSearch />);
+
+      expect(screen.getByTestId('mini-map-stub')).toBeInTheDocument();
+    });
+
+    it('updates the mini-map radius immediately when the slider changes, while it stays visible', () => {
       useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257, radiusKm: 5 } }));
       render(<LocationRadiusSearch />);
 
       fireEvent.change(screen.getByRole('slider'), { target: { value: '8' } });
 
-      expect(screen.getByTestId('mini-map-stub').dataset.radius).toBe('8');
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(stub).toBeInTheDocument();
+      expect(stub.dataset.radius).toBe('8');
     });
 
-    it('resets the mini-map to its empty state when Clear is pressed', () => {
+    it('updates to the new location when the search is replaced with a different place', async () => {
       useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
       render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      fireEvent.mouseDown(await screen.findByText('Toldo Lancer Centre, Windsor, Ontario'));
+
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(JSON.parse(stub.dataset.center!)).toEqual([42.30569, -83.06437]);
+    });
+
+    it('hides again and returns the controls to their initial compact layout when Clear is pressed', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
+      const { container } = render(<LocationRadiusSearch />);
+      expect(screen.getByTestId('mini-map-stub')).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: /clear/i }));
 
-      const stub = screen.getByTestId('mini-map-stub');
-      expect(stub.dataset.center).toBe('null');
-      expect(stub.dataset.radius).toBe('');
+      expect(screen.queryByTestId('mini-map-stub')).not.toBeInTheDocument();
+      // The 2-column grid only exists to host the mini-map beside the
+      // controls -- once it's gone, the wrapper should no longer carry that
+      // layout class either (back to the plain, compact single-column form).
+      expect(container.querySelector('.lg\\:grid-cols-2')).toBeNull();
     });
 
     it('passes optional listings through to the mini-map for its preview dots', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
       const listings = [{ id: 'a', lat: 1, lng: 2 }, { id: 'b', lat: 3, lng: 4 }];
       render(<LocationRadiusSearch listings={listings} />);
 
       expect(screen.getByTestId('mini-map-stub').dataset.listingsCount).toBe('2');
     });
 
-    it('lays out controls and the mini-map as a 2-column grid at the lg breakpoint (stacked below the controls on mobile)', () => {
+    it('lays out controls and the mini-map as a 2-column grid at the lg breakpoint once visible (stacked below the controls on mobile)', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
       const { container } = render(<LocationRadiusSearch />);
 
       // Tailwind's `lg:grid-cols-2` is what turns the mobile "map stacked

@@ -7,6 +7,7 @@ import { geocodeApi, PlaceSuggestion } from '@/lib/api';
 import { requestUserLocation, GEOLOCATION_ERROR_TITLE, type GeolocationFailureReason } from '@/lib/geolocation';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import SearchRadiusMiniMap from './SearchRadiusMiniMap';
 
 const MIN_RADIUS_KM = 1;
 const MAX_RADIUS_KM = 10;
@@ -35,8 +36,19 @@ const SEARCH_DEBOUNCE_MS = 350;
  * GET /geocode/suggestions lookup on each debounced keystroke, and never
  * persisted -- clearing or replacing the search loses it, same as the
  * resolved point does once filters are reset.
+ *
+ * Also renders a small embedded map preview (SearchRadiusMiniMap) right
+ * alongside these controls -- so a renter can see what a search covers
+ * without switching to the full /map page. `listings` is optional and
+ * purely a display nicety for that preview (already-filtered results the
+ * caller has on hand); this widget's own filtering behavior never depends
+ * on it.
  */
-export default function LocationRadiusSearch() {
+interface LocationRadiusSearchProps {
+  listings?: { id: string; lat: number; lng: number }[];
+}
+
+export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSearchProps) {
   const { filters, setFilters, setMapCenter } = useFilterStore();
   const [query, setQuery] = useState('');
   const [resolvedLabel, setResolvedLabel] = useState<string | null>(null);
@@ -178,8 +190,17 @@ export default function LocationRadiusSearch() {
     inputRef.current?.focus();
   }
 
+  const miniMapCenter: [number, number] | null =
+    hasActiveLocation ? [filters.lat as number, filters.lng as number] : null;
+  const miniMapRadiusKm = hasActiveLocation ? (filters.radiusKm || MIN_RADIUS_KM) : null;
+
   return (
     <div className="p-4 bg-white border border-ink/8 rounded-2xl shadow-card">
+      {/* Stacks (controls, then map) on mobile/narrow layouts -- the map
+          naturally lands under the radius slider in DOM order; becomes a
+          2-column layout with the map beside the controls at lg+. */}
+      <div className="lg:grid lg:grid-cols-2 lg:gap-5 lg:items-start">
+      <div>
       <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
         Search a location
       </label>
@@ -280,6 +301,15 @@ export default function LocationRadiusSearch() {
           </div>
         </div>
       )}
+      </div>
+
+      <SearchRadiusMiniMap
+        center={miniMapCenter}
+        radiusKm={miniMapRadiusKm}
+        listings={listings}
+        className="mt-4 lg:mt-0"
+      />
+      </div>
     </div>
   );
 }

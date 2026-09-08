@@ -18,6 +18,23 @@ vi.mock('@/lib/geolocation', async (importOriginal) => {
 const toastMock = vi.fn();
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }));
 
+// SearchRadiusMiniMap has its own full Leaflet-mocked test coverage
+// (SearchRadiusMiniMap.test.tsx) -- stubbed here so these tests stay
+// focused on LocationRadiusSearch's own behavior (search/select/clear/
+// slider) and never need real Leaflet in this file. This stub also lets
+// these tests assert the WIRING (does the mini-map receive the right
+// center/radius/listings) without re-testing the map's internals.
+vi.mock('./SearchRadiusMiniMap', () => ({
+  default: (props: { center: [number, number] | null; radiusKm: number | null; listings?: { id: string }[] }) => (
+    <div
+      data-testid="mini-map-stub"
+      data-center={JSON.stringify(props.center)}
+      data-radius={props.radiusKm ?? ''}
+      data-listings-count={props.listings?.length ?? 0}
+    />
+  ),
+}));
+
 const DEFAULT_FILTERS = {
   keyword: '', city: '', audience: 'all' as const, minBeds: 0, minBaths: 0,
   maxPrice: 5000, radiusKm: 5, sort: 'newest' as const,
@@ -315,5 +332,69 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
     render(<LocationRadiusSearch />);
 
     expect(screen.getByText(/the selected location/i)).toBeInTheDocument();
+  });
+
+  describe('embedded mini-map preview', () => {
+    it('always renders the mini-map, even before any location is selected (default/empty state)', () => {
+      render(<LocationRadiusSearch />);
+
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(stub).toBeInTheDocument();
+      expect(stub.dataset.center).toBe('null');
+      expect(stub.dataset.radius).toBe('');
+    });
+
+    it('passes the resolved location and radius to the mini-map once a suggestion is selected', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      fireEvent.mouseDown(await screen.findByText('Toldo Lancer Centre, Windsor, Ontario'));
+
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(JSON.parse(stub.dataset.center!)).toEqual([42.30569, -83.06437]);
+      expect(stub.dataset.radius).toBe('5');
+    });
+
+    it('updates the mini-map radius immediately when the slider changes', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257, radiusKm: 5 } }));
+      render(<LocationRadiusSearch />);
+
+      fireEvent.change(screen.getByRole('slider'), { target: { value: '8' } });
+
+      expect(screen.getByTestId('mini-map-stub').dataset.radius).toBe('8');
+    });
+
+    it('resets the mini-map to its empty state when Clear is pressed', () => {
+      useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
+      render(<LocationRadiusSearch />);
+
+      fireEvent.click(screen.getByRole('button', { name: /clear/i }));
+
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(stub.dataset.center).toBe('null');
+      expect(stub.dataset.radius).toBe('');
+    });
+
+    it('passes optional listings through to the mini-map for its preview dots', () => {
+      const listings = [{ id: 'a', lat: 1, lng: 2 }, { id: 'b', lat: 3, lng: 4 }];
+      render(<LocationRadiusSearch listings={listings} />);
+
+      expect(screen.getByTestId('mini-map-stub').dataset.listingsCount).toBe('2');
+    });
+
+    it('lays out controls and the mini-map as a 2-column grid at the lg breakpoint (stacked below the controls on mobile)', () => {
+      const { container } = render(<LocationRadiusSearch />);
+
+      // Tailwind's `lg:grid-cols-2` is what turns the mobile "map stacked
+      // under the controls" DOM order into a "map beside the controls"
+      // desktop layout -- this asserts the responsive class is actually
+      // applied, not just that a map exists somewhere in the tree.
+      expect(container.querySelector('.lg\\:grid-cols-2')).not.toBeNull();
+    });
   });
 });

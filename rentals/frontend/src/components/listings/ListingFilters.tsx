@@ -24,7 +24,13 @@ const SORT_OPTIONS = [
   { v: 'beds',      label: 'Most beds' },
 ];
 
-export default function ListingFilters() {
+interface ListingFiltersProps {
+  // Passed through to LocationRadiusSearch's embedded mini-map preview only
+  // -- see its own doc comment. Never used for filtering here.
+  listings?: { id: string; lat: number; lng: number }[];
+}
+
+export default function ListingFilters({ listings }: ListingFiltersProps) {
   const { filters, setFilter, setFilters, resetFilters } = useFilterStore();
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -133,7 +139,7 @@ export default function ListingFilters() {
       {/* ── Row 2: location + radius search -- always visible, composes with
           keyword/city/other filters rather than replacing them ── */}
       <div className="mt-3">
-        <LocationRadiusSearch />
+        <LocationRadiusSearch listings={listings} />
       </div>
 
       {/* ── Row 3: expandable "more filters" panel ── */}

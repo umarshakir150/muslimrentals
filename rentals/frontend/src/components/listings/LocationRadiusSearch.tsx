@@ -16,6 +16,10 @@ const MAX_RADIUS_KM = 10;
 // firing a request for a query the API will reject outright.
 const MIN_QUERY_LENGTH = 2;
 const SEARCH_DEBOUNCE_MS = 350;
+// Caps the in-memory per-query-text suggestion cache (see
+// suggestionCacheRef) -- comfortably more than a renter would type in one
+// sitting, without letting it grow unbounded.
+const SUGGESTION_CACHE_MAX_ENTRIES = 30;
 
 /**
  * Renter-facing "search a location + radius" filter. Sets the SAME
@@ -67,6 +71,15 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestIdRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Small in-memory cache (this render session only, never persisted) keyed
+  // by normalized query text -- avoids re-fetching identical suggestions
+  // when a renter retypes/backspaces-then-retypes the same text, or revisits
+  // a query they already typed earlier in the same search. Only successful
+  // results are cached (never an error/rate-limit outcome, so a transient
+  // failure doesn't get "stuck" for that text). Capped and FIFO-evicted
+  // (Map preserves insertion order) so this can never grow unbounded across
+  // a long browsing session.
+  const suggestionCacheRef = useRef<Map<string, PlaceSuggestion[]>>(new Map());
 
   const hasActiveLocation = filters.lat != null && filters.lng != null;
 
@@ -86,11 +99,33 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const runSearch = useCallback(async (q: string) => {
+    const cacheKey = q.trim().toLowerCase();
+    const cached = suggestionCacheRef.current.get(cacheKey);
+    if (cached) {
+      // Still bumps requestIdRef so any earlier, still-in-flight network
+      // request for a DIFFERENT query correctly finds itself superseded --
+      // a cache hit is a valid, newer "result" for staleness purposes too.
+      ++requestIdRef.current;
+      setSuggestions(cached);
+      setSearchedEmpty(cached.length === 0);
+      setOpen(true);
+      setFocusIdx(-1);
+      return;
+    }
+
     const requestId = ++requestIdRef.current;
     setSearching(true);
     try {
       const res = await geocodeApi.suggestions(q);
       if (requestIdRef.current !== requestId) return; // superseded by a newer keystroke
+
+      const cache = suggestionCacheRef.current;
+      cache.set(cacheKey, res.data);
+      if (cache.size > SUGGESTION_CACHE_MAX_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey !== undefined) cache.delete(oldestKey);
+      }
+
       setSuggestions(res.data);
       setSearchedEmpty(res.data.length === 0);
       setOpen(true);
@@ -100,7 +135,9 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
       // A transient/rate-limit failure while typing shouldn't interrupt
       // typing with a disruptive toast -- just show the same "no results"
       // row a genuine no-match would; "Use my location" and manually typing
-      // a plainer query remain available.
+      // a plainer query remain available. Deliberately NOT cached -- a
+      // retry of the same text should hit the network again rather than
+      // being stuck on a transient failure for the rest of the session.
       setSuggestions([]);
       setSearchedEmpty(true);
       setOpen(true);

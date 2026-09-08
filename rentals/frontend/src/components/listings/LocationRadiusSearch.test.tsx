@@ -237,6 +237,136 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
     expect(screen.queryByText('First (stale) Result')).not.toBeInTheDocument();
   });
 
+  it('a stale in-flight response arriving after the query was cleared entirely is discarded, not shown', async () => {
+    let resolveSearch!: (v: any) => void;
+    geocodeSuggestionsMock.mockImplementationOnce(() => new Promise((resolve) => { resolveSearch = resolve; }));
+    render(<LocationRadiusSearch />);
+    const input = screen.getByLabelText('Search a location');
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+      vi.advanceTimersByTime(400);
+    });
+    // Clear back below the minimum query length while the request is still in flight.
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'T' } });
+      vi.advanceTimersByTime(400);
+    });
+
+    await act(async () => {
+      resolveSearch({ data: [{ label: 'Should Not Appear', lat: 1, lng: 2 }] });
+    });
+
+    expect(screen.queryByText('Should Not Appear')).not.toBeInTheDocument();
+  });
+
+  it('shows up to 8 suggestions when the backend supplies that many, for a broad partial query', async () => {
+    const eight = Array.from({ length: 8 }, (_, i) => ({ label: `Place ${i}, Anytown, Ontario`, lat: 43 + i, lng: -79 - i }));
+    geocodeSuggestionsMock.mockResolvedValue({ data: eight });
+    render(<LocationRadiusSearch />);
+    const input = screen.getByLabelText('Search a location');
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Pla' } });
+      vi.advanceTimersByTime(400);
+    });
+
+    for (const s of eight) {
+      expect(await screen.findByText(s.label)).toBeInTheDocument();
+    }
+  });
+
+  describe('per-query suggestion cache', () => {
+    it('does not re-fetch when the exact same query text is searched again', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Toldo Lancer Centre, Windsor, Ontario');
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(1);
+
+      // Clear the text, then retype the EXACT same query.
+      await act(async () => {
+        fireEvent.change(input, { target: { value: '' } });
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(await screen.findByText('Toldo Lancer Centre, Windsor, Ontario')).toBeInTheDocument();
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('cache lookups are case/whitespace-insensitive (same query, different casing, no re-fetch)', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'toldo lancer centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Toldo Lancer Centre, Windsor, Ontario');
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: '' } });
+        fireEvent.change(input, { target: { value: '  Toldo Lancer Centre  ' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still fetches fresh for a genuinely different query text (cache is not a blanket suppressor)', async () => {
+      geocodeSuggestionsMock
+        .mockResolvedValueOnce({ data: [TOLDO_LANCER_CENTRE] })
+        .mockResolvedValueOnce({ data: [{ label: 'Different Place, Ontario', lat: 5, lng: 6 }] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Toldo Lancer Centre, Windsor, Ontario');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Something Else Entirely' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(await screen.findByText('Different Place, Ontario')).toBeInTheDocument();
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache a failed/rate-limited lookup -- retyping the same text retries the network', async () => {
+      geocodeSuggestionsMock
+        .mockRejectedValueOnce(new Error('rate limited'))
+        .mockResolvedValueOnce({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText(/no matching places found/i);
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: '' } });
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(await screen.findByText('Toldo Lancer Centre, Windsor, Ontario')).toBeInTheDocument();
+      expect(geocodeSuggestionsMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('shows the radius slider (1-10km) once a location is set', async () => {
     geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
     render(<LocationRadiusSearch />);

@@ -786,15 +786,110 @@ describe('searchPlaces', () => {
     await expect(searchPlaces('Toldo Lancer Centre')).rejects.toThrow(GeocodingUnavailableError);
   });
 
-  it('scopes the search to Canada', async () => {
-    let capturedUrl = '';
+  it('scopes the primary search to Canada via countrycodes', async () => {
+    const capturedUrls: string[] = [];
     globalThis.fetch = vi.fn(async (url) => {
-      capturedUrl = String(url);
+      capturedUrls.push(String(url));
       return { ok: true, status: 200, json: async () => [] } as Response;
     }) as unknown as typeof fetch;
 
     await searchPlaces('Toldo Lancer Centre');
 
-    expect(new URL(capturedUrl).searchParams.get('countrycodes')).toBe('ca');
+    expect(new URL(capturedUrls[0]).searchParams.get('countrycodes')).toBe('ca');
+  });
+
+  it('sends the query text as typed, with no manual ", Canada" appended', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(new URL(capturedUrl).searchParams.get('q')).toBe('Toldo Lancer Centre');
+  });
+
+  it('explicitly requests both the address and poi layers, never relying on an undocumented default', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Some Gym');
+
+    expect(new URL(capturedUrl).searchParams.get('layer')).toBe('address,poi');
+  });
+
+  // The two-tier fallback strategy: countrycodes=ca first (hard filter,
+  // correct for a Canada-only app), then -- ONLY when that finds literally
+  // nothing -- one retry with that hard filter relaxed to a soft Canada-wide
+  // viewbox bias, recovering the narrow case of a genuine Canadian POI whose
+  // own OSM country tagging is wrong. This does NOT invent data: it cannot
+  // and does not recover a POI that isn't named/tagged that way anywhere in
+  // OpenStreetMap at all.
+  describe('Canada-biased fallback when the primary query finds nothing', () => {
+    function mockFetchSequence(...responses: Array<Partial<Response>>) {
+      const capturedUrls: string[] = [];
+      let callCount = 0;
+      globalThis.fetch = vi.fn(async (url: any) => {
+        capturedUrls.push(String(url));
+        const r = responses[Math.min(callCount, responses.length - 1)];
+        callCount++;
+        return r as Response;
+      }) as unknown as typeof fetch;
+      return { capturedUrls, callCount: () => callCount };
+    }
+
+    function jsonResponse(body: unknown): Partial<Response> {
+      return { ok: true, status: 200, json: async () => body };
+    }
+
+    it('retries once with a Canada-wide viewbox bias (no countrycodes) when the primary query returns nothing', async () => {
+      const { capturedUrls, callCount } = mockFetchSequence(
+        jsonResponse([]),
+        jsonResponse([{
+          lat: '42.30569', lon: '-83.06437',
+          display_name: 'Toldo Lancer Centre, Sunset Avenue, Windsor, Ontario, N9B 3P4, Canada',
+          address: { road: 'Sunset Avenue', city: 'Windsor', state: 'Ontario', postcode: 'N9B 3P4' },
+        }])
+      );
+
+      const results = await searchPlaces('Toldo Lancer Centre');
+
+      expect(callCount()).toBe(2);
+      expect(new URL(capturedUrls[0]).searchParams.get('countrycodes')).toBe('ca');
+      expect(new URL(capturedUrls[1]).searchParams.has('countrycodes')).toBe(false);
+      expect(new URL(capturedUrls[1]).searchParams.get('viewbox')).toBeTruthy();
+      expect(new URL(capturedUrls[1]).searchParams.get('bounded')).toBe('0');
+      expect(results).toEqual([{ label: 'Toldo Lancer Centre, Windsor, Ontario', lat: 42.30569, lng: -83.06437 }]);
+    });
+
+    it('does not retry when the primary countrycodes=ca query already found results', async () => {
+      const { callCount } = mockFetchSequence(
+        jsonResponse([{ lat: '42.3', lon: '-83.0', display_name: 'Found On First Try' }])
+      );
+
+      await searchPlaces('Some Place');
+
+      expect(callCount()).toBe(1);
+    });
+
+    it('returns an empty array (never throws) when both the primary and fallback queries find nothing', async () => {
+      const { callCount } = mockFetchSequence(jsonResponse([]), jsonResponse([]));
+
+      const results = await searchPlaces('Nonexistent Fake Place 99999');
+
+      expect(callCount()).toBe(2);
+      expect(results).toEqual([]);
+    });
+
+    it('never retries when the primary query itself throws (rate-limited) -- does not hammer an already-unavailable provider', async () => {
+      const { callCount } = mockFetchSequence({ ok: false, status: 429, json: async () => ({}) });
+
+      await expect(searchPlaces('Toldo Lancer Centre')).rejects.toThrow(GeocodingUnavailableError);
+      expect(callCount()).toBe(1);
+    });
   });
 });

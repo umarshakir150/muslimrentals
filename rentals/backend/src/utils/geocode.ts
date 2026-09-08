@@ -931,6 +931,41 @@ function toPlaceSuggestionLabel(candidate: GeocodeCandidate): string {
   return candidate.display_name ?? 'Unknown location';
 }
 
+// Rough bounding box covering all of Canada (west,north,east,south) --
+// used only as a SOFT ranking bias (`viewbox` + `bounded=0`, never a hard
+// exclude) on the fallback attempt below, never as the primary filter.
+// `countrycodes=ca` remains the primary, hard restriction for a Canada-only
+// rental app; this box exists solely to recover the rare case where a
+// genuinely Canadian point is itself mistagged/misclassified by country in
+// the underlying OSM data (a real, if uncommon, data-quality issue -- not a
+// bug in this query).
+const CANADA_VIEWBOX = '-141.0,83.1,-52.6,41.7';
+
+// Builds the Nominatim query params for one search attempt. `layer` is set
+// EXPLICITLY to 'address,poi' rather than left to Nominatim's own server-
+// side default -- named-landmark search (a gym, mosque, university
+// building, or mall) is a POI-layer query by definition, and this removes
+// any dependency on an undocumented/version-specific default ever silently
+// excluding that layer. `countryFiltered` selects the two-tier strategy
+// used by searchPlaces below: true = the primary, hard `countrycodes=ca`
+// restriction; false = the fallback's soft `viewbox` bias instead.
+function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSearchParams {
+  const base: Record<string, string> = {
+    format: 'jsonv2',
+    limit: String(PLACE_SUGGESTION_LIMIT),
+    addressdetails: '1',
+    layer: 'address,poi',
+    q: query,
+  };
+  if (countryFiltered) {
+    base.countrycodes = 'ca';
+  } else {
+    base.viewbox = CANADA_VIEWBOX;
+    base.bounded = '0';
+  }
+  return new URLSearchParams(base);
+}
+
 // ─── Renter-facing place/POI search (autocomplete) ─────────────────────────
 // Distinct from geocodeAddress's free-text path (used by the single-result
 // GET /geocode endpoint that ConfirmLocationMap.tsx's listing-creation flow
@@ -944,13 +979,33 @@ function toPlaceSuggestionLabel(candidate: GeocodeCandidate): string {
 //      which already indexes named buildings/POIs alongside addresses. This
 //      is an intentional, permanent architectural choice, not a temporary
 //      default -- see the GEOCODING_PROVIDER switch's own doc comment above,
-//      which governs the LISTING address pipeline only.
-//   2. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
+//      which governs the LISTING address pipeline only. This is already a
+//      free-form `q=` search, never the structured street/city/state query
+//      geocodeAddress's requirePreciseMatch path uses -- there is no
+//      "address-oriented assumption" to remove here.
+//   2. Sends the query text AS TYPED, with no manual ", Canada" appended --
+//      that string concatenation bought nothing (countrycodes/viewbox below
+//      already scope the search geographically) and, for a bare POI name
+//      with no natural "city, country" reading, only risked confusing
+//      Nominatim's tokenizer for no benefit.
+//   3. Tries a hard `countrycodes=ca` restriction first, then -- ONLY if
+//      that finds literally nothing -- retries once with that hard filter
+//      relaxed to a soft Canada-wide `viewbox` bias (see
+//      buildPlaceSearchParams). This recovers the narrow case of a real
+//      Canadian POI whose own OSM country tagging is wrong; it does NOT,
+//      and cannot, recover a POI that simply isn't named/tagged that way
+//      anywhere in OpenStreetMap at all -- no query reformulation finds
+//      data that was never entered. (A well-known real example: a building
+//      renamed after a naming-rights gift, e.g. the University of Windsor's
+//      athletics centre, may still be tagged under its old name in OSM
+//      until a mapper updates it -- Nominatim's index only ever reflects
+//      what OSM actually has, not the building's current real-world name.)
+//   4. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
 //      one), each with a short display label, so a genuinely ambiguous
 //      search (e.g. a street name that exists in several cities) can be
 //      disambiguated by the renter picking one, rather than silently
 //      guessing the first result.
-//   3. Returns an empty array for "no matches" (never throws/404s) -- an
+//   5. Returns an empty array for "no matches" (never throws/404s) -- an
 //      autocomplete dropdown showing "no results" is a normal, expected UI
 //      state, not an error condition the way a single-result lookup's 404
 //      is for GET /geocode.
@@ -959,16 +1014,13 @@ function toPlaceSuggestionLabel(candidate: GeocodeCandidate): string {
 // function in this file; the frontend only ever calls this app's own
 // GET /geocode/suggestions route.
 export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
-  const q = `${query}, Canada`;
-  const params = new URLSearchParams({
-    format: 'jsonv2',
-    limit: String(PLACE_SUGGESTION_LIMIT),
-    countrycodes: 'ca',
-    addressdetails: '1',
-    q,
-  });
-  const url = `${NOMINATIM_SEARCH_URL}?${params.toString()}`;
-  const candidates = await fetchNominatimCandidates(url, `q="${q}" (place search)`);
+  const primaryUrl = `${NOMINATIM_SEARCH_URL}?${buildPlaceSearchParams(query, true).toString()}`;
+  let candidates = await fetchNominatimCandidates(primaryUrl, `q="${query}" (place search, countrycodes=ca)`);
+
+  if (candidates.length === 0) {
+    const fallbackUrl = `${NOMINATIM_SEARCH_URL}?${buildPlaceSearchParams(query, false).toString()}`;
+    candidates = await fetchNominatimCandidates(fallbackUrl, `q="${query}" (place search, Canada-biased fallback)`);
+  }
 
   return candidates
     .map((candidate) => {

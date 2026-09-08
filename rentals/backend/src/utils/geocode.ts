@@ -198,6 +198,16 @@ interface GeocodeCandidate {
   place_rank?: number;
   importance?: number;
   display_name?: string;
+  // Only ever populated when the query requested `namedetails=1` (see
+  // searchPlaces below) -- Nominatim's full breakdown of every name-related
+  // tag an OSM element carries (name, alt_name, old_name, official_name,
+  // short_name, language variants, ...), keyed by tag name. Never affects
+  // which candidates a query MATCHES (that's governed entirely by
+  // Nominatim's own search index); only lets a caller see WHICH of an
+  // element's names its query actually matched, so a result can be labeled
+  // with the name a searcher will recognize rather than always whichever
+  // name happens to be primary on the map.
+  namedetails?: Record<string, string>;
 }
 
 interface MatchEvaluation {
@@ -901,6 +911,52 @@ export interface PlaceSuggestion {
 // without turning into a wall of barely-relevant results.
 const PLACE_SUGGESTION_LIMIT = 5;
 
+// The alternate-name OSM tags Nominatim's `namedetails=1` can return
+// alongside an element's primary `name` -- checked, in this order, when the
+// searched text doesn't match the primary name at all (see
+// findMatchingNameAlias below). Deliberately just these four well-
+// established, generic OSM name tags -- not a curated list of specific
+// known renames, and not a fuzzy/edit-distance match against arbitrary
+// text: this generalizes to ANY renamed or aliased place OSM has tagged
+// this way, never to a specific building.
+const ALTERNATE_NAME_TAGS = ['alt_name', 'old_name', 'official_name', 'short_name'];
+
+function namesLooselyMatch(a: string, b: string): boolean {
+  const na = a.trim().toLowerCase();
+  const nb = b.trim().toLowerCase();
+  return na.length > 0 && nb.length > 0 && (na.includes(nb) || nb.includes(na));
+}
+
+// Nominatim's search index already matches a query against ANY name tag an
+// OSM element carries, not just its primary `name` -- `namedetails=1` is
+// what lets this app SEE which one actually matched. A building renamed
+// after a naming-rights gift (the motivating real case) is often still
+// tagged `name=<old name>` with the new name only present as `alt_name` or
+// `old_name` until a mapper updates the primary tag; without this, a
+// genuinely correct match would display under a name the searcher never
+// typed and won't recognize -- indistinguishable from "nothing found" even
+// though Nominatim did find the right place. OSM tags can list several
+// alternates separated by `;` (e.g. `alt_name=Foo;Bar`) -- each is checked
+// individually. Returns undefined (no substitution) whenever the primary
+// name already reasonably matches the query, or no alias does either.
+function findMatchingNameAlias(
+  namedetails: Record<string, string> | undefined,
+  query: string,
+  primaryName: string | undefined
+): string | undefined {
+  if (!namedetails || !query.trim()) return undefined;
+  if (primaryName && namesLooselyMatch(primaryName, query)) return undefined;
+
+  for (const tag of ALTERNATE_NAME_TAGS) {
+    const raw = namedetails[tag];
+    if (!raw) continue;
+    for (const candidate of raw.split(';')) {
+      if (namesLooselyMatch(candidate, query)) return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
 // Builds a short, readable label for the autocomplete dropdown: the
 // provider's own most-specific identifier (a named POI's actual name, or a
 // full street address) plus city/province context -- never just
@@ -917,13 +973,18 @@ const PLACE_SUGGESTION_LIMIT = 5;
 // whichever of those is MORE specific (i.e. differs from the plain street
 // line) as the label's first segment means a POI keeps its name and a
 // plain address search looks exactly like it did before this function
-// existed.
-function toPlaceSuggestionLabel(candidate: GeocodeCandidate): string {
+// existed. `query` (the searcher's own text) additionally lets a renamed/
+// aliased POI surface under the name actually searched for -- see
+// findMatchingNameAlias.
+function toPlaceSuggestionLabel(candidate: GeocodeCandidate, query: string): string {
   const addr = candidate.address ?? {};
   const locality = addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet;
   const streetLine = [addr.house_number, addr.road].filter(Boolean).join(' ') || undefined;
   const firstSegment = candidate.display_name?.split(',')[0]?.trim() || undefined;
-  const primary = firstSegment && firstSegment !== streetLine ? firstSegment : streetLine;
+  let primary = firstSegment && firstSegment !== streetLine ? firstSegment : streetLine;
+
+  const alias = findMatchingNameAlias(candidate.namedetails, query, primary);
+  if (alias) primary = alias;
 
   const parts = [primary, locality, addr.state].filter((p): p is string => Boolean(p && p.trim()));
 
@@ -954,6 +1015,12 @@ function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSea
     format: 'jsonv2',
     limit: String(PLACE_SUGGESTION_LIMIT),
     addressdetails: '1',
+    // Lets a matched candidate's full name-tag breakdown (alt_name,
+    // old_name, official_name, short_name, ...) be seen in the response --
+    // never affects which candidates a query matches, only what this app
+    // can see about the ones Nominatim already decided to return. See
+    // findMatchingNameAlias.
+    namedetails: '1',
     layer: 'address,poi',
     q: query,
   };
@@ -995,17 +1062,27 @@ function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSea
 //      Canadian POI whose own OSM country tagging is wrong; it does NOT,
 //      and cannot, recover a POI that simply isn't named/tagged that way
 //      anywhere in OpenStreetMap at all -- no query reformulation finds
-//      data that was never entered. (A well-known real example: a building
-//      renamed after a naming-rights gift, e.g. the University of Windsor's
-//      athletics centre, may still be tagged under its old name in OSM
-//      until a mapper updates it -- Nominatim's index only ever reflects
-//      what OSM actually has, not the building's current real-world name.)
-//   4. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
+//      data that was never entered.
+//   4. Requests `namedetails=1` and, via findMatchingNameAlias, relabels a
+//      match using whichever alt_name/old_name/official_name/short_name tag
+//      the search actually matched, when that differs from the element's
+//      primary name. This does NOT change which candidates match (that's
+//      Nominatim's index, unaffected by this parameter) -- it fixes the
+//      case where Nominatim DID find the right place but under a name the
+//      searcher never typed and wouldn't recognize. (The motivating real
+//      case: a building renamed after a naming-rights gift, e.g. the
+//      University of Windsor's athletics centre, may still be tagged
+//      `name=<old name>` in OSM with the new name only present as an alias
+//      until a mapper updates the primary tag.) If OSM has NEITHER the
+//      primary name NOR any alias matching the search text, this cannot
+//      manufacture a result -- that is a genuine OpenStreetMap data gap,
+//      not something any query parameter can work around.
+//   5. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
 //      one), each with a short display label, so a genuinely ambiguous
 //      search (e.g. a street name that exists in several cities) can be
 //      disambiguated by the renter picking one, rather than silently
 //      guessing the first result.
-//   5. Returns an empty array for "no matches" (never throws/404s) -- an
+//   6. Returns an empty array for "no matches" (never throws/404s) -- an
 //      autocomplete dropdown showing "no results" is a normal, expected UI
 //      state, not an error condition the way a single-result lookup's 404
 //      is for GET /geocode.
@@ -1027,7 +1104,7 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
       const lat = parseFloat(String(candidate.lat));
       const lng = parseFloat(String(candidate.lon));
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      return { label: toPlaceSuggestionLabel(candidate), lat, lng };
+      return { label: toPlaceSuggestionLabel(candidate, query), lat, lng };
     })
     .filter((s): s is PlaceSuggestion => s !== null);
 }

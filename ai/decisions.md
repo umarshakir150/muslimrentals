@@ -1707,3 +1707,13 @@ No new fields were exposed anywhere outside the existing ADMIN/MODERATOR-gated `
 **Impact:** closes a real secret-leak-prevention gap on the backend side that had been sitting named-but-unfixed in the roadmap.
 
 **Revisit when:** the founder reviews and merges (or requests changes to) PR #20.
+
+## 2026-09-08 — Autonomous cycle flagged stale deployment docs; new founder approval created (not started)
+
+**Decision:** A routine 4h autonomy cycle found the backlog otherwise fully DONE/DEFERRED/APPROVAL_REQUIRED (nothing new and actionable in the 163 signals reviewed), but verified one real, evidenced gap directly: `rentals/README.md:225-234` still recommends Vercel/Railway/Neon for production deployment, while `ai/current-state.md`'s own Deployment status section confirms the founder already directed and verified the actual production stack — Netlify (frontend) + Render (backend) + Supabase (database), with Railway explicitly decommissioned back on 2026-08-28. The README simply never caught up to a decision that was already made and executed.
+
+**Outcome:** the Lead proposed and selected a new backlog item — `bl_d822f033-2e39-4ff2-996f-adf977b7c3c2`, "Update `rentals/README.md`'s deployment section to reflect the actual production stack" — but the orchestrator's own risk classifier flagged it HIGH risk, so it was routed to a new founder-approval request rather than started autonomously. No code or docs were changed by this cycle; the README edit itself has not happened.
+
+**Impact:** none yet — this is a documentation-accuracy gap (contributor-facing setup instructions pointing at a decommissioned stack), not a functional or security issue. Founder queue now has 4 pending approvals instead of 3.
+
+**Revisit when:** the founder approves (or declines) starting `bl_d822f033`.

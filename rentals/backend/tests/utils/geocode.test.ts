@@ -822,6 +822,134 @@ describe('searchPlaces', () => {
     expect(new URL(capturedUrl).searchParams.get('layer')).toBe('address,poi');
   });
 
+  it('requests namedetails=1 so a matched alias name can be surfaced in the label', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Some Place');
+
+    expect(new URL(capturedUrl).searchParams.get('namedetails')).toBe('1');
+  });
+
+  // Nominatim's search already matches a query against ANY name tag an
+  // element carries (not just its primary `name`) -- namedetails=1 is what
+  // lets this app SEE which one matched, so a renamed/aliased place can be
+  // labeled with the name the searcher actually typed rather than whichever
+  // name happens to be primary on the map. This does NOT change which
+  // candidates match (Nominatim's index decides that, unaffected by
+  // namedetails) -- only how an already-returned match is labeled. Uses a
+  // synthetic renamed-arena fixture, not "Toldo Lancer Centre" itself, to
+  // prove the logic generalizes rather than being hardcoded to one place.
+  describe('alias-aware labeling (alt_name/old_name/official_name/short_name)', () => {
+    it('labels a match by its alt_name when the search matches the alias but not the primary name', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      const results = await searchPlaces('Sunrise Sponsor Arena');
+
+      expect(results).toEqual([{ label: 'Sunrise Sponsor Arena, Anytown, Ontario', lat: 43.1, lng: -81.2 }]);
+    });
+
+    it('labels a match by its old_name the same way (a straightforward rename, not just a sponsor alias)', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'New Harbour Centre, Dock Road, Anytown, Ontario, Canada',
+          address: { road: 'Dock Road', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'New Harbour Centre', old_name: 'Old Harbour Centre' },
+        }],
+      }));
+
+      const results = await searchPlaces('Old Harbour Centre');
+
+      expect(results).toEqual([{ label: 'Old Harbour Centre, Anytown, Ontario', lat: 43.1, lng: -81.2 }]);
+    });
+
+    it('splits a semicolon-separated multi-value alt_name tag and matches any one of them', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Primary Name, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Primary Name', alt_name: 'First Alias;Second Alias' },
+        }],
+      }));
+
+      const results = await searchPlaces('Second Alias');
+
+      expect(results[0].label).toContain('Second Alias');
+    });
+
+    it('does not substitute an alias when the primary name already matches the search', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      const results = await searchPlaces('Riverside Community Arena');
+
+      expect(results[0].label).toContain('Riverside Community Arena');
+      expect(results[0].label).not.toContain('Sunrise Sponsor Arena');
+    });
+
+    it('leaves the label unchanged when namedetails is absent entirely (older/partial provider responses)', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+        }],
+      }));
+
+      const results = await searchPlaces('Riverside Community Arena');
+
+      expect(results[0].label).toBe('Riverside Community Arena, Anytown, Ontario');
+    });
+
+    it('does not substitute an alias when none of the name tags match the search text at all', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      // A query that matches neither the primary name nor the alias (e.g.
+      // the renter typed a street name instead) -- the label must not
+      // spuriously substitute an unrelated alias just because one exists.
+      const results = await searchPlaces('Sample Street');
+
+      expect(results[0].label).toContain('Riverside Community Arena');
+    });
+  });
+
   // The two-tier fallback strategy: countrycodes=ca first (hard filter,
   // correct for a Canada-only app), then -- ONLY when that finds literally
   // nothing -- one retry with that hard filter relaxed to a soft Canada-wide

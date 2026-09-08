@@ -905,11 +905,26 @@ export interface PlaceSuggestion {
   lng: number;
 }
 
-// How many place-search candidates to surface in the renter-facing
-// autocomplete dropdown -- enough to disambiguate a genuinely ambiguous
-// query (e.g. a common street/place name repeated across multiple cities)
-// without turning into a wall of barely-relevant results.
-const PLACE_SUGGESTION_LIMIT = 5;
+// How many place-search candidates to REQUEST from Nominatim (this app's
+// own `limit=` param -- not a display truncation applied afterward; there
+// is no separate, smaller display cap, so this is also the maximum number
+// of suggestions a renter ever sees). This directly gates how early a
+// partial query surfaces a less-"important" match: Nominatim ranks results
+// by a combination of text-match quality and its own general relevance/
+// importance score, and a specific building or small business can rank
+// behind more prominent places matching the same partial text until the
+// query narrows further. Raised from 5 -- a founder-reported real symptom
+// ("some places don't appear until ~75-80% of the name is typed") traced
+// directly to this: at limit=5, a not-yet-highly-ranked candidate for a
+// short partial query was simply never fetched at all, regardless of
+// debounce timing or the minimum query length (both already correct,
+// unaffected by this). 8 stays within the founder's own "5-8 is fine"
+// guidance while meaningfully widening the window a genuine match can
+// still fall within early in typing. This does not, and cannot, fix the
+// case where Nominatim's own ranking for a short prefix puts a match
+// beyond even a widened window, or where a candidate isn't indexed under
+// the typed text at all -- see searchPlaces's own doc comment.
+const PLACE_SUGGESTION_LIMIT = 8;
 
 // The alternate-name OSM tags Nominatim's `namedetails=1` can return
 // alongside an element's primary `name` -- checked, in this order, when the
@@ -1099,7 +1114,7 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
     candidates = await fetchNominatimCandidates(fallbackUrl, `q="${query}" (place search, Canada-biased fallback)`);
   }
 
-  return candidates
+  const suggestions = candidates
     .map((candidate) => {
       const lat = parseFloat(String(candidate.lat));
       const lng = parseFloat(String(candidate.lon));
@@ -1107,6 +1122,26 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
       return { label: toPlaceSuggestionLabel(candidate, query), lat, lng };
     })
     .filter((s): s is PlaceSuggestion => s !== null);
+
+  return dedupeByLabel(suggestions);
+}
+
+// Nominatim's own `dedupe` (on by default) collapses near-identical raw
+// results, but that happens BEFORE this app's own labeling -- two distinct
+// candidates (e.g. a building point and an entrance/address point a few
+// metres apart) can still end up with the EXACT SAME label after
+// toPlaceSuggestionLabel's construction, which reads as a confusing
+// literal duplicate in the autocomplete dropdown even though the
+// underlying coordinates differ slightly. Keeps the FIRST occurrence of
+// each label -- i.e. Nominatim's own relevance ranking still decides which
+// of the duplicates' coordinates wins -- rather than picking arbitrarily.
+function dedupeByLabel(suggestions: PlaceSuggestion[]): PlaceSuggestion[] {
+  const seen = new Set<string>();
+  return suggestions.filter((s) => {
+    if (seen.has(s.label)) return false;
+    seen.add(s.label);
+    return true;
+  });
 }
 
 // ─── Landlord-confirmed-pin geography check ────────────────────────────────

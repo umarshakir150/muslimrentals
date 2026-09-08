@@ -950,6 +950,81 @@ describe('searchPlaces', () => {
     });
   });
 
+  // Founder-reported real symptom: some places didn't appear as
+  // suggestions until nearly the full name was typed. Traced to
+  // PLACE_SUGGESTION_LIMIT truncating the REQUEST itself (limit=5) -- a
+  // not-yet-highly-ranked candidate for a short partial query was simply
+  // never fetched, regardless of debounce timing or minimum query length
+  // (both already correct and unrelated to this). Widened to 8, still
+  // within the founder's own "5-8 is fine" guidance.
+  describe('candidate window (early partial-query suggestions)', () => {
+    it('requests up to 8 candidates per query, not the previous 5, so a lower-ranked match has a better chance of being returned early in typing', async () => {
+      let capturedUrl = '';
+      globalThis.fetch = vi.fn(async (url) => {
+        capturedUrl = String(url);
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }) as unknown as typeof fetch;
+
+      await searchPlaces('Some Partial Query');
+
+      expect(new URL(capturedUrl).searchParams.get('limit')).toBe('8');
+    });
+
+    it('returns all 8 candidates when Nominatim supplies that many for a genuinely broad partial query', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => Array.from({ length: 8 }, (_, i) => ({
+          lat: String(43 + i * 0.01), lon: String(-79 - i * 0.01),
+          display_name: `Place ${i}, Anytown, Ontario, Canada`,
+          address: { road: `Street ${i}`, city: 'Anytown', state: 'Ontario' },
+        })),
+      }));
+
+      const results = await searchPlaces('Pla');
+
+      expect(results).toHaveLength(8);
+    });
+  });
+
+  // Nominatim's own dedupe (on by default) runs before this app's labeling
+  // -- two distinct raw candidates (e.g. a building point and a nearby
+  // entrance/address point) can still collapse to an IDENTICAL computed
+  // label, which reads as a confusing literal duplicate in the autocomplete
+  // dropdown even though their coordinates differ slightly.
+  describe('deduplication by computed label', () => {
+    it('collapses two candidates that resolve to the exact same label, keeping the first (Nominatim-ranked) one', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { lat: '43.1000', lon: '-81.2000', display_name: 'Sample Place, Anytown, Ontario, Canada', address: { road: 'Main Street', house_number: '1', city: 'Anytown', state: 'Ontario' } },
+          { lat: '43.1001', lon: '-81.2001', display_name: 'Sample Place, Anytown, Ontario, Canada', address: { road: 'Main Street', house_number: '1', city: 'Anytown', state: 'Ontario' } },
+        ],
+      }));
+
+      const results = await searchPlaces('Sample Place');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ label: 'Sample Place, Anytown, Ontario', lat: 43.1, lng: -81.2 });
+    });
+
+    it('does not collapse genuinely different results that merely share a city/province suffix', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { lat: '43.1', lon: '-81.2', display_name: 'First Place, Anytown, Ontario, Canada', address: { road: 'First Street', city: 'Anytown', state: 'Ontario' } },
+          { lat: '43.2', lon: '-81.3', display_name: 'Second Place, Anytown, Ontario, Canada', address: { road: 'Second Street', city: 'Anytown', state: 'Ontario' } },
+        ],
+      }));
+
+      const results = await searchPlaces('Place');
+
+      expect(results).toHaveLength(2);
+    });
+  });
+
   // The two-tier fallback strategy: countrycodes=ca first (hard filter,
   // correct for a Canada-only app), then -- ONLY when that finds literally
   // nothing -- one retry with that hard filter relaxed to a soft Canada-wide

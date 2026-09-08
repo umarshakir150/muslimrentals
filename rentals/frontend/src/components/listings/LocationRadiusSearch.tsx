@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { MapPin, LocateFixed, X, Loader2 } from 'lucide-react';
+import { MapPin, LocateFixed, X, Loader2, Search } from 'lucide-react';
 import { useFilterStore } from '@/store/filterStore';
 import { geocodeApi, PlaceSuggestion } from '@/lib/api';
 import { requestUserLocation, GEOLOCATION_ERROR_TITLE, type GeolocationFailureReason } from '@/lib/geolocation';
@@ -66,6 +66,14 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
   // search is a visible state, not indistinguishable from not having typed
   // anything yet.
   const [searchedEmpty, setSearchedEmpty] = useState(false);
+  // Feedback for the manual Enter/Search path (handleDirectSearch) only --
+  // distinct from `searchedEmpty` above, which describes the autocomplete
+  // dropdown's own "no suggestions" state. 'not_found' shows a persistent
+  // inline message (never a transient toast) and deliberately leaves the
+  // typed query text untouched so the renter can edit and retry, per the
+  // explicit requirement that a manual search never blocks/clears on
+  // failure.
+  const [directSearchState, setDirectSearchState] = useState<'idle' | 'searching' | 'not_found'>('idle');
   const [locating, setLocating] = useState(false);
   const { toast } = useToast();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,8 +154,53 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     }
   }, []);
 
+  // Manual "search whatever I typed" path -- autocomplete suggestions are
+  // assistance, never a required gate. Always resolves the COMPLETE current
+  // input text via GET /geocode/resolve (see geocodeApi.resolve's own doc
+  // comment for why that's a distinct, purpose-built lookup rather than
+  // just taking suggestions[0]) -- never the highlighted/top suggestion,
+  // since the renter may have kept typing past the last suggestion fetch,
+  // or want a place the dropdown never surfaced at all. On success this has
+  // the exact same effect as selecting a suggestion (filters + mini-map);
+  // on "not found" the typed text is deliberately left in place so the
+  // renter can edit and retry, rather than being cleared.
+  const handleDirectSearch = useCallback(async (rawQuery: string) => {
+    const q = rawQuery.trim();
+    if (!q) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    requestIdRef.current++; // supersede any in-flight/cached autocomplete write
+    setOpen(false);
+    setSearching(true);
+    setDirectSearchState('searching');
+    try {
+      const res = await geocodeApi.resolve(q);
+      const { lat, lng } = res.data;
+      lastSetRef.current = { lat, lng };
+      setFilters({ lat, lng, radiusKm: filters.radiusKm || 5 });
+      setMapCenter([lat, lng]);
+      setResolvedLabel(q);
+      setSuggestions([]);
+      setSearchedEmpty(false);
+      setDirectSearchState('idle');
+    } catch (err: any) {
+      if (err?.status === 404) {
+        setDirectSearchState('not_found');
+      } else {
+        setDirectSearchState('idle');
+        toast({
+          variant: 'destructive',
+          title: 'Search failed',
+          description: err?.message || 'Please try again in a minute.',
+        });
+      }
+    } finally {
+      setSearching(false);
+    }
+  }, [filters.radiusKm, setFilters, setMapCenter, toast]);
+
   function handleQueryChange(value: string) {
     setQuery(value);
+    setDirectSearchState('idle');
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const trimmed = value.trim();
@@ -173,16 +226,28 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setSearchedEmpty(false);
     setOpen(false);
     setFocusIdx(-1);
+    setDirectSearchState('idle');
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (open && suggestions.length > 0 && focusIdx >= 0) {
+        // An explicit keyboard-highlighted suggestion -- honor it.
+        selectSuggestion(suggestions[focusIdx]);
+      } else {
+        // No explicit highlight -- whether because there are no
+        // suggestions, they're irrelevant, or the renter simply hasn't
+        // arrowed to one -- resolve the complete text they actually typed,
+        // never whichever suggestion happens to be listed first.
+        handleDirectSearch(query);
+      }
+      return;
+    }
     if (!open || suggestions.length === 0) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setFocusIdx(i => Math.min(i + 1, suggestions.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setFocusIdx(i => Math.max(i - 1, -1)); }
-    else if (e.key === 'Enter') {
-      e.preventDefault();
-      selectSuggestion(suggestions[focusIdx >= 0 ? focusIdx : 0]);
-    } else if (e.key === 'Escape') { setOpen(false); setFocusIdx(-1); }
+    else if (e.key === 'Escape') { setOpen(false); setFocusIdx(-1); }
   }
 
   async function handleUseMyLocation() {
@@ -195,6 +260,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
       setQuery('');
       setSuggestions([]);
       setSearchedEmpty(false);
+      setDirectSearchState('idle');
       setOpen(false);
       setResolvedLabel('your current location');
     } catch (err: any) {
@@ -213,6 +279,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setQuery('');
     setSuggestions([]);
     setSearchedEmpty(false);
+    setDirectSearchState('idle');
     setOpen(false);
     setResolvedLabel(null);
   }
@@ -223,6 +290,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setQuery('');
     setSuggestions([]);
     setSearchedEmpty(false);
+    setDirectSearchState('idle');
     setOpen(false);
     inputRef.current?.focus();
   }
@@ -298,6 +366,16 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
         </div>
         <button
           type="button"
+          onClick={() => handleDirectSearch(query)}
+          disabled={!query.trim() || searching}
+          aria-label="Search this location"
+          title="Search this location"
+          className="w-10 h-10 shrink-0 rounded-full bg-brand-600 text-white flex items-center justify-center hover:bg-brand-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Search size={16} />
+        </button>
+        <button
+          type="button"
           onClick={handleUseMyLocation}
           disabled={locating}
           aria-label="Use my current location"
@@ -307,6 +385,12 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           <LocateFixed size={16} className={cn('text-brand-700', locating && 'animate-pulse')} />
         </button>
       </div>
+
+      {directSearchState === 'not_found' && (
+        <p className="mt-1.5 text-xs font-medium text-red-500">
+          Location not found. Try refining your search, or pick a suggestion from the dropdown.
+        </p>
+      )}
 
       {hasActiveLocation && (
         <div className="mt-3">

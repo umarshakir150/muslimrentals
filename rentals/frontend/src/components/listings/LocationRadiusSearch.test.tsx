@@ -4,9 +4,12 @@ import userEvent from '@testing-library/user-event';
 import LocationRadiusSearch from './LocationRadiusSearch';
 import { useFilterStore } from '@/store/filterStore';
 
-const { geocodeSuggestionsMock } = vi.hoisted(() => ({ geocodeSuggestionsMock: vi.fn() }));
+const { geocodeSuggestionsMock, geocodeResolveMock } = vi.hoisted(() => ({
+  geocodeSuggestionsMock: vi.fn(),
+  geocodeResolveMock: vi.fn(),
+}));
 vi.mock('@/lib/api', () => ({
-  geocodeApi: { suggestions: geocodeSuggestionsMock },
+  geocodeApi: { suggestions: geocodeSuggestionsMock, resolve: geocodeResolveMock },
 }));
 
 const { requestUserLocationMock } = vi.hoisted(() => ({ requestUserLocationMock: vi.fn() }));
@@ -61,6 +64,7 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     geocodeSuggestionsMock.mockReset();
+    geocodeResolveMock.mockReset();
     requestUserLocationMock.mockReset();
     toastMock.mockReset();
     useFilterStore.setState({ filters: { ...DEFAULT_FILTERS }, mapCenter: [43.6532, -79.3832] });
@@ -567,5 +571,162 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
       // applied, not just that a map exists somewhere in the tree.
       expect(container.querySelector('.lg\\:grid-cols-2')).not.toBeNull();
     });
+  });
+
+  // Autocomplete suggestions are assistance, never a required gate: the
+  // renter can always finish typing and press Enter/click Search to
+  // resolve their COMPLETE typed text directly, regardless of what the
+  // dropdown does or doesn't show. This is a distinct code path
+  // (GET /geocode/resolve, via geocodeApi.resolve) from the suggestions
+  // dropdown above -- never simply "select suggestions[0]".
+  describe('manual Enter/Search direct-search path (autocomplete is assistance, not a gate)', () => {
+    it('pressing Enter with no suggestions loaded resolves the complete typed text directly', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [] });
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 42.31, lng: -83.02 } });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Vincent Massey Secondary School' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText(/no matching places found/i);
+
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => expect(geocodeResolveMock).toHaveBeenCalledWith('Vincent Massey Secondary School'));
+
+      await waitFor(() => expect(useFilterStore.getState().filters.lat).toBe(42.31));
+      expect(useFilterStore.getState().filters.lng).toBe(-83.02);
+    });
+
+    it('pressing Enter while irrelevant suggestions are visible (none explicitly highlighted) resolves the full typed text, never the top suggestion', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [{ label: 'Irrelevant Result', lat: 99, lng: 99 }] });
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 1, lng: 2 } });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Vincent Massey' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Irrelevant Result'); // dropdown open, nothing highlighted
+
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => expect(geocodeResolveMock).toHaveBeenCalledWith('Vincent Massey'));
+
+      await waitFor(() => expect(useFilterStore.getState().filters.lat).toBe(1));
+      expect(useFilterStore.getState().filters.lng).toBe(2);
+    });
+
+    it('arrow-key-highlighting a suggestion then pressing Enter still selects it directly, without calling resolve', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Toldo Lancer Centre' } });
+        vi.advanceTimersByTime(400);
+      });
+      await screen.findByText('Toldo Lancer Centre, Windsor, Ontario');
+
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(useFilterStore.getState().filters.lat).toBe(42.30569);
+      expect(geocodeResolveMock).not.toHaveBeenCalled();
+    });
+
+    it('clicking the visible Search button performs the same direct search as pressing Enter', async () => {
+      geocodeSuggestionsMock.mockResolvedValue({ data: [] });
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 42.31, lng: -83.02 } });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Vincent Massey' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      await user.click(screen.getByRole('button', { name: /search this location/i }));
+
+      await waitFor(() => expect(geocodeResolveMock).toHaveBeenCalledWith('Vincent Massey'));
+      await waitFor(() => expect(useFilterStore.getState().filters.lat).toBe(42.31));
+    });
+
+    it('a successful direct search shows the mini-map, same as selecting a suggestion would', async () => {
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 42.31, lng: -83.02 } });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      fireEvent.change(input, { target: { value: 'Vincent Massey Secondary School' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      await waitFor(() => expect(screen.getByTestId('mini-map-stub')).toBeInTheDocument());
+      const stub = screen.getByTestId('mini-map-stub');
+      expect(JSON.parse(stub.dataset.center!)).toEqual([42.31, -83.02]);
+    });
+
+    it('an unresolved search shows a clear "not found" message and leaves the typed text intact so the renter can edit it', async () => {
+      const notFound = Object.assign(new Error('Could not find that location.'), { status: 404 });
+      geocodeResolveMock.mockRejectedValue(notFound);
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location') as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: 'Somewhere Unresolvable' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(await screen.findByText(/location not found/i)).toBeInTheDocument();
+      expect(input.value).toBe('Somewhere Unresolvable');
+      expect(useFilterStore.getState().filters.lat).toBeUndefined();
+    });
+
+    it('a generic/transient failure (not a 404) shows a destructive toast, not the persistent "not found" message, and also keeps the typed text', async () => {
+      geocodeResolveMock.mockRejectedValue(new Error('Service temporarily unavailable.'));
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location') as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: 'Vincent Massey' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' })));
+      expect(screen.queryByText(/location not found/i)).not.toBeInTheDocument();
+      expect(input.value).toBe('Vincent Massey');
+    });
+
+    it('typing again after a "not found" result clears the message', async () => {
+      const notFound = Object.assign(new Error('Could not find that location.'), { status: 404 });
+      geocodeResolveMock.mockRejectedValue(notFound);
+      geocodeSuggestionsMock.mockResolvedValue({ data: [] });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      fireEvent.change(input, { target: { value: 'Somewhere Unresolvable' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await screen.findByText(/location not found/i);
+
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Somewhere Unresolvable Refined' } });
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(screen.queryByText(/location not found/i)).not.toBeInTheDocument();
+    });
+
+    it('pressing Enter with an empty query does nothing (no request, no crash)', async () => {
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(geocodeResolveMock).not.toHaveBeenCalled();
+    });
+
+    // Canada-only enforcement for a direct search is a backend guarantee
+    // (see resolvePlace()/searchPlaces()'s own tests in
+    // tests/utils/geocode.test.ts) -- the frontend has no independent
+    // country logic of its own, it simply uses whatever GET /geocode/resolve
+    // returns (or its 404), so there is nothing distinct to test here beyond
+    // the success/not-found paths already covered above.
   });
 });

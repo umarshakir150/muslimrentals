@@ -307,6 +307,17 @@ export const geocodeApi = {
   // requires always querying Nominatim regardless of which provider is
   // configured for listing-address geocoding.
   suggestions: (q: string) => api.get<{ data: PlaceSuggestion[] }>(`/geocode/suggestions?q=${encodeURIComponent(q)}`),
+  // Manual "search my complete typed text" resolve, backing
+  // LocationRadiusSearch.tsx's Enter/Search action -- autocomplete
+  // suggestions are assistance, never a required gate. Distinct from
+  // `search` above: that one drives ConfirmLocationMap's listing-creation
+  // flow via geocodeAddress (structured address geocoding, switchable
+  // provider); this one resolves through the exact same Nominatim-only,
+  // Canada-only, locally-ranked pipeline that produces `suggestions`
+  // above, so a manual search always finds what the dropdown itself would
+  // have ranked #1 for that text. See the backend's resolvePlace() for why
+  // reusing the address-oriented endpoint wasn't safe to do here.
+  resolve: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode/resolve?q=${encodeURIComponent(q)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

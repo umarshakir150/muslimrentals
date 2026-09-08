@@ -176,6 +176,13 @@ interface CandidateAddressDetails {
   hamlet?: string;
   state?: string;
   postcode?: string;
+  // Only ever populated for Nominatim (via addressdetails=1) -- the
+  // ISO 3166-1 alpha-2 country code Nominatim itself resolved the result
+  // to. Used exclusively as a defense-in-depth double-check in searchPlaces
+  // (see its own doc comment): the query-level `countrycodes=ca` filter is
+  // the primary restriction, but a firm Canada-only guarantee for that
+  // feature means not trusting the query parameter alone.
+  country_code?: string;
 }
 
 // The canonical, provider-agnostic shape every raw provider response gets
@@ -1004,26 +1011,30 @@ function toPlaceSuggestionLabel(candidate: GeocodeCandidate, query: string): str
   return candidate.display_name ?? 'Unknown location';
 }
 
-// Rough bounding box covering all of Canada (west,north,east,south) --
-// used only as a SOFT ranking bias (`viewbox` + `bounded=0`, never a hard
-// exclude) on the fallback attempt below, never as the primary filter.
-// `countrycodes=ca` remains the primary, hard restriction for a Canada-only
-// rental app; this box exists solely to recover the rare case where a
-// genuinely Canadian point is itself mistagged/misclassified by country in
-// the underlying OSM data (a real, if uncommon, data-quality issue -- not a
-// bug in this query).
-const CANADA_VIEWBOX = '-141.0,83.1,-52.6,41.7';
-
-// Builds the Nominatim query params for one search attempt. `layer` is set
+// Builds the Nominatim query params for a place/POI search. `layer` is set
 // EXPLICITLY to 'address,poi' rather than left to Nominatim's own server-
 // side default -- named-landmark search (a gym, mosque, university
 // building, or mall) is a POI-layer query by definition, and this removes
 // any dependency on an undocumented/version-specific default ever silently
-// excluding that layer. `countryFiltered` selects the two-tier strategy
-// used by searchPlaces below: true = the primary, hard `countrycodes=ca`
-// restriction; false = the fallback's soft `viewbox` bias instead.
-function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSearchParams {
-  const base: Record<string, string> = {
+// excluding that layer.
+//
+// `countrycodes=ca` is a FIRM, single-tier restriction -- there is
+// deliberately no second attempt that relaxes it. An earlier version of
+// this function retried with a soft Canada-wide `viewbox`+`bounded=0` bias
+// (which does NOT exclude non-Canadian results, only prefers them) when the
+// hard-filtered query found nothing, specifically to recover the rare case
+// of a genuinely Canadian point whose own OSM country tagging is wrong.
+// Removed by explicit founder direction: this app currently only needs
+// Canada, and a soft geographic bias is not actually Canada-only -- a
+// rectangle bounding box that covers all of Canada's latitude/longitude
+// range also covers nearly the entire northern half of the continental US,
+// so that fallback could genuinely surface a US result (e.g. a
+// cross-border query near Windsor/Detroit). Reliable Canada-only
+// autocomplete is worth more than recovering that edge case; see
+// searchPlaces's own doc comment for the defense-in-depth country_code
+// check that backs this up further.
+function buildPlaceSearchParams(query: string): URLSearchParams {
+  return new URLSearchParams({
     format: 'jsonv2',
     limit: String(NOMINATIM_FETCH_LIMIT),
     addressdetails: '1',
@@ -1034,15 +1045,9 @@ function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSea
     // findMatchingNameAlias.
     namedetails: '1',
     layer: 'address,poi',
+    countrycodes: 'ca',
     q: query,
-  };
-  if (countryFiltered) {
-    base.countrycodes = 'ca';
-  } else {
-    base.viewbox = CANADA_VIEWBOX;
-    base.bounded = '0';
-  }
-  return new URLSearchParams(base);
+  });
 }
 
 // ─── Local relevance re-ranking ─────────────────────────────────────────────
@@ -1114,15 +1119,53 @@ function normalizeForRanking(text: string): string[] {
 // alias ranks the candidate well, not just labels it well after the fact
 // (previously, alias data affected the DISPLAY label only, never ranking --
 // this closes that gap).
-function collectNameVariants(candidate: GeocodeCandidate): string[] {
+//
+// Each variant also carries `isAddressLine`: true for a variant derived
+// purely from WHERE a candidate is located (its house_number+road line, or
+// the full display_name breakdown) rather than what it's actually NAMED
+// (a real name/alt_name/old_name/official_name/short_name tag, or the
+// display_name's own most-specific segment when that genuinely differs
+// from the plain address line). This is the fix for a founder-reported
+// symptom ("Vincent Massey" collapsing to a single unrelated business
+// result): a business or bare address sitting ON a road named "Vincent
+// Massey Drive" was scoring an identical top-tier phrase-match to a place
+// actually NAMED "Vincent Massey ..." -- being LOCATED ON a road sharing
+// the query's words is a real but strictly weaker signal than being NAMED
+// those words, and scoreNameVariant below caps address-line matches
+// accordingly so a genuinely-named match can never be crowded out by one.
+interface NameVariant {
+  text: string;
+  isAddressLine: boolean;
+}
+
+function collectNameVariants(candidate: GeocodeCandidate): NameVariant[] {
   const addr = candidate.address ?? {};
   const streetLine = [addr.house_number, addr.road].filter(Boolean).join(' ');
   const firstSegment = candidate.display_name?.split(',')[0]?.trim();
+  // Mirrors toPlaceSuggestionLabel's own "does this candidate actually have
+  // a distinct name, or is its most-specific segment just its address"
+  // check -- kept as the single shared definition of "this is a real name"
+  // would be better, but toPlaceSuggestionLabel needs the resolved LABEL
+  // while this needs a boolean per variant; duplicated on purpose rather
+  // than reshaping either function's return shape for the other's benefit.
+  const hasDistinctName = Boolean(firstSegment && firstSegment !== streetLine);
 
-  const variants = new Set<string>();
-  if (firstSegment) variants.add(firstSegment);
-  if (streetLine) variants.add(streetLine);
-  if (candidate.display_name) variants.add(candidate.display_name);
+  const variants = new Map<string, boolean>(); // text -> isAddressLine
+  const add = (text: string | undefined, isAddressLine: boolean) => {
+    if (!text) return;
+    const existing = variants.get(text);
+    // If the exact same text is reachable both as a real name/alias AND as
+    // an address line (a rare literal collision), treat it as a name --
+    // being independently findable via an actual name tag is a strictly
+    // stronger claim than merely sharing text with an address line.
+    if (existing === undefined || (existing === true && !isAddressLine)) {
+      variants.set(text, isAddressLine);
+    }
+  };
+
+  add(firstSegment, !hasDistinctName);
+  add(streetLine || undefined, true);
+  add(candidate.display_name, true);
 
   const namedetails = candidate.namedetails;
   if (namedetails) {
@@ -1131,11 +1174,11 @@ function collectNameVariants(candidate: GeocodeCandidate): string[] {
       if (!raw) continue;
       for (const value of raw.split(';')) {
         const trimmed = value.trim();
-        if (trimmed) variants.add(trimmed);
+        if (trimmed) add(trimmed, false);
       }
     }
   }
-  return Array.from(variants);
+  return Array.from(variants.entries()).map(([text, isAddressLine]) => ({ text, isAddressLine }));
 }
 
 // Scores ONE name variant against the typed query tokens. Every token
@@ -1147,15 +1190,24 @@ function collectNameVariants(candidate: GeocodeCandidate): string[] {
 // the first must be an exact match, not merely any shared prefix, so a
 // candidate matching ONLY that first word never gets confused with one
 // that ALSO genuinely matches the second.
-function scoreNameVariant(nameTokens: string[], queryTokens: string[]): number {
+function scoreNameVariant(nameTokens: string[], queryTokens: string[], isAddressLine: boolean): number {
   if (queryTokens.length === 0 || nameTokens.length === 0) return TIER_NONE;
 
   const nameJoined = nameTokens.join(' ');
   const queryJoined = queryTokens.join(' ');
 
-  if (nameJoined === queryJoined) return TIER_EXACT_PHRASE;
+  // An address-line variant means "located at/on this text", not "named
+  // this text" -- capped at the same ceiling as matching every typed token
+  // by name (see TIER_ALL_TOKENS below), so a mere address/road-name
+  // overlap can never out-rank, or even tie, a candidate that is actually
+  // NAMED the searched phrase.
+  const addressLineCeiling = TIER_ALL_TOKENS + COVERAGE_BONUS_SCALE;
+
+  if (nameJoined === queryJoined) {
+    return isAddressLine ? addressLineCeiling : TIER_EXACT_PHRASE;
+  }
   if (queryJoined.length >= MIN_MEANINGFUL_TOKEN_LENGTH && nameJoined.startsWith(`${queryJoined} `)) {
-    return TIER_FULL_PREFIX_PHRASE;
+    return isAddressLine ? addressLineCeiling : TIER_FULL_PREFIX_PHRASE;
   }
 
   // A single, still-incompletely-typed token: no discrete "matched all/
@@ -1216,10 +1268,71 @@ function scoreNameVariant(nameTokens: string[], queryTokens: string[]): number {
 function scoreCandidateRelevance(candidate: GeocodeCandidate, queryTokens: string[]): number {
   let best = TIER_NONE;
   for (const variant of collectNameVariants(candidate)) {
-    const score = scoreNameVariant(normalizeForRanking(variant), queryTokens);
+    const score = scoreNameVariant(normalizeForRanking(variant.text), queryTokens, variant.isAddressLine);
     if (score > best) best = score;
   }
   return best;
+}
+
+// ─── Result diversity ───────────────────────────────────────────────────────
+// Nominatim's `class` (e.g. 'shop', 'amenity', 'highway') is the closest
+// general-purpose "category" signal available on every candidate -- used
+// ONLY as a soft diversity cap below, never as a ranking signal itself (a
+// higher-scoring candidate always wins regardless of category).
+function candidateCategory(candidate: GeocodeCandidate): string {
+  return candidate.class || candidate.category || 'unknown';
+}
+
+// How many of the DISPLAYED suggestions may share the same category.
+// Deliberately soft and generous -- this never reorders by relevance and
+// never drops a higher-scoring candidate for a lower one, it only prevents
+// several near-identical results of ONE type (e.g. many different
+// businesses/addresses along the same road, all genuinely tied in score)
+// from consuming the entire display window and crowding out a genuinely
+// different, still-relevant type of place ranked just outside it.
+const MAX_SAME_CATEGORY_DISPLAYED = 3;
+
+// Takes an already relevance-sorted, already deduped list and reorders it
+// minimally so no single category can consume the whole display window: a
+// candidate over its category's quota is deferred (never dropped) and only
+// backfilled at the end if there aren't enough other candidates to fill
+// `limit` slots. This never promotes a candidate ahead of a
+// higher-scoring one that already fit within quota -- it only ever
+// changes which candidates make it into the final LIMITED window, never
+// their relative order otherwise.
+function applyResultDiversity(
+  ranked: { suggestion: PlaceSuggestion; category: string }[],
+  limit: number
+): PlaceSuggestion[] {
+  const counts = new Map<string, number>();
+  const included = new Set<number>(); // indices into `ranked` that made the cut
+  const overflow: number[] = []; // indices deferred purely for exceeding their category's quota
+
+  ranked.forEach((item, i) => {
+    const count = counts.get(item.category) ?? 0;
+    if (count < MAX_SAME_CATEGORY_DISPLAYED) {
+      counts.set(item.category, count + 1);
+      included.add(i);
+    } else {
+      overflow.push(i);
+    }
+  });
+
+  for (const i of overflow) {
+    if (included.size >= limit) break;
+    included.add(i);
+  }
+
+  // Crucial: the returned order always follows `ranked`'s own overall
+  // relevance order, never the order items were decided to be included in
+  // -- filtering (rather than concatenating accepted+backfilled lists)
+  // guarantees diversity can only ever affect WHICH candidates make the
+  // cut, never demote a higher-scoring included candidate below a
+  // lower-scoring one (a real bug caught in an earlier draft of this
+  // function: a lower-scoring candidate from an under-represented category
+  // could slip into an "accepted" list ahead of a higher-scoring,
+  // quota-deferred candidate simply because it was processed later).
+  return ranked.filter((_, i) => included.has(i)).slice(0, limit).map((item) => item.suggestion);
 }
 
 // ─── Renter-facing place/POI search (autocomplete) ─────────────────────────
@@ -1244,14 +1357,23 @@ function scoreCandidateRelevance(candidate: GeocodeCandidate, queryTokens: strin
 //      already scope the search geographically) and, for a bare POI name
 //      with no natural "city, country" reading, only risked confusing
 //      Nominatim's tokenizer for no benefit.
-//   3. Tries a hard `countrycodes=ca` restriction first, then -- ONLY if
-//      that finds literally nothing -- retries once with that hard filter
-//      relaxed to a soft Canada-wide `viewbox` bias (see
-//      buildPlaceSearchParams). This recovers the narrow case of a real
-//      Canadian POI whose own OSM country tagging is wrong; it does NOT,
-//      and cannot, recover a POI that simply isn't named/tagged that way
+//   3. Enforces Canada-only as a FIRM requirement, not just a preference:
+//      the query itself is hard-restricted via `countrycodes=ca` (see
+//      buildPlaceSearchParams), and every returned candidate is additionally
+//      double-checked against its own resolved `address.country_code`
+//      before it ever reaches ranking/display -- defense in depth against
+//      trusting the query parameter alone. There is deliberately no
+//      second, country-relaxed attempt when the hard-filtered query finds
+//      nothing (an earlier version tried a soft Canada-wide `viewbox` bias
+//      to recover a genuinely Canadian POI with wrong OSM country tagging,
+//      but a soft geographic bias is not actually Canada-only -- a
+//      bounding box covering all of Canada's latitude/longitude range also
+//      covers nearly the entire northern continental US, so it could
+//      genuinely surface a non-Canadian result). This does NOT, and
+//      cannot, recover a POI that simply isn't named/tagged as Canadian
 //      anywhere in OpenStreetMap at all -- no query reformulation finds
-//      data that was never entered.
+//      data that was never entered; that's a real, inherent OSM data-
+//      quality limitation, not a bug in this query.
 //   4. Requests `namedetails=1` and, via findMatchingNameAlias, relabels a
 //      match using whichever alt_name/old_name/official_name/short_name tag
 //      the search actually matched, when that differs from the element's
@@ -1273,7 +1395,10 @@ function scoreCandidateRelevance(candidate: GeocodeCandidate, queryTokens: strin
 //      multi-word, partially-typed phrase (see that section's own doc
 //      comment), so this app no longer trusts it blindly. A genuinely
 //      ambiguous search (e.g. a street name that exists in several cities)
-//      still surfaces multiple candidates for the renter to pick from.
+//      still surfaces multiple candidates for the renter to pick from, and
+//      a soft per-category diversity cap (see applyResultDiversity) keeps
+//      several near-identical results of ONE type from crowding out a
+//      genuinely different, still-relevant type of place.
 //   6. Returns an empty array for "no matches" (never throws/404s) -- an
 //      autocomplete dropdown showing "no results" is a normal, expected UI
 //      state, not an error condition the way a single-result lookup's 404
@@ -1283,13 +1408,18 @@ function scoreCandidateRelevance(candidate: GeocodeCandidate, queryTokens: strin
 // function in this file; the frontend only ever calls this app's own
 // GET /geocode/suggestions route.
 export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
-  const primaryUrl = `${NOMINATIM_SEARCH_URL}?${buildPlaceSearchParams(query, true).toString()}`;
-  let candidates = await fetchNominatimCandidates(primaryUrl, `q="${query}" (place search, countrycodes=ca)`);
+  const url = `${NOMINATIM_SEARCH_URL}?${buildPlaceSearchParams(query).toString()}`;
+  const rawCandidates = await fetchNominatimCandidates(url, `q="${query}" (place search, Canada-only)`);
 
-  if (candidates.length === 0) {
-    const fallbackUrl = `${NOMINATIM_SEARCH_URL}?${buildPlaceSearchParams(query, false).toString()}`;
-    candidates = await fetchNominatimCandidates(fallbackUrl, `q="${query}" (place search, Canada-biased fallback)`);
-  }
+  // Defense in depth (see this function's own doc comment, point 3): drop
+  // anything whose own resolved country isn't Canada, rather than trusting
+  // the `countrycodes=ca` query parameter alone. A candidate with no
+  // country_code at all (addressdetails occasionally omits it) is kept --
+  // "unknown" is not the same as "confirmed not Canadian".
+  const candidates = rawCandidates.filter((c) => {
+    const cc = c.address?.country_code;
+    return !cc || cc.toLowerCase() === 'ca';
+  });
 
   const queryTokens = normalizeForRanking(query);
 
@@ -1301,9 +1431,10 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
       return {
         suggestion: { label: toPlaceSuggestionLabel(candidate, query), lat, lng },
         score: scoreCandidateRelevance(candidate, queryTokens),
+        category: candidateCategory(candidate),
       };
     })
-    .filter((s): s is { suggestion: PlaceSuggestion; score: number } => s !== null);
+    .filter((s): s is { suggestion: PlaceSuggestion; score: number; category: string } => s !== null);
 
   // A stable sort (guaranteed by the JS spec) -- ties, including "no
   // meaningful signal yet" (every candidate scoring TIER_NONE for a bare
@@ -1311,8 +1442,8 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
   // geographic order rather than being reshuffled arbitrarily.
   scored.sort((a, b) => b.score - a.score);
 
-  const deduped = dedupeByLabel(scored.map((s) => s.suggestion));
-  return deduped.slice(0, DISPLAY_SUGGESTION_LIMIT);
+  const deduped = dedupeByLabel(scored);
+  return applyResultDiversity(deduped, DISPLAY_SUGGESTION_LIMIT);
 }
 
 // Nominatim's own `dedupe` (on by default) collapses near-identical raw
@@ -1324,13 +1455,56 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
 // underlying coordinates differ slightly. Keeps the FIRST occurrence of
 // each label -- i.e. Nominatim's own relevance ranking still decides which
 // of the duplicates' coordinates wins -- rather than picking arbitrarily.
-function dedupeByLabel(suggestions: PlaceSuggestion[]): PlaceSuggestion[] {
+// Generic over any record carrying a `suggestion`, so it can run either
+// before or after category info is attached without needing its own copy.
+function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T[] {
   const seen = new Set<string>();
-  return suggestions.filter((s) => {
-    if (seen.has(s.label)) return false;
-    seen.add(s.label);
+  return items.filter((item) => {
+    if (seen.has(item.suggestion.label)) return false;
+    seen.add(item.suggestion.label);
     return true;
   });
+}
+
+// ─── Manual "search my complete typed text" resolve ────────────────────────
+// Backs LocationRadiusSearch.tsx's Enter/Search action: autocomplete
+// suggestions are assistance, never a required gate. If the renter's
+// intended place doesn't appear in (or disagrees with) the dropdown, they
+// can still finish typing and search their own complete text directly --
+// this resolves that complete text to a single best Canadian location, or
+// null if nothing resolves.
+//
+// Deliberately reuses searchPlaces' entire pipeline (same Nominatim-only,
+// firmly Canada-restricted, locally re-ranked search that backs the
+// suggestion dropdown) and returns its #1 ranked result, rather than
+// calling geocodeAddress/GET /geocode. Diagnosed and rejected that reuse
+// for two concrete reasons, not just architectural taste:
+//   1. geocodeAddress's free-text path is switchable to Geocodio via
+//      GEOCODING_PROVIDER, and Geocodio's free-text (unstructured `q=`)
+//      mode has no hard country-restriction parameter at all -- only its
+//      STRUCTURED mode (street/city/state/country fields) can hard-filter
+//      by country. Nominatim's free-text mode, by contrast, always accepts
+//      `countrycodes=ca`. So geocodeAddress's free-text path is only
+//      reliably Canada-only when Nominatim is the active provider -- a
+//      firm, provider-independent Canada-only guarantee is exactly what
+//      this manual-search feature was asked for, and searchPlaces already
+//      always uses Nominatim regardless of GEOCODING_PROVIDER (see its own
+//      doc comment) for precisely this kind of free-form place text.
+//   2. geocodeAddress is a structured ADDRESS geocoder built to evaluate a
+//      landlord's entered street against a specific requested city/
+//      province (see the file-level doc comment) -- a different matching
+//      model than the place/POI relevance ranking that already decides
+//      what the renter sees in the suggestion dropdown. Resolving through
+//      that same ranking here means a manual search finds exactly the
+//      place the dropdown itself would have ranked #1 for that text, never
+//      a differently-tuned result from an unrelated code path.
+// This intentionally does NOT touch geocodeAddress, GET /geocode, or
+// ConfirmLocationMap.tsx's existing listing-creation search -- that is
+// live, already-shipped, unrelated functionality this task has no reason
+// to change.
+export async function resolvePlace(query: string): Promise<GeocodeResult | null> {
+  const [top] = await searchPlaces(query);
+  return top ? { lat: top.lat, lng: top.lng } : null;
 }
 
 // ─── Landlord-confirmed-pin geography check ────────────────────────────────

@@ -1,17 +1,20 @@
 /**
- * Coverage for GET /geocode -- the ad-hoc place/address search endpoint
- * backing the renter-facing "search a location + radius" filter. Built on
- * the same utils/geocode.ts helper listing creation uses (mocked here);
- * its own success/failure-mode behavior is covered in tests/utils/geocode.test.ts.
+ * Coverage for GET /geocode (single-result lookup) and GET /geocode/suggestions
+ * (multi-result autocomplete, backing the Browse location-search widget) --
+ * both ad-hoc place/address search endpoints. Built on the same
+ * utils/geocode.ts helpers listing creation uses (mocked here); their own
+ * success/failure-mode behavior is covered in tests/utils/geocode.test.ts.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
 const geocodeAddressMock = vi.fn();
+const searchPlacesMock = vi.fn();
 class GeocodingUnavailableError extends Error {}
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
+  searchPlaces: (...args: any[]) => searchPlacesMock(...args),
   GeocodingUnavailableError,
 }));
 
@@ -28,6 +31,7 @@ async function buildApp() {
 
 beforeEach(() => {
   geocodeAddressMock.mockReset();
+  searchPlacesMock.mockReset();
 });
 
 describe('GET /geocode', () => {
@@ -114,5 +118,86 @@ describe('GET /geocode', () => {
     const res = await request(app).get('/api/v1/geocode').query({ q: 'Some Place' });
 
     expect(res.status).toBe(200);
+  });
+});
+
+// Coverage for the Browse location-search autocomplete's backing endpoint --
+// distinct from GET /geocode above (single result, 404 on no match): this
+// one returns a LIST (possibly empty) for an as-you-type dropdown. The
+// actual "always Nominatim, never Geocodio" provider behavior lives in and
+// is tested by tests/utils/geocode.test.ts (searchPlaces is mocked here,
+// same as geocodeAddress is above) -- this file only covers the route's own
+// request/response contract.
+describe('GET /geocode/suggestions', () => {
+  it('returns a list of place suggestions for a free-text query', async () => {
+    searchPlacesMock.mockResolvedValue([
+      { label: 'Toldo Lancer Centre, Windsor, Ontario', lat: 42.3057, lng: -83.0644 },
+    ]);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'Toldo Lancer Centre' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([
+      { label: 'Toldo Lancer Centre, Windsor, Ontario', lat: 42.3057, lng: -83.0644 },
+    ]);
+    expect(searchPlacesMock).toHaveBeenCalledWith('Toldo Lancer Centre');
+  });
+
+  it('returns multiple candidates for a genuinely ambiguous query, for the renter to disambiguate', async () => {
+    searchPlacesMock.mockResolvedValue([
+      { label: '123 Main Street, Windsor, Ontario', lat: 42.3, lng: -83.0 },
+      { label: '123 Main Street, Toronto, Ontario', lat: 43.6, lng: -79.4 },
+    ]);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: '123 Main Street' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(2);
+  });
+
+  it('returns an empty list (never a 404) when nothing matches -- "no results yet" is a normal autocomplete state', async () => {
+    searchPlacesMock.mockResolvedValue([]);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'Nonexistent Fake Place 99999' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  it('returns a distinct 503 (never a generic error) when the geocoding provider is rate-limited', async () => {
+    searchPlacesMock.mockRejectedValue(new GeocodingUnavailableError());
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'Some Real Place' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/temporarily unavailable/i);
+  });
+
+  it('rejects a query shorter than 2 characters', async () => {
+    const app = await buildApp();
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'a' });
+
+    expect(res.status).toBe(422);
+    expect(searchPlacesMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing q param', async () => {
+    const app = await buildApp();
+    const res = await request(app).get('/api/v1/geocode/suggestions');
+
+    expect(res.status).toBe(422);
+  });
+
+  it('never leaks a provider API key or raw provider response shape into the response body', async () => {
+    searchPlacesMock.mockResolvedValue([{ label: 'Some Place, Ontario', lat: 1, lng: 2 }]);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'Some Place' });
+
+    expect(JSON.stringify(res.body)).not.toMatch(/api_key|GEOCODIO/i);
   });
 });

@@ -135,6 +135,31 @@ describe('GET /listings?lat=&lng=&radiusKm= -- filters by the PUBLIC approximate
     expect(res.body.data.map((l: any) => l.id)).toEqual([id]);
   });
 
+  it('includes a listing whose approximate point is EXACTLY at the radius boundary (distance <= radius, not distance < radius)', async () => {
+    // Compute the real distance from the search point to this listing's
+    // actual approximate point using the exact same distKm/getApproximateLocation
+    // functions the route itself uses, then search with THAT EXACT value as
+    // the radius -- this directly tests the boundary is inclusive (<=)
+    // rather than guessing a radius that happens to be close, which would
+    // leave the test passing for the wrong reason (a fuzzy "near enough"
+    // radius, not a proven exact-equality boundary case).
+    const preciseLat = SEARCH_POINT.lat + (3000 / 111_320); // ~3km north, comfortably within the 1-10km schema range
+    const id = 'listing-exact-boundary';
+    const approx = getApproximateLocation(id, preciseLat, SEARCH_POINT.lng);
+    const exactDistanceKm = distKm(SEARCH_POINT.lat, SEARCH_POINT.lng, approx.lat, approx.lng);
+
+    const listing = fixture({ id, lat: preciseLat, lng: SEARCH_POINT.lng });
+    findManyMock.mockResolvedValue([listing]);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/listings').query({
+      lat: SEARCH_POINT.lat, lng: SEARCH_POINT.lng, radiusKm: exactDistanceKm,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((l: any) => l.id)).toEqual([id]);
+  });
+
   it('rejects a radiusKm above the new 10km cap', async () => {
     const app = await buildApp();
     const res = await request(app).get('/api/v1/listings').query({ lat: SEARCH_POINT.lat, lng: SEARCH_POINT.lng, radiusKm: 11 });

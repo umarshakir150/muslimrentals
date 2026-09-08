@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geocodeAddress, verifyConfirmedPinLocation, GeocodingUnavailableError } from '../../src/utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation, searchPlaces, GeocodingUnavailableError } from '../../src/utils/geocode';
 
 const originalFetch = globalThis.fetch;
 
@@ -651,5 +651,150 @@ describe('verifyConfirmedPinLocation', () => {
 
     expect(result.reason).not.toContain('43.999999');
     expect(result.reason).not.toContain('-79.888888');
+  });
+});
+
+// Coverage for the Browse place/POI-search autocomplete's backing function.
+// The central architectural claim under test: Geocodio has no general
+// place/POI search product (it's a structured address geocoder), so this
+// function must ALWAYS resolve via Nominatim regardless of
+// GEOCODING_PROVIDER -- these tests prove that by setting
+// GEOCODING_PROVIDER=geocodio and asserting the actual request still hits
+// Nominatim's own domain, never api.geocod.io.
+describe('searchPlaces', () => {
+  const originalProvider = process.env.GEOCODING_PROVIDER;
+
+  afterEach(() => {
+    if (originalProvider === undefined) delete process.env.GEOCODING_PROVIDER;
+    else process.env.GEOCODING_PROVIDER = originalProvider;
+  });
+
+  it('resolves a named POI (Toldo Lancer Centre, University of Windsor) to a labeled suggestion -- mocked, no live network call', async () => {
+    // A realistic Nominatim jsonv2 shape for a named campus building --
+    // OSM tags this kind of POI with amenity=university/building=yes plus a
+    // name, which Nominatim's general search (unlike Geocodio's address-only
+    // geocoder) can match on directly.
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{
+        lat: '42.30569', lon: '-83.06437',
+        display_name: 'Toldo Lancer Centre, Sunset Avenue, Windsor, Ontario, N9B 3P4, Canada',
+        address: { road: 'Sunset Avenue', city: 'Windsor', state: 'Ontario', postcode: 'N9B 3P4' },
+      }],
+    }));
+
+    const results = await searchPlaces('Toldo Lancer Centre');
+
+    // The label carries the POI's actual name (from display_name's most
+    // specific segment), not just the street it happens to be on --
+    // "Sunset Avenue, Windsor, Ontario" alone would be accurate but useless
+    // for confirming this is the actual building that was searched for.
+    expect(results).toEqual([
+      { label: 'Toldo Lancer Centre, Windsor, Ontario', lat: 42.30569, lng: -83.06437 },
+    ]);
+  });
+
+  it('labels a plain address search with the address itself, not a redundant duplicate of it', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{
+        lat: '43.6532', lon: '-79.3832',
+        display_name: '732 Mill Street, Windsor, Ontario, N9C 2S2, Canada',
+        address: { house_number: '732', road: 'Mill Street', city: 'Windsor', state: 'Ontario', postcode: 'N9C 2S2' },
+      }],
+    }));
+
+    const results = await searchPlaces('732 Mill Street, Windsor');
+
+    expect(results).toEqual([
+      { label: '732 Mill Street, Windsor, Ontario', lat: 43.6532, lng: -79.3832 },
+    ]);
+  });
+
+  it('always queries Nominatim, never Geocodio, even when GEOCODING_PROVIDER=geocodio is set', async () => {
+    process.env.GEOCODING_PROVIDER = 'geocodio';
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere, Ontario' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(capturedUrl).toContain('nominatim.openstreetmap.org');
+    expect(capturedUrl).not.toContain('geocod.io');
+    // No Geocodio API key ever appears in the outgoing request -- there is
+    // no code path here that could read/attach one, but assert the actual
+    // request anyway rather than trusting that by inspection alone.
+    expect(capturedUrl).not.toContain('api_key');
+  });
+
+  it('returns multiple candidates (not just the top one) for a genuinely ambiguous query', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { lat: '42.3', lon: '-83.0', address: { road: 'Main Street', city: 'Windsor', state: 'Ontario' } },
+        { lat: '43.6', lon: '-79.4', address: { road: 'Main Street', city: 'Toronto', state: 'Ontario' } },
+      ],
+    }));
+
+    const results = await searchPlaces('Main Street');
+
+    expect(results).toHaveLength(2);
+    expect(results[0].label).toContain('Windsor');
+    expect(results[1].label).toContain('Toronto');
+  });
+
+  it('returns an empty array (never throws) when nothing matches', async () => {
+    mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [] }));
+
+    const results = await searchPlaces('Nonexistent Fake Place 99999');
+    expect(results).toEqual([]);
+  });
+
+  it('falls back to display_name when the address breakdown has nothing usable', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Some Bare Result' }],
+    }));
+
+    const results = await searchPlaces('Some Bare Result');
+    expect(results).toEqual([{ label: 'Some Bare Result', lat: 42.3, lng: -83.0 }]);
+  });
+
+  it('drops a candidate with a non-numeric coordinate rather than returning a broken suggestion', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { lat: 'not-a-number', lon: '-83.0', display_name: 'Broken Result' },
+        { lat: '42.3', lon: '-83.0', display_name: 'Good Result' },
+      ],
+    }));
+
+    const results = await searchPlaces('Something');
+    expect(results).toEqual([{ label: 'Good Result', lat: 42.3, lng: -83.0 }]);
+  });
+
+  it('throws GeocodingUnavailableError (never returns an empty array silently) when the provider is rate-limited', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 429, json: async () => ({}) }));
+
+    await expect(searchPlaces('Toldo Lancer Centre')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  it('scopes the search to Canada', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(new URL(capturedUrl).searchParams.get('countrycodes')).toBe('ca');
   });
 });

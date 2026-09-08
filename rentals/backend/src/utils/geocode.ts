@@ -35,7 +35,11 @@ import { logger } from './logger';
  * PinLocationVerification/GeocodingUnavailableError never change shape no
  * matter which is active) -- routes/listings.ts, routes/geocode.ts, and
  * every frontend caller depend only on that interface, never on which
- * provider is behind it:
+ * provider is behind it. searchPlaces (below, added for the Browse
+ * place/POI-search feature) is the one exception: it always uses Nominatim
+ * regardless of GEOCODING_PROVIDER, since Geocodio has no general place/POI
+ * search product to switch to in the first place -- see its own doc comment.
+ *
  *
  *   - 'nominatim' (default) -- OpenStreetMap's free Nominatim search API,
  *     no API key/signup, consistent with this app already using OSM tiles
@@ -879,6 +883,101 @@ export async function geocodeAddress(
     `ACCEPTED (${freeTextBest.status}) -- ${freeTextBest.reason}`
   );
   return toGeocodeResult(freeTextBest.candidate, freeTextDescription, freeTextBest.status);
+}
+
+export interface PlaceSuggestion {
+  // A short, human-readable label built from the provider's own address
+  // breakdown (see toPlaceSuggestion) -- shown directly in the renter-facing
+  // autocomplete dropdown (LocationRadiusSearch.tsx), never a raw internal
+  // shape.
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+// How many place-search candidates to surface in the renter-facing
+// autocomplete dropdown -- enough to disambiguate a genuinely ambiguous
+// query (e.g. a common street/place name repeated across multiple cities)
+// without turning into a wall of barely-relevant results.
+const PLACE_SUGGESTION_LIMIT = 5;
+
+// Builds a short, readable label for the autocomplete dropdown: the
+// provider's own most-specific identifier (a named POI's actual name, or a
+// full street address) plus city/province context -- never just
+// reconstructed from the address breakdown alone, which has no "name"
+// field at all and would silently drop a searched-for POI's name entirely
+// (address.road is only ever the street it's ON, e.g. a search for "Toldo
+// Lancer Centre" would otherwise resolve to a suggestion labeled just
+// "Sunset Avenue, Windsor, Ontario" -- accurate, but useless for confirming
+// this is actually the building the renter searched for).
+//
+// Nominatim's own `display_name` puts the most specific element first --
+// for a named place, that's the name itself; for a plain address match,
+// it's the same "house_number road" the breakdown already has. Using
+// whichever of those is MORE specific (i.e. differs from the plain street
+// line) as the label's first segment means a POI keeps its name and a
+// plain address search looks exactly like it did before this function
+// existed.
+function toPlaceSuggestionLabel(candidate: GeocodeCandidate): string {
+  const addr = candidate.address ?? {};
+  const locality = addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet;
+  const streetLine = [addr.house_number, addr.road].filter(Boolean).join(' ') || undefined;
+  const firstSegment = candidate.display_name?.split(',')[0]?.trim() || undefined;
+  const primary = firstSegment && firstSegment !== streetLine ? firstSegment : streetLine;
+
+  const parts = [primary, locality, addr.state].filter((p): p is string => Boolean(p && p.trim()));
+
+  if (parts.length > 0) return parts.join(', ');
+  return candidate.display_name ?? 'Unknown location';
+}
+
+// ─── Renter-facing place/POI search (autocomplete) ─────────────────────────
+// Distinct from geocodeAddress's free-text path (used by the single-result
+// GET /geocode endpoint that ConfirmLocationMap.tsx's listing-creation flow
+// depends on, which this function does NOT replace or touch) -- this one:
+//
+//   1. ALWAYS queries Nominatim, regardless of GEOCODING_PROVIDER. Geocodio
+//      is a structured ADDRESS geocoder with no general place/POI search
+//      product at all -- feeding it a bare landmark name like "Toldo Lancer
+//      Centre" (no street/city to parse) is not something its API is built
+//      to resolve, unlike Nominatim's general-purpose OSM-backed search,
+//      which already indexes named buildings/POIs alongside addresses. This
+//      is an intentional, permanent architectural choice, not a temporary
+//      default -- see the GEOCODING_PROVIDER switch's own doc comment above,
+//      which governs the LISTING address pipeline only.
+//   2. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
+//      one), each with a short display label, so a genuinely ambiguous
+//      search (e.g. a street name that exists in several cities) can be
+//      disambiguated by the renter picking one, rather than silently
+//      guessing the first result.
+//   3. Returns an empty array for "no matches" (never throws/404s) -- an
+//      autocomplete dropdown showing "no results" is a normal, expected UI
+//      state, not an error condition the way a single-result lookup's 404
+//      is for GET /geocode.
+//
+// Never accepts/returns a provider API key -- same stance as every other
+// function in this file; the frontend only ever calls this app's own
+// GET /geocode/suggestions route.
+export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
+  const q = `${query}, Canada`;
+  const params = new URLSearchParams({
+    format: 'jsonv2',
+    limit: String(PLACE_SUGGESTION_LIMIT),
+    countrycodes: 'ca',
+    addressdetails: '1',
+    q,
+  });
+  const url = `${NOMINATIM_SEARCH_URL}?${params.toString()}`;
+  const candidates = await fetchNominatimCandidates(url, `q="${q}" (place search)`);
+
+  return candidates
+    .map((candidate) => {
+      const lat = parseFloat(String(candidate.lat));
+      const lng = parseFloat(String(candidate.lon));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { label: toPlaceSuggestionLabel(candidate), lat, lng };
+    })
+    .filter((s): s is PlaceSuggestion => s !== null);
 }
 
 // ─── Landlord-confirmed-pin geography check ────────────────────────────────

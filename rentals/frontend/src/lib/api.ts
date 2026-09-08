@@ -291,8 +291,22 @@ export const citiesApi = {
 // result to a listing. The search text itself is never sent anywhere else
 // or persisted; only the resolved lat/lng is used, client-side, to center
 // the map and filter listings.
+export interface PlaceSuggestion {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
 export const geocodeApi = {
   search: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode?q=${encodeURIComponent(q)}`),
+  // Multi-result autocomplete backing LocationRadiusSearch.tsx's as-you-type
+  // dropdown -- distinct from `search` above (single result, used by
+  // ConfirmLocationMap's unrelated listing-creation flow, left untouched).
+  // Always resolves place/POI names (e.g. "Toldo Lancer Centre"), not just
+  // addresses -- see the backend's searchPlaces() for why that specifically
+  // requires always querying Nominatim regardless of which provider is
+  // configured for listing-address geocoding.
+  suggestions: (q: string) => api.get<{ data: PlaceSuggestion[] }>(`/geocode/suggestions?q=${encodeURIComponent(q)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

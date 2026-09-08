@@ -11,10 +11,12 @@ import request from 'supertest';
 
 const geocodeAddressMock = vi.fn();
 const searchPlacesMock = vi.fn();
+const resolvePlaceMock = vi.fn();
 class GeocodingUnavailableError extends Error {}
 vi.mock('../../src/utils/geocode', () => ({
   geocodeAddress: (...args: any[]) => geocodeAddressMock(...args),
   searchPlaces: (...args: any[]) => searchPlacesMock(...args),
+  resolvePlace: (...args: any[]) => resolvePlaceMock(...args),
   GeocodingUnavailableError,
 }));
 
@@ -32,6 +34,7 @@ async function buildApp() {
 beforeEach(() => {
   geocodeAddressMock.mockReset();
   searchPlacesMock.mockReset();
+  resolvePlaceMock.mockReset();
 });
 
 describe('GET /geocode', () => {
@@ -199,5 +202,64 @@ describe('GET /geocode/suggestions', () => {
     const res = await request(app).get('/api/v1/geocode/suggestions').query({ q: 'Some Place' });
 
     expect(JSON.stringify(res.body)).not.toMatch(/api_key|GEOCODIO/i);
+  });
+});
+
+// Coverage for the Browse location-search widget's manual Enter/Search
+// action -- distinct from both endpoints above: unlike GET /geocode/suggestions
+// this resolves to a SINGLE best location (like GET /geocode), but unlike
+// GET /geocode it's built on resolvePlace()/searchPlaces() rather than
+// geocodeAddress (see resolvePlace's own doc comment for why). This file
+// only covers the route's own request/response contract; resolvePlace is
+// mocked here, same as searchPlaces/geocodeAddress are above.
+describe('GET /geocode/resolve', () => {
+  it('resolves the complete typed text to a single best location', async () => {
+    resolvePlaceMock.mockResolvedValue({ lat: 42.3, lng: -83.0 });
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/resolve').query({ q: 'Vincent Massey Secondary School' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ lat: 42.3, lng: -83.0 });
+    expect(resolvePlaceMock).toHaveBeenCalledWith('Vincent Massey Secondary School');
+  });
+
+  it('returns 404 with a clear message when nothing resolves -- the renter can edit and retry', async () => {
+    resolvePlaceMock.mockResolvedValue(null);
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/resolve').query({ q: 'Nonexistent Fake Place 99999' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.message).toMatch(/could not find/i);
+  });
+
+  it('returns a distinct 503 (never the generic 404) when the geocoding provider is rate-limited', async () => {
+    resolvePlaceMock.mockRejectedValue(new GeocodingUnavailableError());
+    const app = await buildApp();
+
+    const res = await request(app).get('/api/v1/geocode/resolve').query({ q: 'Some Real Place' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/temporarily unavailable/i);
+  });
+
+  it('rejects a query shorter than 2 characters', async () => {
+    const app = await buildApp();
+    const res = await request(app).get('/api/v1/geocode/resolve').query({ q: 'a' });
+
+    expect(res.status).toBe(422);
+    expect(resolvePlaceMock).not.toHaveBeenCalled();
+  });
+
+  it('never falls back to geocodeAddress or searchPlaces directly -- always goes through resolvePlace', async () => {
+    resolvePlaceMock.mockResolvedValue({ lat: 1, lng: 2 });
+    const app = await buildApp();
+
+    await request(app).get('/api/v1/geocode/resolve').query({ q: 'Some Place' });
+
+    expect(geocodeAddressMock).not.toHaveBeenCalled();
+    expect(searchPlacesMock).not.toHaveBeenCalled();
+    expect(resolvePlaceMock).toHaveBeenCalledTimes(1);
   });
 });

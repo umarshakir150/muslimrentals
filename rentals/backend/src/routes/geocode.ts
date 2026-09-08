@@ -12,7 +12,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
-import { geocodeAddress, searchPlaces, GeocodingUnavailableError } from '../utils/geocode';
+import { geocodeAddress, searchPlaces, resolvePlace, GeocodingUnavailableError } from '../utils/geocode';
 
 const router = Router();
 
@@ -59,6 +59,37 @@ router.get('/suggestions', async (req: Request, res: Response, next: NextFunctio
     const { q } = geocodeQuerySchema.parse(req.query);
     const suggestions = await searchPlaces(q);
     res.json({ success: true, data: suggestions });
+  } catch (err) {
+    if (err instanceof GeocodingUnavailableError) {
+      return next(new AppError('Location search is temporarily unavailable. Please try again in a minute.', 503));
+    }
+    next(err);
+  }
+});
+
+// GET /geocode/resolve?q=<free text> -> { lat, lng } for the single best
+// Canadian match of the COMPLETE typed text, or a clear 404 if nothing
+// resolves. Backs LocationRadiusSearch.tsx's manual Enter/Search action:
+// autocomplete suggestions (GET /geocode/suggestions above) are assistance,
+// never a required gate -- a renter whose intended place doesn't appear in
+// (or disagrees with) the dropdown can still finish typing and search their
+// own complete text directly. Deliberately built on resolvePlace()/
+// searchPlaces() rather than geocodeAddress (the single-result lookup GET
+// /geocode above uses) -- see resolvePlace's own doc comment for the two
+// concrete reasons that reuse was rejected (a provider-dependent Canada-
+// only gap, and a different, address-oriented matching model). This never
+// simply picks the frontend's already-fetched top suggestion -- it always
+// re-resolves the complete current input text fresh, since the renter may
+// have kept typing past the last suggestion fetch, or want a location the
+// dropdown didn't surface at all.
+router.get('/resolve', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { q } = geocodeQuerySchema.parse(req.query);
+    const result = await resolvePlace(q);
+    if (!result) {
+      throw new AppError('Could not find that location. Try a different search.', 404);
+    }
+    res.json({ success: true, data: result });
   } catch (err) {
     if (err instanceof GeocodingUnavailableError) {
       return next(new AppError('Location search is temporarily unavailable. Please try again in a minute.', 503));

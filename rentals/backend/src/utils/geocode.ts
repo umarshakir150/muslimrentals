@@ -905,26 +905,23 @@ export interface PlaceSuggestion {
   lng: number;
 }
 
-// How many place-search candidates to REQUEST from Nominatim (this app's
-// own `limit=` param -- not a display truncation applied afterward; there
-// is no separate, smaller display cap, so this is also the maximum number
-// of suggestions a renter ever sees). This directly gates how early a
-// partial query surfaces a less-"important" match: Nominatim ranks results
-// by a combination of text-match quality and its own general relevance/
-// importance score, and a specific building or small business can rank
-// behind more prominent places matching the same partial text until the
-// query narrows further. Raised from 5 -- a founder-reported real symptom
-// ("some places don't appear until ~75-80% of the name is typed") traced
-// directly to this: at limit=5, a not-yet-highly-ranked candidate for a
-// short partial query was simply never fetched at all, regardless of
-// debounce timing or the minimum query length (both already correct,
-// unaffected by this). 8 stays within the founder's own "5-8 is fine"
-// guidance while meaningfully widening the window a genuine match can
-// still fall within early in typing. This does not, and cannot, fix the
-// case where Nominatim's own ranking for a short prefix puts a match
-// beyond even a widened window, or where a candidate isn't indexed under
-// the typed text at all -- see searchPlaces's own doc comment.
-const PLACE_SUGGESTION_LIMIT = 8;
+// How many place-search candidates to REQUEST from Nominatim -- a wider
+// INTERNAL pool than what's ever shown (see DISPLAY_SUGGESTION_LIMIT
+// below). Nominatim ranks its own results by a mix of text-match quality
+// and general importance; for a multi-word or partial query the intended
+// match can easily sit outside Nominatim's own top handful even though it
+// genuinely matches everything typed so far. Fetching a wider pool and
+// re-ranking it locally (see scoreCandidateRelevance) is what actually
+// fixes that -- raising this alone, without local re-ranking, was already
+// tried and wasn't enough (a founder-reported symptom: "Vincent Massey"
+// staying dominated by unrelated "Vincent"-only matches while typing).
+const NOMINATIM_FETCH_LIMIT = 15;
+
+// How many suggestions are actually shown, after local re-ranking and
+// dedup. Kept modest and separate from the fetch pool above -- widening
+// the fetch pool improves WHICH candidates are available to rank; this is
+// purely about not dumping a wall of noisy results into the dropdown.
+const DISPLAY_SUGGESTION_LIMIT = 8;
 
 // The alternate-name OSM tags Nominatim's `namedetails=1` can return
 // alongside an element's primary `name` -- checked, in this order, when the
@@ -1028,7 +1025,7 @@ const CANADA_VIEWBOX = '-141.0,83.1,-52.6,41.7';
 function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSearchParams {
   const base: Record<string, string> = {
     format: 'jsonv2',
-    limit: String(PLACE_SUGGESTION_LIMIT),
+    limit: String(NOMINATIM_FETCH_LIMIT),
     addressdetails: '1',
     // Lets a matched candidate's full name-tag breakdown (alt_name,
     // old_name, official_name, short_name, ...) be seen in the response --
@@ -1046,6 +1043,183 @@ function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSea
     base.bounded = '0';
   }
   return new URLSearchParams(base);
+}
+
+// ─── Local relevance re-ranking ─────────────────────────────────────────────
+// Nominatim returns candidates in ITS OWN relevance order (text-match
+// quality + general importance/geography) -- this app previously passed
+// that order straight through unchanged (aside from raising the fetch
+// limit above). That's fine for a single, unambiguous word, but for a
+// genuinely multi-word, partially-typed query it produces the wrong
+// intuition: Nominatim has no notion of "the user is mid-typing a specific
+// phrase and every token typed so far matters equally", so a highly-
+// "important" place matching only the FIRST word can rank ahead of a
+// less-prominent place that matches EVERY typed word (a founder-reported
+// real symptom: "Vincent Mass" staying dominated by unrelated
+// "Vincent"-only results, sometimes until the name was nearly complete).
+// This section re-ranks the fetched pool locally, using Nominatim's own
+// order only as a stable-sort tiebreaker -- provider/geographic relevance
+// stays a real, useful secondary signal, just no longer the ONLY one.
+//
+// Deliberately NOT fuzzy/edit-distance matching: every rule below is exact
+// (normalized) token equality or exact prefix matching, so this can never
+// promote a genuinely unrelated place just because it "looks similar".
+// Nothing here is specific to any one place name -- see the tests using
+// synthetic examples, not "Toldo"/"Vincent Massey" themselves, to prove it.
+
+// Tokens shorter than this contribute NO prefix-match signal at all --
+// this is what keeps a single keystroke ("T") from artificially promoting
+// any specific place: with no meaningful token to match against yet, every
+// candidate scores identically (TIER_NONE) and Nominatim's own original
+// order stands untouched, i.e. genuinely broad, unpromoted results. As
+// soon as a token reaches this length, it starts contributing real signal.
+const MIN_MEANINGFUL_TOKEN_LENGTH = 2;
+
+// Discrete relevance tiers (spaced 1000 apart) matching the founder's own
+// priority ladder, strongest to weakest. Only ever compared against each
+// other via scoreCandidateRelevance below -- the absolute numbers don't
+// mean anything outside that comparison.
+const TIER_EXACT_PHRASE = 5000;       // 1. exact normalized phrase/name match
+const TIER_FULL_PREFIX_PHRASE = 4000; // 2. candidate name starts with the entire typed phrase (as complete words)
+const TIER_ALL_TOKENS = 3000;         // 3. every typed token matches (final token may be a prefix)
+const TIER_MOST_TOKENS = 2000;        // 4. a genuine majority of typed tokens match
+const TIER_ONE_TOKEN = 1000;          // 5. only one (typically the first/generic) token matches
+const TIER_NONE = 0;                  // no meaningful match at all
+
+// Within a tier, a smooth 0-1 "coverage" bonus (scaled well below the
+// 1000-point tier gap, so it can never cross a tier boundary) rewards
+// typing MORE of an already-matched word, so ranking feels progressive
+// rather than a sudden jump the instant any token first qualifies.
+const COVERAGE_BONUS_SCALE = 500;
+
+// Lowercases and splits into whitespace-delimited word tokens after
+// removing punctuation (keeping any Unicode letter/number, so accented
+// characters remain intact rather than being stripped or mismatched) --
+// the same normalization applied to both a candidate's name(s) and the
+// searcher's typed query, so they compare on equal footing regardless of
+// case or punctuation.
+function normalizeForRanking(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+// Every plausible "name" a candidate could be searched by: its primary
+// display name/address line, plus every alt_name/old_name/official_name/
+// short_name value (each already split on ';' for multi-value OSM tags) --
+// the SAME pool findMatchingNameAlias draws from, so a query matching an
+// alias ranks the candidate well, not just labels it well after the fact
+// (previously, alias data affected the DISPLAY label only, never ranking --
+// this closes that gap).
+function collectNameVariants(candidate: GeocodeCandidate): string[] {
+  const addr = candidate.address ?? {};
+  const streetLine = [addr.house_number, addr.road].filter(Boolean).join(' ');
+  const firstSegment = candidate.display_name?.split(',')[0]?.trim();
+
+  const variants = new Set<string>();
+  if (firstSegment) variants.add(firstSegment);
+  if (streetLine) variants.add(streetLine);
+  if (candidate.display_name) variants.add(candidate.display_name);
+
+  const namedetails = candidate.namedetails;
+  if (namedetails) {
+    for (const tag of Object.keys(namedetails)) {
+      const raw = namedetails[tag];
+      if (!raw) continue;
+      for (const value of raw.split(';')) {
+        const trimmed = value.trim();
+        if (trimmed) variants.add(trimmed);
+      }
+    }
+  }
+  return Array.from(variants);
+}
+
+// Scores ONE name variant against the typed query tokens. Every token
+// EXCEPT the last must already be a complete, exact match against some
+// candidate token (order-flexible, per "token order can be flexible where
+// appropriate") -- only the final token, which may still be mid-typing,
+// is allowed to match via prefix. This is the actual fix for a multi-word
+// query being dominated by its first word: with two-or-more typed tokens,
+// the first must be an exact match, not merely any shared prefix, so a
+// candidate matching ONLY that first word never gets confused with one
+// that ALSO genuinely matches the second.
+function scoreNameVariant(nameTokens: string[], queryTokens: string[]): number {
+  if (queryTokens.length === 0 || nameTokens.length === 0) return TIER_NONE;
+
+  const nameJoined = nameTokens.join(' ');
+  const queryJoined = queryTokens.join(' ');
+
+  if (nameJoined === queryJoined) return TIER_EXACT_PHRASE;
+  if (queryJoined.length >= MIN_MEANINGFUL_TOKEN_LENGTH && nameJoined.startsWith(`${queryJoined} `)) {
+    return TIER_FULL_PREFIX_PHRASE;
+  }
+
+  // A single, still-incompletely-typed token: no discrete "matched all/
+  // most/one tokens" categorization makes sense with only one token to
+  // begin with -- instead climb smoothly from TIER_ONE_TOKEN toward
+  // TIER_ALL_TOKENS as more of that SAME word is typed. This is what
+  // keeps a bare "T" contributing no signal at all (below the minimum
+  // length, no match even attempted) while "To" stays modest, "Tol"
+  // becomes competitive, and "Told"/"Toldo" climb strongly -- a smooth
+  // curve, not a sudden jump the moment any short prefix first matches.
+  // (Once the token is a COMPLETE word, the full-prefix-phrase check
+  // above already fires first and this branch is never reached for it.)
+  if (queryTokens.length === 1) {
+    const [qt] = queryTokens;
+    if (qt.length < MIN_MEANINGFUL_TOKEN_LENGTH) return TIER_NONE;
+    const match = nameTokens.find((nt) => nt.startsWith(qt));
+    if (!match) return TIER_NONE;
+    const coverage = qt.length / match.length; // 0..1
+    return TIER_ONE_TOKEN + coverage * (TIER_ALL_TOKENS - TIER_ONE_TOKEN);
+  }
+
+  const lastIdx = queryTokens.length - 1;
+  let matchedCount = 0;
+  let coverageSum = 0;
+
+  queryTokens.forEach((qt, i) => {
+    if (i === lastIdx) {
+      if (qt.length < MIN_MEANINGFUL_TOKEN_LENGTH) return;
+      const match = nameTokens.find((nt) => nt.startsWith(qt));
+      if (match) {
+        matchedCount++;
+        coverageSum += qt.length / match.length;
+      }
+    } else if (nameTokens.includes(qt)) {
+      matchedCount++;
+      coverageSum += 1;
+    }
+  });
+
+  if (matchedCount === 0) return TIER_NONE;
+
+  const meanCoverage = coverageSum / queryTokens.length;
+  const bonus = meanCoverage * COVERAGE_BONUS_SCALE;
+
+  if (matchedCount === queryTokens.length) return TIER_ALL_TOKENS + bonus;
+  // A genuine majority, not merely "at least half" -- for a 2-token query
+  // that means matching only 1 of 2 is NOT "most", it's the same as
+  // matching just one generic token (see TIER_ONE_TOKEN below).
+  if (matchedCount > queryTokens.length / 2) return TIER_MOST_TOKENS + bonus;
+  return TIER_ONE_TOKEN + bonus;
+}
+
+// A candidate's overall relevance is the BEST score across every name it
+// could plausibly be found by (see collectNameVariants) -- a candidate
+// whose primary name doesn't match but whose alt_name does should rank on
+// the strength of that alias, the same way findMatchingNameAlias already
+// lets it DISPLAY under that alias.
+function scoreCandidateRelevance(candidate: GeocodeCandidate, queryTokens: string[]): number {
+  let best = TIER_NONE;
+  for (const variant of collectNameVariants(candidate)) {
+    const score = scoreNameVariant(normalizeForRanking(variant), queryTokens);
+    if (score > best) best = score;
+  }
+  return best;
 }
 
 // ─── Renter-facing place/POI search (autocomplete) ─────────────────────────
@@ -1092,11 +1266,14 @@ function buildPlaceSearchParams(query: string, countryFiltered: boolean): URLSea
 //      primary name NOR any alias matching the search text, this cannot
 //      manufacture a result -- that is a genuine OpenStreetMap data gap,
 //      not something any query parameter can work around.
-//   5. Returns up to PLACE_SUGGESTION_LIMIT candidates (not just the top
-//      one), each with a short display label, so a genuinely ambiguous
-//      search (e.g. a street name that exists in several cities) can be
-//      disambiguated by the renter picking one, rather than silently
-//      guessing the first result.
+//   5. Fetches a wider internal pool (NOMINATIM_FETCH_LIMIT) than it ever
+//      shows, then RE-RANKS that pool locally (see "Local relevance
+//      re-ranking" above) before slicing to DISPLAY_SUGGESTION_LIMIT --
+//      Nominatim's own per-query relevance order isn't reliable for a
+//      multi-word, partially-typed phrase (see that section's own doc
+//      comment), so this app no longer trusts it blindly. A genuinely
+//      ambiguous search (e.g. a street name that exists in several cities)
+//      still surfaces multiple candidates for the renter to pick from.
 //   6. Returns an empty array for "no matches" (never throws/404s) -- an
 //      autocomplete dropdown showing "no results" is a normal, expected UI
 //      state, not an error condition the way a single-result lookup's 404
@@ -1114,16 +1291,28 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
     candidates = await fetchNominatimCandidates(fallbackUrl, `q="${query}" (place search, Canada-biased fallback)`);
   }
 
-  const suggestions = candidates
+  const queryTokens = normalizeForRanking(query);
+
+  const scored = candidates
     .map((candidate) => {
       const lat = parseFloat(String(candidate.lat));
       const lng = parseFloat(String(candidate.lon));
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      return { label: toPlaceSuggestionLabel(candidate, query), lat, lng };
+      return {
+        suggestion: { label: toPlaceSuggestionLabel(candidate, query), lat, lng },
+        score: scoreCandidateRelevance(candidate, queryTokens),
+      };
     })
-    .filter((s): s is PlaceSuggestion => s !== null);
+    .filter((s): s is { suggestion: PlaceSuggestion; score: number } => s !== null);
 
-  return dedupeByLabel(suggestions);
+  // A stable sort (guaranteed by the JS spec) -- ties, including "no
+  // meaningful signal yet" (every candidate scoring TIER_NONE for a bare
+  // single character), preserve Nominatim's own original relevance/
+  // geographic order rather than being reshuffled arbitrarily.
+  scored.sort((a, b) => b.score - a.score);
+
+  const deduped = dedupeByLabel(scored.map((s) => s.suggestion));
+  return deduped.slice(0, DISPLAY_SUGGESTION_LIMIT);
 }
 
 // Nominatim's own `dedupe` (on by default) collapses near-identical raw

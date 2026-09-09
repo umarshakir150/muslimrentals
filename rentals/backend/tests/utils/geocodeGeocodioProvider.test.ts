@@ -185,7 +185,7 @@ describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () =>
     });
   });
 
-  it('5. rejects a street_center result -- too coarse to trust as an address match', async () => {
+  it('5. accepts a street_center result as approximate -- founder-tested real case ("2555 college ave windsor" resolves to street_center and nothing better)', async () => {
     mockFetchOnce(() => geocodioForwardResponse([{
       address_components: { number: '732', street: 'Mill', suffix: 'St', formatted_street: 'Mill St', city: 'Windsor', state: 'ON', zip: 'N9C', country: 'CA' },
       formatted_address: '732 Mill St, Windsor, ON N9C, Canada',
@@ -195,30 +195,34 @@ describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () =>
 
     const result = await resolvePlace('732 Mill St');
 
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      lat: 42.2905, lng: -83.0455, confidence: 'street', accuracyType: 'street_center', precision: 'approximate',
+    });
   });
 
-  it('6. rejects a bare place/city-level or state-level match', async () => {
-    const placeLevel = geocodioForwardResponse([{
+  it('6. rejects a bare place/city-level match -- no street resolved at all', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
       address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
       formatted_address: 'Windsor, ON, Canada',
       location: { lat: 42.3, lng: -83.03 },
       accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
-    }]);
-    mockFetchOnce(() => placeLevel);
-    expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+    }]));
 
-    const stateLevel = geocodioForwardResponse([{
+    expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+  });
+
+  it('7. rejects a bare state/province-level match -- no street resolved at all', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
       address_components: { state: 'ON', country: 'CA' },
       formatted_address: 'Ontario, Canada',
       location: { lat: 51.25, lng: -85.32 },
       accuracy: 0.3, accuracy_type: 'state', source: 'Geocodio',
-    }]);
-    mockFetchOnce(() => stateLevel);
+    }]));
+
     expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
   });
 
-  it('7. rejects a result that resolves outside Canada, even when rooftop-precise', async () => {
+  it('8. rejects a result that resolves outside Canada, even when rooftop-precise', async () => {
     mockFetchOnce(() => geocodioForwardResponse([{
       address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
       formatted_address: '100 Main St, Detroit, MI 48226',
@@ -229,6 +233,25 @@ describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () =>
     const result = await resolvePlace('100 Main St');
 
     expect(result).toBeNull();
+  });
+
+  // Verifies the exact real-world case reported after this fix: the query
+  // that previously 404'd against the live backend (see this repo's own
+  // commit history for the sanitized Geocodio fields logged for it) now
+  // resolves successfully, tagged approximate rather than rejected.
+  it('resolves "2555 college ave windsor" (the real founder-tested query) to a successful approximate result, not 404', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '2555', street: 'College', suffix: 'Ave', formatted_street: 'College Ave', city: 'Windsor', state: 'ON', zip: 'N9B', country: 'CA' },
+      formatted_address: '2555 College Ave, Windsor, ON N9B, Canada',
+      location: { lat: 42.3009, lng: -83.0578 },
+      accuracy: 0.8, accuracy_type: 'street_center', source: 'Geocodio',
+    }]));
+
+    const result = await resolvePlace('2555 college ave windsor');
+
+    expect(result).toEqual({
+      lat: 42.3009, lng: -83.0578, confidence: 'street', accuracyType: 'street_center', precision: 'approximate',
+    });
   });
 
   it('sends the query to Geocodio\'s free-text endpoint with an explicit Canada hint, never a structured street/city query', async () => {

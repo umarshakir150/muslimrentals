@@ -502,15 +502,26 @@ interface GeocodioResult {
 // present in the input".
 const GEOCODIO_PRECISE_ACCURACY_TYPES = new Set(['rooftop', 'point', 'nearest_rooftop_match']);
 // accuracy_type values that are still a genuinely useful ADDRESS match --
-// Geocodio estimated a point along the correct street segment between two
-// known addresses -- but not confirmed rooftop-precise. Used only by
-// geocodeFullAddress (Browse's manual full-address resolve) to accept and
-// clearly mark a result as approximate rather than reject it outright;
-// deliberately NOT added to GEOCODIO_PRECISE_ACCURACY_TYPES above, which
+// Geocodio resolved to a specific street segment for the address as typed
+// (either interpolated between two known addresses, or centered on the
+// matched street segment) -- but not confirmed rooftop-precise. Used ONLY
+// by geocodeFullAddress (Browse's manual full-address resolve) to accept
+// and clearly mark a result as approximate rather than reject it outright.
+// Deliberately NOT added to GEOCODIO_PRECISE_ACCURACY_TYPES above, which
 // several OTHER call sites (evaluateAddressMatch's precise/street grading
-// for the listing-address pipeline) depend on meaning "rooftop-confirmed"
-// specifically.
-const GEOCODIO_APPROXIMATE_ADDRESS_ACCURACY_TYPES = new Set(['range_interpolation']);
+// for the LISTING-ADDRESS pipeline, routes/listings.ts) depend on meaning
+// "rooftop-confirmed" specifically -- that pipeline's own precise/street
+// grading is untouched by this set and still treats both of these as
+// 'street'-level only, exactly as before.
+//
+// street_center added 2026-09 (founder-tested real case: "2555 college ave
+// windsor" resolves to street_center and nothing better -- Geocodio simply
+// has no rooftop/interpolated data for that address). Still a genuine
+// street-level match for the address AS TYPED (the street segment Geocodio
+// centered on already matched the requested street), unlike place/state
+// (see GEOCODIO_NO_STREET_ACCURACY_TYPES below), which don't resolve to a
+// street at all.
+const GEOCODIO_APPROXIMATE_ADDRESS_ACCURACY_TYPES = new Set(['range_interpolation', 'street_center']);
 // accuracy_type values that mean "no real street match at all" -- a bare
 // city or province/state centroid, the Geocodio equivalent of Nominatim
 // returning a result with no `address.road`.
@@ -1685,14 +1696,17 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
 // result is used as-is, or rejected outright):
 //   'exact'       -- rooftop / point / nearest_rooftop_match. Presented
 //                    with full confidence.
-//   'approximate' -- range_interpolation. A real, useful match (Geocodio
-//                    estimated a point along the correct street segment
-//                    between two known addresses) -- returned, never
-//                    rejected, but tagged so a caller can show it as
-//                    approximate rather than implying rooftop precision.
-// Everything else (street_center, place, state, or no candidate at all) is
-// rejected outright -- "Location not found" is more honest than a marker
-// silently placed at a road or neighbourhood centroid.
+//   'approximate' -- range_interpolation or street_center. Both are real,
+//                    useful matches for the address AS TYPED (Geocodio
+//                    resolved a specific point on the correct street --
+//                    interpolated between two known addresses, or centered
+//                    on the matched street segment when that's the best
+//                    data available) -- returned, never rejected, but
+//                    tagged so a caller can show it as approximate rather
+//                    than implying rooftop precision.
+// Everything else (place, state -- no street match at all -- or no
+// candidate) is rejected outright -- "Location not found" is more honest
+// than a marker silently placed at a bare city/province centroid.
 //
 // Canada-only: fetchCandidates' free-text mode (unlike its structured mode)
 // has no country= parameter for Geocodio, so the query text itself gets the

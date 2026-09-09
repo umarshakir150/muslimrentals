@@ -1,34 +1,41 @@
 # Current State
 
-Last verified against the repository: 2026-09-06. **`main` and production
-are decoupled again, deliberately.** Production Netlify (deploy
-`6a972323ac04d013c488bc29`, published 2026-09-01 19:16:20Z) is still
-serving commit `49d4bb7` — the multi-feature milestone (Gallery/lightbox,
-Settings/Account, Messaging, Legal/Policy Pages, Forgot Password + Change
-Email). `main` has since advanced through PR #7 (report-a-user/report-a-
-message, merged 2026-09-02, commit `c771c07`), PR #8 (admin Remove/
-Restore Listing, ADMIN-only permanent account deletion, ADMIN-only User
-Search, merged 2026-09-03, commit `83ff9417`), PR #9 (Locate Me,
-privacy-safe approximate listing locations, the universal confirm-
-property-location flow, and a Spiderfy fix, merged 2026-09-05, commit
-`87d23a7`), and PR #10 (fixes the report qualifying-interaction evidence
-contract mismatch from PR #9's Trust & Safety follow-up, merged
-2026-09-06, commit `f8c20c4`) — see `ai/decisions.md` for all four. That
-work is implementation-complete, founder-approved via its own Netlify
-Deploy Previews, merged to `main`, its schema migrations are live on the
+Last verified against the repository: 2026-09-09. **`main` and production
+are decoupled again, deliberately — but this is ONE pending deploy, not
+several.** Production Netlify (deploy `6a972323ac04d013c488bc29`,
+published 2026-09-01 19:16:20Z) is still serving commit `49d4bb7` — the
+multi-feature milestone (Gallery/lightbox, Settings/Account, Messaging,
+Legal/Policy Pages, Forgot Password + Change Email). `main` has since
+advanced through PR #7 (report-a-user/report-a-message, merged
+2026-09-02, commit `c771c07`), PR #8 (admin Remove/Restore Listing,
+ADMIN-only permanent account deletion, ADMIN-only User Search, merged
+2026-09-03, commit `83ff9417`), PR #9 (Locate Me, privacy-safe
+approximate listing locations, the universal confirm-property-location
+flow, and a Spiderfy fix, merged 2026-09-05, commit `87d23a7`), and PR
+#10 (fixes the report qualifying-interaction evidence contract mismatch
+from PR #9's Trust & Safety follow-up, merged 2026-09-06, commit
+`f8c20c4`) — see `ai/decisions.md` for all four. **Re-verified 2026-09-09:
+each of these four PRs' merge commits is a real ancestor of `main`'s
+current head** (`git merge-base --is-ancestor` against each PR's head
+SHA, not just trusting GitHub's "merged" label) — their code, and PR
+#21's fixes once that merges too, are simply what `main` already
+contains; there is no separate deploy tracked per PR. That combined work
+is implementation-complete, founder-approved via its own Netlify Deploy
+Previews, merged to `main`, its schema migrations are live on the
 production Supabase database, and the Render backend is deployed and
 healthy on it — but **the production Netlify frontend has not been
-redeployed to pick it up**, at the founder's explicit request: the
-production deploy is being saved for the end of a larger batch of
-still-in-progress future work. Until that deploy happens, do not describe
+redeployed to pick any of it up**, at the founder's explicit request: one
+single accumulated production deploy is being saved for whatever `main`
+HEAD is the intended final release point, rather than deploying each PR
+as it merges. Until that one deploy happens, do not describe
 report-a-user/message, the admin moderation toolkit, the location/privacy
 work, or the qualifying-interaction evidence below as "in production" —
 they are real and live in `main`/Render, not yet on `muslimrentals.ca`.
 **PR #21** (Browse place/address search + radius, see its own section
-below) is further behind still — open against `main`, not yet merged at
-all, though its backend is already live and founder-QA-passed on the
-shared Render-tracked branch (which powers PR #21's own Deploy Preview,
-not production).
+below) is QA-cleared, Security-approved, and merge-ready as of
+2026-09-09, but not yet merged — once the founder merges it, its code
+becomes exactly the same kind of "on `main`, awaiting the one accumulated
+deploy" work as PR #7–#10 above, not a new separate deploy item either.
 Update this file whenever the picture materially changes — don't let it
 drift into fiction.
 
@@ -86,15 +93,27 @@ drift into fiction.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 
-## PR #21 — Browse place/address search + radius (open, not merged)
+## PR #21 — Browse place/address search + radius (QA-cleared, merge-ready, not yet merged)
 
 **Status (2026-09-09): implementation-complete, founder browser-QA-passed
-on Deploy Preview #21, backend already live and verified on the shared
-Render-tracked branch — but deliberately not yet merged to `main`.** See
-`ai/decisions.md`'s 2026-09-08/09 entry for the full round-by-round history
-(a release-blocking Render outage and diagnostic rollback midway through,
-root-caused as unconfirmed/likely infrastructure rather than this PR's own
-code; the search-ranking and geocoding work itself). Current architecture:
+on Deploy Preview #21, formally QA-cleared and Security-approved, backend
+already live and verified on the shared Render-tracked branch — merge-ready,
+but deliberately not yet merged to `main` pending the founder's explicit
+merge approval.** Two rounds of independent QA re-review each caught a
+real, narrow gap in the address-shaped-query fallback logic added late in
+this PR (a numbered-POI query like "24 Hour Fitness" being misrouted to
+Geocodio with no fallback, then a follow-up fix that fell back to
+Nominatim too broadly for a Geocodio-rejected coarse match) — both were
+fixed with the smallest possible change and re-verified by a third,
+independent QA pass, which also adversarially reverted the fix in a
+scratch edit to confirm the regression tests actually catch the bug
+before reporting PASS. Security separately reviewed and approved the
+whole feature with no findings. See `ai/decisions.md`'s 2026-09-08/09
+entry for the full round-by-round history (a release-blocking Render
+outage and diagnostic rollback midway through, root-caused as
+unconfirmed/likely infrastructure rather than this PR's own code; the
+search-ranking and geocoding work itself; both QA-fix rounds). Current
+architecture:
 
 - **Autocomplete/place suggestions** (`GET /geocode/suggestions`,
   `searchPlaces()`): unchanged from the original design — always Nominatim
@@ -116,7 +135,7 @@ code; the search-ranking and geocoding work itself). Current architecture:
   grading is untouched by any of this.
 - **Radius**: 0.5km–10km (was 1–10km), inclusive distance filtering
   unchanged. Mini-map preview unchanged.
-- 578 backend / 388 frontend tests passing, `tsc --noEmit` and production
+- 588 backend / 388 frontend tests passing, `tsc --noEmit` and production
   build clean on both stacks, at the PR's current head.
 
 **Outstanding before merge — not a code defect, a policy/ToS constraint:**
@@ -133,13 +152,14 @@ in this PR. Founder has not yet decided whether/when to migrate off
 Nominatim for this feature.
 
 **Not merged, not deployed to production:** PR #21 remains open; `main`
-and production Netlify are untouched by it. Production deploy stays
-pinned at the founder's explicit request, batched with the rest of the
-accumulated `main`-vs-production gap already described at the top of this
-file.
+and production Netlify are untouched by it. Merging is the founder's own
+explicit decision to make (not automatic on a passing review), and once
+merged this becomes ordinary `main` content awaiting the same single
+accumulated production deploy described at the top of this file — not a
+new, separate pending-deploy item of its own.
 
 **Revisit when:** the founder decides on the Nominatim migration question
-and/or is ready to merge PR #21.
+and/or explicitly approves merging PR #21.
 
 ## Testing status
 

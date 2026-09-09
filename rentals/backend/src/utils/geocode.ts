@@ -1721,12 +1721,51 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
 // accuracy score, formatted address, lat/lng, and resolved country -- all
 // data Geocodio already returns for the address as typed, never anything
 // beyond that.
-async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> {
+//
+// Returns a DISCRIMINATED result rather than collapsing every failure into
+// a single `null`, because resolvePlace() (below) needs to tell two very
+// different failures apart:
+//   - 'no_candidate'      -- Geocodio has NOTHING for this query at all.
+//                            This is the expected outcome for a query that
+//                            only LOOKS address-shaped (see
+//                            looksLikeFullAddress) but is actually a POI/
+//                            business name ("24 Hour Fitness", "7 Eleven
+//                            Windsor") -- Geocodio is a pure address
+//                            geocoder with no POI data, so it correctly
+//                            finds nothing, and resolvePlace() should still
+//                            give that query a fair shot via Nominatim
+//                            rather than dead-ending here.
+//   - 'rejected_imprecise' -- Geocodio DID find a candidate but this
+//                            function is deliberately refusing to present
+//                            it: either it resolved outside Canada, or it's
+//                            only place/state-level (no actual street
+//                            match). This is a genuine, deliberate "this
+//                            address doesn't check out" verdict about a
+//                            query that DOES look like a real address --
+//                            falling back to a raw Nominatim search of the
+//                            same text here would silently reintroduce the
+//                            exact failure mode this function exists to
+//                            prevent (a marker placed at a bare city/
+//                            province-adjacent point with no precision
+//                            indication). resolvePlace() must treat this as
+//                            a hard "Location not found", never a
+//                            Nominatim-rescue opportunity.
+//   - 'resolved'           -- a candidate was accepted, exact or
+//                            approximate; see the tiers below.
+type FullAddressResolution =
+  | { status: 'resolved'; result: GeocodeResult }
+  | { status: 'no_candidate' }
+  | { status: 'rejected_imprecise' };
+
+async function geocodeFullAddress(query: string): Promise<FullAddressResolution> {
   const q = [query, 'Canada'].join(', ');
   const description = `q="${q}" (Browse manual full-address search, free-text)`;
 
   const [top] = await fetchCandidates({ kind: 'freeText', q }, description);
-  if (!top) return null;
+  if (!top) {
+    logger.warn(`Full-address resolve found NO candidate at all for [${description}] -- may be a POI/business name rather than a real address; falling back to place search.`);
+    return { status: 'no_candidate' };
+  }
 
   const addr = top.address ?? {};
   const sanitizedFields = () =>
@@ -1736,7 +1775,7 @@ async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> 
 
   if (addr.country_code && addr.country_code !== 'ca') {
     logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate resolved outside Canada (${sanitizedFields()}).`);
-    return null;
+    return { status: 'rejected_imprecise' };
   }
 
   const accuracyType = top.type;
@@ -1745,14 +1784,20 @@ async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> 
 
   if (!addr.road || (!isExact && !isApproximate)) {
     logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate is not address-level precision (${sanitizedFields()}).`);
-    return null;
+    return { status: 'rejected_imprecise' };
   }
 
   const result = toGeocodeResult(top, description, isExact ? 'precise' : 'street');
-  if (!result) return null;
+  if (!result) {
+    // Geocodio returned a candidate but with unusable (non-numeric)
+    // coordinates -- an unusable candidate is not the same as a genuine
+    // "this isn't a real address" verdict, so this is treated the same as
+    // "no usable candidate" rather than a precision rejection.
+    return { status: 'no_candidate' };
+  }
 
   logger.info(`Full-address resolve ACCEPTED (${isExact ? 'exact' : 'approximate'}) for [${description}]: ${sanitizedFields()}.`);
-  return { ...result, accuracyType, precision: isExact ? 'exact' : 'approximate' };
+  return { status: 'resolved', result: { ...result, accuracyType, precision: isExact ? 'exact' : 'approximate' } };
 }
 
 // ─── Manual "search my complete typed text" resolve ────────────────────────
@@ -1778,14 +1823,31 @@ async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> 
 // text) -- it also matches plenty of real business/POI names that happen to
 // start with a number ("24 Hour Fitness", "7-Eleven Windsor", "3 Brewers").
 // Geocodio is a pure address geocoder with no POI data, so it legitimately
-// finds nothing for those -- rather than dead-ending on "Location not
-// found" for a query Nominatim could resolve just fine, fall back to the
-// same searchPlaces() path every non-address-shaped query already uses.
-// A genuine address that Geocodio DOES resolve never reaches this fallback.
+// finds NO CANDIDATE AT ALL for those -- rather than dead-ending on
+// "Location not found" for a query Nominatim could resolve just fine, fall
+// back to the same searchPlaces() path every non-address-shaped query
+// already uses.
+//
+// Critically, this fallback triggers ONLY on geocodeFullAddress's
+// 'no_candidate' status, never on 'rejected_imprecise' -- a query that DOES
+// look like a real address and that Geocodio actively resolved but refused
+// (place/state-only match, or resolved outside Canada) must stay a hard
+// "Location not found", not get a second, un-gated try against Nominatim's
+// raw text search. That distinction is exactly the fix for a real QA
+// finding: an earlier version of this fallback collapsed both failure
+// reasons into one and could silently return an imprecise Nominatim match
+// for an address Geocodio had deliberately rejected as too coarse -- see
+// geocodeFullAddress's own doc comment for the full reasoning.
+//
+// A genuine address that Geocodio DOES resolve (exact or approximate)
+// never reaches this fallback at all.
 export async function resolvePlace(query: string): Promise<GeocodeResult | null> {
   if (looksLikeFullAddress(query)) {
-    const addressResult = await geocodeFullAddress(query);
-    if (addressResult) return addressResult;
+    const addressResolution = await geocodeFullAddress(query);
+    if (addressResolution.status === 'resolved') return addressResolution.result;
+    if (addressResolution.status === 'rejected_imprecise') return null;
+    // status === 'no_candidate' -- fall through to the Nominatim place/POI
+    // search below, the same path every non-address-shaped query uses.
   }
   const [top] = await searchPlaces(query);
   return top ? { lat: top.lat, lng: top.lng } : null;

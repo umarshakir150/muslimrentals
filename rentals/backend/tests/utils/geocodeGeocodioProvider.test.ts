@@ -200,39 +200,54 @@ describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () =>
     });
   });
 
-  it('6. rejects a bare place/city-level match -- no street resolved at all', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
-      formatted_address: 'Windsor, ON, Canada',
-      location: { lat: 42.3, lng: -83.03 },
-      accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
-    }]));
+  it('6. rejects a bare place/city-level match -- no street resolved at all, and never tries a Nominatim rescue (a real Nominatim response is mocked here specifically to prove the rejection is not just an artifact of a same-shaped mock)', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
+        formatted_address: 'Windsor, ON, Canada',
+        location: { lat: 42.3, lng: -83.03 },
+        accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
+      }]),
+      nominatimPoiResponse(),
+    );
 
     expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
   });
 
-  it('7. rejects a bare state/province-level match -- no street resolved at all', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { state: 'ON', country: 'CA' },
-      formatted_address: 'Ontario, Canada',
-      location: { lat: 51.25, lng: -85.32 },
-      accuracy: 0.3, accuracy_type: 'state', source: 'Geocodio',
-    }]));
+  it('7. rejects a bare state/province-level match -- no street resolved at all, and never tries a Nominatim rescue', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { state: 'ON', country: 'CA' },
+        formatted_address: 'Ontario, Canada',
+        location: { lat: 51.25, lng: -85.32 },
+        accuracy: 0.3, accuracy_type: 'state', source: 'Geocodio',
+      }]),
+      nominatimPoiResponse(),
+    );
 
     expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
   });
 
-  it('8. rejects a result that resolves outside Canada, even when rooftop-precise', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
-      formatted_address: '100 Main St, Detroit, MI 48226',
-      location: { lat: 42.33, lng: -83.04 },
-      accuracy: 1, accuracy_type: 'rooftop', source: 'Geocodio',
-    }]));
+  it('8. rejects a result that resolves outside Canada, even when rooftop-precise, and never tries a Nominatim rescue', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
+        formatted_address: '100 Main St, Detroit, MI 48226',
+        location: { lat: 42.33, lng: -83.04 },
+        accuracy: 1, accuracy_type: 'rooftop', source: 'Geocodio',
+      }]),
+      nominatimPoiResponse(),
+    );
 
     const result = await resolvePlace('100 Main St');
 
     expect(result).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
   });
 
   // Verifies the exact real-world case reported after this fix: the query
@@ -406,6 +421,117 @@ describe('resolvePlace Nominatim fallback for false-positive address-shaped quer
     expect(result).toEqual({ lat: 43.5789, lng: -79.6583, confidence: 'precise', accuracyType: 'rooftop', precision: 'exact' });
     expect(geocodioCalls()).toBe(1);
     expect(nominatimCalls()).toBe(0);
+  });
+});
+
+// QA re-review finding (2026-09): the fallback above originally triggered on
+// ANY null/falsy return from geocodeFullAddress(), which conflated "Geocodio
+// found no candidate at all" (the intended POI-name fallback case) with
+// "Geocodio found a candidate but rejected it as place/state-level or
+// non-Canadian" -- the latter previously produced an honest, immediate 404,
+// and collapsing it into the same fallback path could silently return an
+// imprecise Nominatim match for an address Geocodio had deliberately
+// rejected. geocodeFullAddress() now returns a discriminated
+// FullAddressResolution ('resolved' | 'no_candidate' | 'rejected_imprecise')
+// so resolvePlace() can fall back ONLY on 'no_candidate'. This block proves
+// that distinction directly, covering every scenario named in the fix.
+describe('resolvePlace: no_candidate vs rejected_imprecise fallback gating (QA re-review fix)', () => {
+  it('1. no Geocodio candidates at all -> falls back to Nominatim', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([]),
+      nominatimPoiResponse({ display_name: '3 Brewers, Ouellette Avenue, Windsor, Ontario, Canada', address: { road: 'Ouellette Avenue', city: 'Windsor', state: 'Ontario', country_code: 'ca' } }),
+    );
+
+    const result = await resolvePlace('3 Brewers Windsor');
+
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(1);
+    expect(result).toEqual({ lat: 42.2917, lng: -83.0398 });
+  });
+
+  it('2. Geocodio returns a place-level (city-only) result -> NO fallback, "Location not found"', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
+        formatted_address: 'Windsor, ON, Canada',
+        location: { lat: 42.3, lng: -83.03 },
+        accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
+      }]),
+      // A real, resolvable Nominatim response -- if the fallback incorrectly
+      // fired for a place-level rejection, this mock would let it "succeed"
+      // and the test would catch the regression.
+      nominatimPoiResponse(),
+    );
+
+    const result = await resolvePlace('452 Some Unmapped Street Windsor');
+
+    expect(result).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
+  });
+
+  it('3. Geocodio returns a state-level (province-only) result -> NO fallback, "Location not found"', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { state: 'ON', country: 'CA' },
+        formatted_address: 'Ontario, Canada',
+        location: { lat: 51.25, lng: -85.32 },
+        accuracy: 0.3, accuracy_type: 'state', source: 'Geocodio',
+      }]),
+      nominatimPoiResponse(),
+    );
+
+    const result = await resolvePlace('452 Some Unmapped Street Windsor');
+
+    expect(result).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
+  });
+
+  it('4. a valid precise address (rooftop) resolves via Geocodio -> no fallback', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([rooftopResult()]),
+      nominatimPoiResponse(),
+    );
+
+    const result = await resolvePlace('1051 Cedarglen Gate');
+
+    expect(result).toEqual({ lat: 43.5789, lng: -79.6583, confidence: 'precise', accuracyType: 'rooftop', precision: 'exact' });
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
+  });
+
+  it('5. a valid approximate address (street_center) resolves via Geocodio -> no fallback', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([{
+        address_components: { number: '2555', street: 'College', suffix: 'Ave', formatted_street: 'College Ave', city: 'Windsor', state: 'ON', zip: 'N9B', country: 'CA' },
+        formatted_address: '2555 College Ave, Windsor, ON N9B, Canada',
+        location: { lat: 42.3009, lng: -83.0578 },
+        accuracy: 0.8, accuracy_type: 'street_center', source: 'Geocodio',
+      }]),
+      nominatimPoiResponse(),
+    );
+
+    const result = await resolvePlace('2555 college ave windsor');
+
+    expect(result).toEqual({
+      lat: 42.3009, lng: -83.0578, confidence: 'street', accuracyType: 'street_center', precision: 'approximate',
+    });
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(0);
+  });
+
+  it('6. an invalid query with no candidates from either provider -> "Location not found"', async () => {
+    const { geocodioCalls, nominatimCalls } = mockFetchByProvider(
+      geocodioForwardResponse([]),
+      { ok: true, status: 200, json: async () => [] },
+    );
+
+    const result = await resolvePlace('888888 Absolutely Nowhere Lane');
+
+    expect(result).toBeNull();
+    expect(geocodioCalls()).toBe(1);
+    expect(nominatimCalls()).toBe(1);
   });
 });
 

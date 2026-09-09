@@ -75,6 +75,12 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
   // explicit requirement that a manual search never blocks/clears on
   // failure.
   const [directSearchState, setDirectSearchState] = useState<'idle' | 'searching' | 'not_found'>('idle');
+  // Only ever set true by a manual-search address resolve whose Geocodio
+  // result was accepted but not rooftop-confirmed (accuracyType
+  // 'range_interpolation', see geocodeApi.resolve's own doc comment) --
+  // never presented as if it were exact. Reset alongside resolvedLabel
+  // wherever that's reset, since both describe the same resolved point.
+  const [isApproximateLocation, setIsApproximateLocation] = useState(false);
   const [locating, setLocating] = useState(false);
   const { toast } = useToast();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,6 +108,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     const last = lastSetRef.current;
     if (!last || last.lat !== filters.lat || last.lng !== filters.lng) {
       setResolvedLabel(null);
+      setIsApproximateLocation(false);
     }
   }, [filters.lat, filters.lng]);
 
@@ -175,11 +182,12 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setDirectSearchState('searching');
     try {
       const res = await geocodeApi.resolve(q);
-      const { lat, lng } = res.data;
+      const { lat, lng, precision } = res.data;
       lastSetRef.current = { lat, lng };
       setFilters({ lat, lng, radiusKm: filters.radiusKm || 5 });
       setMapCenter([lat, lng]);
       setResolvedLabel(q);
+      setIsApproximateLocation(precision === 'approximate');
       setSuggestions([]);
       setSearchedEmpty(false);
       setDirectSearchState('idle');
@@ -222,6 +230,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setFilters({ lat: suggestion.lat, lng: suggestion.lng, radiusKm: filters.radiusKm || 5 });
     setMapCenter([suggestion.lat, suggestion.lng]);
     setResolvedLabel(suggestion.label);
+    setIsApproximateLocation(false);
     setQuery(suggestion.label);
     setSuggestions([]);
     setSearchedEmpty(false);
@@ -264,6 +273,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
       setDirectSearchState('idle');
       setOpen(false);
       setResolvedLabel('your current location');
+      setIsApproximateLocation(false);
     } catch (err: any) {
       const reason: GeolocationFailureReason = err?.reason ?? 'unknown';
       toast({ variant: 'destructive', title: GEOLOCATION_ERROR_TITLE[reason], description: err?.message });
@@ -283,6 +293,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
     setDirectSearchState('idle');
     setOpen(false);
     setResolvedLabel(null);
+    setIsApproximateLocation(false);
   }
 
   function clearQueryText() {
@@ -398,6 +409,11 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           <div className="flex items-center justify-between mb-1.5">
             <p className="text-xs text-muted">
               Showing listings near <span className="font-semibold text-ink">{resolvedLabel || 'the selected location'}</span>
+              {isApproximateLocation && (
+                <span className="ml-1.5 text-amber-600" title="This address wasn't confirmed to rooftop precision -- the marker is an estimate along the correct street.">
+                  (Approximate location)
+                </span>
+              )}
             </p>
             <button
               type="button"

@@ -309,15 +309,25 @@ export const geocodeApi = {
   suggestions: (q: string) => api.get<{ data: PlaceSuggestion[] }>(`/geocode/suggestions?q=${encodeURIComponent(q)}`),
   // Manual "search my complete typed text" resolve, backing
   // LocationRadiusSearch.tsx's Enter/Search action -- autocomplete
-  // suggestions are assistance, never a required gate. Distinct from
-  // `search` above: that one drives ConfirmLocationMap's listing-creation
-  // flow via geocodeAddress (structured address geocoding, switchable
-  // provider); this one resolves through the exact same Nominatim-only,
-  // Canada-only, locally-ranked pipeline that produces `suggestions`
-  // above, so a manual search always finds what the dropdown itself would
-  // have ranked #1 for that text. See the backend's resolvePlace() for why
-  // reusing the address-oriented endpoint wasn't safe to do here.
-  resolve: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode/resolve?q=${encodeURIComponent(q)}`),
+  // suggestions are assistance, never a required gate. A full street
+  // address resolves via Geocodio's address geocoding (same account/key as
+  // ConfirmLocationMap's listing-creation `search` above); a POI/building/
+  // business/school/landmark/neighbourhood/city query resolves via the
+  // same Nominatim-only, locally-ranked pipeline that produces
+  // `suggestions` above. See the backend's resolvePlace()/
+  // geocodeFullAddress() for the full split and why it exists.
+  //
+  // `precision`/`accuracyType` are only ever present for the Geocodio
+  // (address) path -- 'exact' (rooftop-confirmed) or 'approximate'
+  // (interpolated along the correct street segment, still a real,
+  // useful match, just not confirmed rooftop-precise). Absent entirely
+  // for a POI/place resolve, which has no equivalent concept.
+  resolve: (q: string) => api.get<{ data: {
+    lat: number;
+    lng: number;
+    precision?: 'exact' | 'approximate';
+    accuracyType?: string;
+  } }>(`/geocode/resolve?q=${encodeURIComponent(q)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

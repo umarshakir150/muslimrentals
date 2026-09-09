@@ -681,6 +681,30 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
       expect(JSON.parse(stub.dataset.center!)).toEqual([42.31, -83.02]);
     });
 
+    it('shows an "Approximate location" note for a range-interpolated address resolve, without rejecting the address', async () => {
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 42.29, lng: -83.05, precision: 'approximate', accuracyType: 'range_interpolation' } });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      fireEvent.change(input, { target: { value: '732 Mill St' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      await waitFor(() => expect(useFilterStore.getState().filters.lat).toBe(42.29));
+      expect(screen.getByText(/approximate location/i)).toBeInTheDocument();
+    });
+
+    it('does not show the "Approximate location" note for an exact (rooftop) address resolve', async () => {
+      geocodeResolveMock.mockResolvedValue({ data: { lat: 42.31, lng: -83.02, precision: 'exact', accuracyType: 'rooftop' } });
+      render(<LocationRadiusSearch />);
+      const input = screen.getByLabelText('Search a location');
+
+      fireEvent.change(input, { target: { value: '1051 Cedarglen Gate' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      await waitFor(() => expect(useFilterStore.getState().filters.lat).toBe(42.31));
+      expect(screen.queryByText(/approximate location/i)).not.toBeInTheDocument();
+    });
+
     it('an unresolved search shows a clear "not found" message and leaves the typed text intact so the renter can edit it', async () => {
       const notFound = Object.assign(new Error('Could not find that location.'), { status: 404 });
       geocodeResolveMock.mockRejectedValue(notFound);

@@ -387,12 +387,23 @@ describe('listingQuerySchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects a radiusKm below the 1km minimum', () => {
+  it('rejects a radiusKm below the 0.5km minimum', () => {
     const result = listingQuerySchema.safeParse({ radiusKm: '0' });
     expect(result.success).toBe(false);
   });
 
-  it('rejects a radiusKm above the new 10km cap (location-search slider is 1-10km)', () => {
+  it('rejects a radiusKm just below the 0.5km minimum (0.4)', () => {
+    const result = listingQuerySchema.safeParse({ radiusKm: '0.4' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a radiusKm at exactly the 0.5km minimum', () => {
+    const result = listingQuerySchema.safeParse({ radiusKm: '0.5' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.radiusKm).toBe(0.5);
+  });
+
+  it('rejects a radiusKm above the 10km cap (location-search slider is 0.5-10km)', () => {
     const result = listingQuerySchema.safeParse({ radiusKm: '11' });
     expect(result.success).toBe(false);
   });

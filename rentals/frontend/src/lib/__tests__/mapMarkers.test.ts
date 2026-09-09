@@ -10,6 +10,9 @@ import {
   formatMarkerLocationLabel,
   formatApproxRadiusLabel,
   APPROX_LOCATION_CIRCLE_STYLE,
+  SEARCH_RADIUS_CIRCLE_STYLE,
+  SEARCH_LOCATION_ICON_SIZE,
+  buildSearchLocationMarkerHtml,
 } from '@/lib/mapMarkers';
 
 const MIN_TOUCH_TARGET_PX = 44;
@@ -96,5 +99,26 @@ describe('APPROX_LOCATION_CIRCLE_STYLE', () => {
   it('is a subtle, dashed treatment distinct from a solid/opaque fill', () => {
     expect(APPROX_LOCATION_CIRCLE_STYLE.dashArray).toBeTruthy();
     expect(APPROX_LOCATION_CIRCLE_STYLE.fillOpacity).toBeLessThan(0.2);
+  });
+});
+
+describe('buildSearchLocationMarkerHtml (searched-location marker)', () => {
+  it('does not reuse the listing-marker/price-bubble classes, so it can never look like a listing', () => {
+    const html = buildSearchLocationMarkerHtml();
+    expect(html).not.toContain('rental-marker');
+  });
+
+  it('does not reuse the "you are here" marker classes, so it can never be mistaken for the user\'s own GPS location', () => {
+    const html = buildSearchLocationMarkerHtml();
+    expect(html).not.toContain('user-location-marker');
+  });
+
+  it('is accessible: labelled distinctly as the searched location', () => {
+    const html = buildSearchLocationMarkerHtml();
+    expect(html).toContain('Searched location');
+  });
+
+  it('shares its color with the search-radius circle, visually pairing the marker and the circle as one "your search" concept', () => {
+    expect(buildSearchLocationMarkerHtml()).toContain(SEARCH_RADIUS_CIRCLE_STYLE.color);
   });
 });

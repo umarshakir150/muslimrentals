@@ -106,11 +106,15 @@ export const listingQuerySchema = z.object({
   maxPrice:  z.coerce.number().min(0).max(50000).optional(),
   lat:       z.coerce.number().min(-90).max(90).optional(),
   lng:       z.coerce.number().min(-180).max(180).optional(),
-  // 1-10km matches the renter-facing "search a location + radius" feature's
-  // slider exactly (see LocationRadiusSearch.tsx) -- deliberately no wider,
-  // now that the privacy-approximate location model (~200m jitter) makes a
-  // very large radius meaningless for neighbourhood-level search anyway.
-  radiusKm:  z.coerce.number().min(1).max(10).optional(),
+  // 0.5-10km matches the renter-facing "search a location + radius"
+  // feature's slider exactly (see LocationRadiusSearch.tsx) -- lowered from
+  // a 1km floor to 0.5km (2026-09-09, founder-requested) so a renter can
+  // search a tight, walkable radius around a specific place; the 10km
+  // ceiling is deliberately unchanged, now that the privacy-approximate
+  // location model (~200m jitter) makes a very large radius meaningless for
+  // neighbourhood-level search anyway. No `.int()` constraint -- a
+  // fractional km value like 0.5 must remain valid.
+  radiusKm:  z.coerce.number().min(0.5).max(10).optional(),
   page:      z.coerce.number().int().min(1).max(1000).default(1),
   // Capped at 200, not 50 -- the map view (frontend src/app/map/page.tsx)
   // legitimately requests limit=200 to plot every active listing at once.

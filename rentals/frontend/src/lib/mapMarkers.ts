@@ -108,3 +108,26 @@ export const SEARCH_RADIUS_CIRCLE_STYLE = {
   fillOpacity: 0.06,
   weight: 1.5,
 } as const;
+
+// ─── Location-radius search marker ─────────────────────────────────────────
+// Marks the searched point ITSELF, distinct from the circle above (which
+// shows the searched AREA) -- the founder-flagged gap: a circle alone
+// doesn't clearly answer "where exactly did I search", especially once
+// several listing markers also sit inside it. Same blue as
+// SEARCH_RADIUS_CIRCLE_STYLE (visually pairs the two as one "your search"
+// concept) but a distinct pin shape from both a listing's price pill and
+// the "you are here" dot, so all three read as different things at a
+// glance: this is a place I searched for, not a rental, and not my current
+// GPS location.
+export const SEARCH_LOCATION_ICON_SIZE: [number, number] = [30, 30];
+export const SEARCH_LOCATION_ICON_ANCHOR: [number, number] = [15, 30];
+
+export function buildSearchLocationMarkerHtml(): string {
+  return `<div class="search-location-marker" role="img" aria-label="Searched location">
+    <svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+      <path d="M15 2c-6.075 0-11 4.925-11 11 0 8.25 11 15 11 15s11-6.75 11-15c0-6.075-4.925-11-11-11z"
+        fill="#2563eb" stroke="white" stroke-width="2"/>
+      <circle cx="15" cy="13" r="4" fill="white"/>
+    </svg>
+  </div>`;
+}

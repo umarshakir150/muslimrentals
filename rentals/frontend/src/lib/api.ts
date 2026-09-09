@@ -291,8 +291,43 @@ export const citiesApi = {
 // result to a listing. The search text itself is never sent anywhere else
 // or persisted; only the resolved lat/lng is used, client-side, to center
 // the map and filter listings.
+export interface PlaceSuggestion {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
 export const geocodeApi = {
   search: (q: string) => api.get<{ data: { lat: number; lng: number } }>(`/geocode?q=${encodeURIComponent(q)}`),
+  // Multi-result autocomplete backing LocationRadiusSearch.tsx's as-you-type
+  // dropdown -- distinct from `search` above (single result, used by
+  // ConfirmLocationMap's unrelated listing-creation flow, left untouched).
+  // Always resolves place/POI names (e.g. "Toldo Lancer Centre"), not just
+  // addresses -- see the backend's searchPlaces() for why that specifically
+  // requires always querying Nominatim regardless of which provider is
+  // configured for listing-address geocoding.
+  suggestions: (q: string) => api.get<{ data: PlaceSuggestion[] }>(`/geocode/suggestions?q=${encodeURIComponent(q)}`),
+  // Manual "search my complete typed text" resolve, backing
+  // LocationRadiusSearch.tsx's Enter/Search action -- autocomplete
+  // suggestions are assistance, never a required gate. A full street
+  // address resolves via Geocodio's address geocoding (same account/key as
+  // ConfirmLocationMap's listing-creation `search` above); a POI/building/
+  // business/school/landmark/neighbourhood/city query resolves via the
+  // same Nominatim-only, locally-ranked pipeline that produces
+  // `suggestions` above. See the backend's resolvePlace()/
+  // geocodeFullAddress() for the full split and why it exists.
+  //
+  // `precision`/`accuracyType` are only ever present for the Geocodio
+  // (address) path -- 'exact' (rooftop-confirmed) or 'approximate'
+  // (interpolated along the correct street segment, still a real,
+  // useful match, just not confirmed rooftop-precise). Absent entirely
+  // for a POI/place resolve, which has no equivalent concept.
+  resolve: (q: string) => api.get<{ data: {
+    lat: number;
+    lng: number;
+    precision?: 'exact' | 'approximate';
+    accuracyType?: string;
+  } }>(`/geocode/resolve?q=${encodeURIComponent(q)}`),
 };
 
 // ─── Users API ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geocodeAddress, verifyConfirmedPinLocation, GeocodingUnavailableError } from '../../src/utils/geocode';
+import { geocodeAddress, verifyConfirmedPinLocation, searchPlaces, resolvePlace, GeocodingUnavailableError } from '../../src/utils/geocode';
 
 const originalFetch = globalThis.fetch;
 
@@ -651,5 +651,974 @@ describe('verifyConfirmedPinLocation', () => {
 
     expect(result.reason).not.toContain('43.999999');
     expect(result.reason).not.toContain('-79.888888');
+  });
+});
+
+// Coverage for the Browse place/POI-search autocomplete's backing function.
+// The central architectural claim under test: Geocodio has no general
+// place/POI search product (it's a structured address geocoder), so this
+// function must ALWAYS resolve via Nominatim regardless of
+// GEOCODING_PROVIDER -- these tests prove that by setting
+// GEOCODING_PROVIDER=geocodio and asserting the actual request still hits
+// Nominatim's own domain, never api.geocod.io.
+describe('searchPlaces', () => {
+  const originalProvider = process.env.GEOCODING_PROVIDER;
+
+  afterEach(() => {
+    if (originalProvider === undefined) delete process.env.GEOCODING_PROVIDER;
+    else process.env.GEOCODING_PROVIDER = originalProvider;
+  });
+
+  it('resolves a named POI (Toldo Lancer Centre, University of Windsor) to a labeled suggestion -- mocked, no live network call', async () => {
+    // A realistic Nominatim jsonv2 shape for a named campus building --
+    // OSM tags this kind of POI with amenity=university/building=yes plus a
+    // name, which Nominatim's general search (unlike Geocodio's address-only
+    // geocoder) can match on directly.
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{
+        lat: '42.30569', lon: '-83.06437',
+        display_name: 'Toldo Lancer Centre, Sunset Avenue, Windsor, Ontario, N9B 3P4, Canada',
+        address: { road: 'Sunset Avenue', city: 'Windsor', state: 'Ontario', postcode: 'N9B 3P4' },
+      }],
+    }));
+
+    const results = await searchPlaces('Toldo Lancer Centre');
+
+    // The label carries the POI's actual name (from display_name's most
+    // specific segment), not just the street it happens to be on --
+    // "Sunset Avenue, Windsor, Ontario" alone would be accurate but useless
+    // for confirming this is the actual building that was searched for.
+    expect(results).toEqual([
+      { label: 'Toldo Lancer Centre, Windsor, Ontario', lat: 42.30569, lng: -83.06437 },
+    ]);
+  });
+
+  it('labels a plain address search with the address itself, not a redundant duplicate of it', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{
+        lat: '43.6532', lon: '-79.3832',
+        display_name: '732 Mill Street, Windsor, Ontario, N9C 2S2, Canada',
+        address: { house_number: '732', road: 'Mill Street', city: 'Windsor', state: 'Ontario', postcode: 'N9C 2S2' },
+      }],
+    }));
+
+    const results = await searchPlaces('732 Mill Street, Windsor');
+
+    expect(results).toEqual([
+      { label: '732 Mill Street, Windsor, Ontario', lat: 43.6532, lng: -79.3832 },
+    ]);
+  });
+
+  it('always queries Nominatim, never Geocodio, even when GEOCODING_PROVIDER=geocodio is set', async () => {
+    process.env.GEOCODING_PROVIDER = 'geocodio';
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere, Ontario' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(capturedUrl).toContain('nominatim.openstreetmap.org');
+    expect(capturedUrl).not.toContain('geocod.io');
+    // No Geocodio API key ever appears in the outgoing request -- there is
+    // no code path here that could read/attach one, but assert the actual
+    // request anyway rather than trusting that by inspection alone.
+    expect(capturedUrl).not.toContain('api_key');
+  });
+
+  it('returns multiple candidates (not just the top one) for a genuinely ambiguous query', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { lat: '42.3', lon: '-83.0', address: { road: 'Main Street', city: 'Windsor', state: 'Ontario' } },
+        { lat: '43.6', lon: '-79.4', address: { road: 'Main Street', city: 'Toronto', state: 'Ontario' } },
+      ],
+    }));
+
+    const results = await searchPlaces('Main Street');
+
+    expect(results).toHaveLength(2);
+    expect(results[0].label).toContain('Windsor');
+    expect(results[1].label).toContain('Toronto');
+  });
+
+  it('returns an empty array (never throws) when nothing matches', async () => {
+    mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [] }));
+
+    const results = await searchPlaces('Nonexistent Fake Place 99999');
+    expect(results).toEqual([]);
+  });
+
+  it('falls back to display_name when the address breakdown has nothing usable', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Some Bare Result' }],
+    }));
+
+    const results = await searchPlaces('Some Bare Result');
+    expect(results).toEqual([{ label: 'Some Bare Result', lat: 42.3, lng: -83.0 }]);
+  });
+
+  it('drops a candidate with a non-numeric coordinate rather than returning a broken suggestion', async () => {
+    mockFetchOnce(() => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { lat: 'not-a-number', lon: '-83.0', display_name: 'Broken Result' },
+        { lat: '42.3', lon: '-83.0', display_name: 'Good Result' },
+      ],
+    }));
+
+    const results = await searchPlaces('Something');
+    expect(results).toEqual([{ label: 'Good Result', lat: 42.3, lng: -83.0 }]);
+  });
+
+  it('throws GeocodingUnavailableError (never returns an empty array silently) when the provider is rate-limited', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 429, json: async () => ({}) }));
+
+    await expect(searchPlaces('Toldo Lancer Centre')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  it('scopes the primary search to Canada via countrycodes', async () => {
+    const capturedUrls: string[] = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrls.push(String(url));
+      return { ok: true, status: 200, json: async () => [] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(new URL(capturedUrls[0]).searchParams.get('countrycodes')).toBe('ca');
+  });
+
+  it('sends the query text as typed, with no manual ", Canada" appended', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Toldo Lancer Centre');
+
+    expect(new URL(capturedUrl).searchParams.get('q')).toBe('Toldo Lancer Centre');
+  });
+
+  it('explicitly requests both the address and poi layers, never relying on an undocumented default', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Some Gym');
+
+    expect(new URL(capturedUrl).searchParams.get('layer')).toBe('address,poi');
+  });
+
+  it('requests namedetails=1 so a matched alias name can be surfaced in the label', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{ lat: '42.3', lon: '-83.0', display_name: 'Somewhere' }] } as Response;
+    }) as unknown as typeof fetch;
+
+    await searchPlaces('Some Place');
+
+    expect(new URL(capturedUrl).searchParams.get('namedetails')).toBe('1');
+  });
+
+  // Nominatim's search already matches a query against ANY name tag an
+  // element carries (not just its primary `name`) -- namedetails=1 is what
+  // lets this app SEE which one matched, so a renamed/aliased place can be
+  // labeled with the name the searcher actually typed rather than whichever
+  // name happens to be primary on the map. This does NOT change which
+  // candidates match (Nominatim's index decides that, unaffected by
+  // namedetails) -- only how an already-returned match is labeled. Uses a
+  // synthetic renamed-arena fixture, not "Toldo Lancer Centre" itself, to
+  // prove the logic generalizes rather than being hardcoded to one place.
+  describe('alias-aware labeling (alt_name/old_name/official_name/short_name)', () => {
+    it('labels a match by its alt_name when the search matches the alias but not the primary name', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      const results = await searchPlaces('Sunrise Sponsor Arena');
+
+      expect(results).toEqual([{ label: 'Sunrise Sponsor Arena, Anytown, Ontario', lat: 43.1, lng: -81.2 }]);
+    });
+
+    it('labels a match by its old_name the same way (a straightforward rename, not just a sponsor alias)', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'New Harbour Centre, Dock Road, Anytown, Ontario, Canada',
+          address: { road: 'Dock Road', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'New Harbour Centre', old_name: 'Old Harbour Centre' },
+        }],
+      }));
+
+      const results = await searchPlaces('Old Harbour Centre');
+
+      expect(results).toEqual([{ label: 'Old Harbour Centre, Anytown, Ontario', lat: 43.1, lng: -81.2 }]);
+    });
+
+    it('splits a semicolon-separated multi-value alt_name tag and matches any one of them', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Primary Name, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Primary Name', alt_name: 'First Alias;Second Alias' },
+        }],
+      }));
+
+      const results = await searchPlaces('Second Alias');
+
+      expect(results[0].label).toContain('Second Alias');
+    });
+
+    it('does not substitute an alias when the primary name already matches the search', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      const results = await searchPlaces('Riverside Community Arena');
+
+      expect(results[0].label).toContain('Riverside Community Arena');
+      expect(results[0].label).not.toContain('Sunrise Sponsor Arena');
+    });
+
+    it('leaves the label unchanged when namedetails is absent entirely (older/partial provider responses)', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+        }],
+      }));
+
+      const results = await searchPlaces('Riverside Community Arena');
+
+      expect(results[0].label).toBe('Riverside Community Arena, Anytown, Ontario');
+    });
+
+    it('does not substitute an alias when none of the name tags match the search text at all', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '43.1', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Sample Street, Anytown, Ontario, Canada',
+          address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        }],
+      }));
+
+      // A query that matches neither the primary name nor the alias (e.g.
+      // the renter typed a street name instead) -- the label must not
+      // spuriously substitute an unrelated alias just because one exists.
+      const results = await searchPlaces('Sample Street');
+
+      expect(results[0].label).toContain('Riverside Community Arena');
+    });
+  });
+
+  // Founder-reported real symptom: some places didn't appear as
+  // suggestions until nearly the full name was typed. Traced to
+  // PLACE_SUGGESTION_LIMIT (then a single, shared fetch+display cap)
+  // truncating the REQUEST itself (limit=5) -- a not-yet-highly-ranked
+  // candidate for a short partial query was simply never fetched,
+  // regardless of debounce timing or minimum query length (both already
+  // correct and unrelated to this). Now split into two constants: a wider
+  // internal fetch pool (NOMINATIM_FETCH_LIMIT=30, raised again from an
+  // earlier 15 on 2026-09-09 -- a broader founder-reported "the dropdown
+  // misses many real places" complaint) so more of the candidates that
+  // COULD be relevant are actually available to rank, and a separate,
+  // smaller display cap (DISPLAY_SUGGESTION_LIMIT=10, raised from 8
+  // alongside it) applied only after local re-ranking.
+  describe('candidate window (early partial-query suggestions + wider internal pool)', () => {
+    it('requests up to 30 candidates per query (a wider internal pool than what is ever displayed)', async () => {
+      let capturedUrl = '';
+      globalThis.fetch = vi.fn(async (url) => {
+        capturedUrl = String(url);
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }) as unknown as typeof fetch;
+
+      await searchPlaces('Some Partial Query');
+
+      expect(new URL(capturedUrl).searchParams.get('limit')).toBe('30');
+    });
+
+    it('never displays more than 10 suggestions even when Nominatim supplies more', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => Array.from({ length: 30 }, (_, i) => ({
+          lat: String(43 + i * 0.01), lon: String(-79 - i * 0.01),
+          display_name: `Place ${i}, Anytown, Ontario, Canada`,
+          address: { road: `Street ${i}`, city: 'Anytown', state: 'Ontario' },
+        })),
+      }));
+
+      const results = await searchPlaces('Pla');
+
+      expect(results).toHaveLength(10);
+    });
+
+    it('returns all 10 candidates when Nominatim supplies that many for a genuinely broad partial query', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => Array.from({ length: 10 }, (_, i) => ({
+          lat: String(43 + i * 0.01), lon: String(-79 - i * 0.01),
+          display_name: `Place ${i}, Anytown, Ontario, Canada`,
+          address: { road: `Street ${i}`, city: 'Anytown', state: 'Ontario' },
+        })),
+      }));
+
+      const results = await searchPlaces('Pla');
+
+      expect(results).toHaveLength(10);
+    });
+  });
+
+  // Nominatim's own dedupe (on by default) runs before this app's labeling
+  // -- two distinct raw candidates (e.g. a building point and a nearby
+  // entrance/address point) can still collapse to an IDENTICAL computed
+  // label, which reads as a confusing literal duplicate in the autocomplete
+  // dropdown even though their coordinates differ slightly.
+  describe('deduplication by computed label', () => {
+    it('collapses two candidates that resolve to the exact same label, keeping the first (Nominatim-ranked) one', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { lat: '43.1000', lon: '-81.2000', display_name: 'Sample Place, Anytown, Ontario, Canada', address: { road: 'Main Street', house_number: '1', city: 'Anytown', state: 'Ontario' } },
+          { lat: '43.1001', lon: '-81.2001', display_name: 'Sample Place, Anytown, Ontario, Canada', address: { road: 'Main Street', house_number: '1', city: 'Anytown', state: 'Ontario' } },
+        ],
+      }));
+
+      const results = await searchPlaces('Sample Place');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ label: 'Sample Place, Anytown, Ontario', lat: 43.1, lng: -81.2 });
+    });
+
+    it('does not collapse genuinely different results that merely share a city/province suffix', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { lat: '43.1', lon: '-81.2', display_name: 'First Place, Anytown, Ontario, Canada', address: { road: 'First Street', city: 'Anytown', state: 'Ontario' } },
+          { lat: '43.2', lon: '-81.3', display_name: 'Second Place, Anytown, Ontario, Canada', address: { road: 'Second Street', city: 'Anytown', state: 'Ontario' } },
+        ],
+      }));
+
+      const results = await searchPlaces('Place');
+
+      expect(results).toHaveLength(2);
+    });
+  });
+
+  // Firm, single-tier Canada-only restriction: countrycodes=ca on the one
+  // and only request, no second country-relaxed attempt. An earlier
+  // version retried with a soft Canada-wide viewbox bias when the hard
+  // filter found nothing -- removed by explicit founder direction, since a
+  // bounding box covering Canada's lat/long range also covers nearly the
+  // entire northern continental US, so that "bias" was not actually
+  // Canada-only. This does NOT invent data: it cannot and does not recover
+  // a POI that isn't named/tagged as Canadian anywhere in OpenStreetMap at
+  // all -- that's a real, inherent OSM data-quality limitation.
+  describe('firm Canada-only restriction (no country-relaxed fallback)', () => {
+    function mockFetchSequence(...responses: Array<Partial<Response>>) {
+      const capturedUrls: string[] = [];
+      let callCount = 0;
+      globalThis.fetch = vi.fn(async (url: any) => {
+        capturedUrls.push(String(url));
+        const r = responses[Math.min(callCount, responses.length - 1)];
+        callCount++;
+        return r as Response;
+      }) as unknown as typeof fetch;
+      return { capturedUrls, callCount: () => callCount };
+    }
+
+    function jsonResponse(body: unknown): Partial<Response> {
+      return { ok: true, status: 200, json: async () => body };
+    }
+
+    it('makes exactly one request, always hard-restricted to countrycodes=ca', async () => {
+      const { capturedUrls, callCount } = mockFetchSequence(jsonResponse([]));
+
+      await searchPlaces('Some Place');
+
+      expect(callCount()).toBe(1);
+      expect(new URL(capturedUrls[0]).searchParams.get('countrycodes')).toBe('ca');
+    });
+
+    it('never retries with a country-relaxed query when the primary query finds nothing -- returns an empty array instead', async () => {
+      const { callCount } = mockFetchSequence(jsonResponse([]));
+
+      const results = await searchPlaces('Nonexistent Fake Place 99999');
+
+      expect(callCount()).toBe(1);
+      expect(results).toEqual([]);
+    });
+
+    it('never retries when the query itself throws (rate-limited) -- does not hammer an already-unavailable provider', async () => {
+      const { callCount } = mockFetchSequence({ ok: false, status: 429, json: async () => ({}) });
+
+      await expect(searchPlaces('Toldo Lancer Centre')).rejects.toThrow(GeocodingUnavailableError);
+      expect(callCount()).toBe(1);
+    });
+
+    // Defense in depth: even though the query itself is hard-restricted,
+    // this app treats "Canadian places only" as a firm requirement for this
+    // feature, not merely a preference -- so a candidate is double-checked
+    // against its OWN resolved country_code too, rather than trusting the
+    // query parameter alone.
+    it('drops a candidate whose own resolved country is not Canada, even though it came back from a countrycodes=ca query', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            lat: '42.33', lon: '-83.05',
+            display_name: 'Detroit Diner, Woodward Avenue, Detroit, Michigan, United States',
+            address: { road: 'Woodward Avenue', city: 'Detroit', state: 'Michigan', country_code: 'us' },
+          },
+          {
+            lat: '42.30', lon: '-83.06',
+            display_name: 'Windsor Diner, Ouellette Avenue, Windsor, Ontario, Canada',
+            address: { road: 'Ouellette Avenue', city: 'Windsor', state: 'Ontario', country_code: 'ca' },
+          },
+        ],
+      }));
+
+      const results = await searchPlaces('Diner');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].label).toContain('Windsor');
+    });
+
+    it('keeps a candidate with no country_code at all -- "unknown" is not the same as "confirmed not Canadian"', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '42.3', lon: '-83.0',
+          display_name: 'Some Place, Windsor, Ontario, Canada',
+          address: { road: 'Some Street', city: 'Windsor', state: 'Ontario' },
+        }],
+      }));
+
+      const results = await searchPlaces('Some Place');
+
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  // Founder-reported real symptoms, addressed together with one general
+  // relevance model rather than one-off fixes:
+  //   1. multi-word queries were dominated by whichever word Nominatim's
+  //      OWN ranking favoured (e.g. "Vincent Mass" staying dominated by
+  //      unrelated "Vincent"-only results);
+  //   2. a single early keystroke ("T") was artificially promoting a
+  //      specific, unrelated-to-the-input-so-far candidate to the top.
+  // Root cause for both: this app previously passed Nominatim's own
+  // per-query relevance order straight through with no local re-ranking at
+  // all. These tests exercise the local scoring/re-ranking layer directly
+  // via searchPlaces (mocked fetch, deterministic candidate pools) -- using
+  // "Toldo"/"Vincent Massey" only as the founder's own illustrative
+  // examples, never as special-cased strings in the production code
+  // (confirmed by the synthetic, differently-named fixtures interspersed
+  // below, which behave identically).
+  describe('local relevance ranking (general model, not place-specific)', () => {
+    it('a single, low-signal character does NOT artificially promote any specific candidate -- Nominatim\'s own original order is preserved', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Toronto Transit Stop, Anytown, Ontario, Canada', address: { road: 'Transit Way', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Trillium Park, Anytown, Ontario, Canada', address: { road: 'Park Lane', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.3', lon: '-81.3', display_name: 'Toldo Lancer Centre, Anytown, Ontario, Canada', address: { road: 'Sunset Avenue', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.4', lon: '-81.4', display_name: 'Tim Hortons, Anytown, Ontario, Canada', address: { road: 'Main Street', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('T');
+
+      // toPlaceSuggestionLabel drops the trailing country segment (see its
+      // own doc comment) -- compare against that same "name, city, state"
+      // shape, not the raw display_name, to assert order alone.
+      expect(results.map((r) => r.label)).toEqual([
+        'Toronto Transit Stop, Anytown, Ontario',
+        'Trillium Park, Anytown, Ontario',
+        'Toldo Lancer Centre, Anytown, Ontario',
+        'Tim Hortons, Anytown, Ontario',
+      ]);
+    });
+
+    it('a short but meaningful single-word prefix makes the specifically-matching candidate competitive against non-matching distractors', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Trillium Park, Anytown, Ontario, Canada', address: { road: 'Park Lane', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Tim Hortons, Anytown, Ontario, Canada', address: { road: 'Main Street', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.3', lon: '-81.3', display_name: 'Toldo Lancer Centre, Anytown, Ontario, Canada', address: { road: 'Sunset Avenue', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      // Neither "Trillium" nor "Tim" starts with "tol" -- only "Toldo"
+      // does, so it should now rank first despite being listed last.
+      const results = await searchPlaces('Tol');
+
+      expect(results[0].label).toContain('Toldo Lancer Centre');
+    });
+
+    it('the complete first word of a multi-word name ranks it highly, clearly above candidates that share only the first letter', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Trillium Park, Anytown, Ontario, Canada', address: { road: 'Park Lane', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Toldo Lancer Centre, Anytown, Ontario, Canada', address: { road: 'Sunset Avenue', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.3', lon: '-81.3', display_name: 'Tim Hortons, Anytown, Ontario, Canada', address: { road: 'Main Street', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('Toldo');
+
+      expect(results[0].label).toContain('Toldo Lancer Centre');
+    });
+
+    it('a multi-word query is not dominated by its first word -- a candidate matching every typed token (incl. a partial final token) outranks one matching only the first', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Vincent Street, Anytown, Ontario, Canada', address: { road: 'Vincent Street', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Vincent Massey Park, Anytown, Ontario, Canada', address: { road: 'River Road', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.3', lon: '-81.3', display_name: 'Vincent Apartments, Anytown, Ontario, Canada', address: { road: 'Apartment Row', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('Vincent Mass');
+
+      expect(results[0].label).toContain('Vincent Massey Park');
+    });
+
+    it('two-word partial search: a candidate matching both typed tokens outranks one matching only one (generic, non-Vincent/Toldo example)', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Green Street, Anytown, Ontario, Canada', address: { road: 'Green Street', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Green Valley Estates, Anytown, Ontario, Canada', address: { road: 'Estate Drive', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.3', lon: '-81.3', display_name: 'Green Meadows, Anytown, Ontario, Canada', address: { road: 'Meadow Lane', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('Green Val');
+
+      expect(results[0].label).toContain('Green Valley Estates');
+    });
+
+    it('three-word partial search: a candidate matching all three typed tokens outranks one matching only two', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'North Community Hall, Anytown, Ontario, Canada', address: { road: 'Hall Road', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'North River Community Centre, Anytown, Ontario, Canada', address: { road: 'River Road', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('North River Com');
+
+      expect(results[0].label).toContain('North River Community Centre');
+    });
+
+    it('a partially typed final token counts as a match only when it is a genuine prefix of a real word in the candidate name', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Green Street, Anytown, Ontario, Canada', address: { road: 'Green Street', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Green Valley Estates, Anytown, Ontario, Canada', address: { road: 'Estate Drive', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      // "Vall" is a genuine prefix of "Valley" -- should still match and
+      // promote "Green Valley Estates", same as the shorter "Val" would.
+      const results = await searchPlaces('Green Vall');
+
+      expect(results[0].label).toContain('Green Valley Estates');
+    });
+
+    it('ranking considers a matched alias (alt_name), not just the primary name -- a query matching only the alias still outranks a non-matching distractor', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Unrelated Diner, Anytown, Ontario, Canada', address: { road: 'Diner Road', city: 'Anytown', state: 'Ontario' } },
+        {
+          lat: '43.2', lon: '-81.2',
+          display_name: 'Riverside Community Arena, Anytown, Ontario, Canada',
+          address: { road: 'Arena Way', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Riverside Community Arena', alt_name: 'Sunrise Sponsor Arena' },
+        },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('Sunrise Sponsor');
+
+      expect(results[0].label).toContain('Sunrise Sponsor Arena');
+    });
+
+    it('ranking is case- and punctuation-insensitive', async () => {
+      const pool = [
+        { lat: '43.1', lon: '-81.1', display_name: 'Green Street, Anytown, Ontario, Canada', address: { road: 'Green Street', city: 'Anytown', state: 'Ontario' } },
+        { lat: '43.2', lon: '-81.2', display_name: 'Green Valley Estates, Anytown, Ontario, Canada', address: { road: 'Estate Drive', city: 'Anytown', state: 'Ontario' } },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('GrEeN, VaLLey.');
+
+      expect(results[0].label).toContain('Green Valley Estates');
+    });
+
+    it('when two candidates share an identical computed label, dedup keeps the higher-RANKED one, not simply whichever Nominatim listed first', async () => {
+      const pool = [
+        // Listed FIRST by Nominatim, but matches only the generic first token.
+        { lat: '43.1', lon: '-81.1', display_name: 'Sample Place, Anytown, Ontario, Canada', address: { road: 'Vincent Street', city: 'Anytown', state: 'Ontario' } },
+        // Listed SECOND, but this is the one whose full display name actually
+        // matches the typed phrase -- should win the dedup keep despite
+        // arriving later, because ranking runs BEFORE dedup.
+        {
+          lat: '43.2', lon: '-81.2',
+          display_name: 'Sample Place, Anytown, Ontario, Canada',
+          address: { road: 'Vincent Street', city: 'Anytown', state: 'Ontario' },
+          namedetails: { name: 'Sample Place', alt_name: 'Sample Place Exact Match' },
+        },
+      ];
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+      const results = await searchPlaces('Sample Place Exact Match');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].lat).toBe(43.2); // the second (higher-ranked) candidate's coordinate won
+    });
+
+    // Founder-reported real symptom: typing "Vincent Massey" collapsed the
+    // dropdown to a single unrelated business (a gas station located ON a
+    // road named "Vincent Massey Drive"), with the actual school not
+    // appearing until an additional character ("Vincent Massey S") was
+    // typed. Traced through the pipeline
+    // (fetch -> Canada filter -> name/alias variants -> relevance scoring
+    // -> dedup -> diversity -> display) to collectNameVariants/
+    // scoreNameVariant: a candidate's plain house_number+road line (and the
+    // full display_name breakdown) was being scored with the SAME top-tier
+    // "phrase match" weight as a candidate's REAL name -- so a business
+    // merely LOCATED ON "Vincent Massey Drive" tied with (or beat) a place
+    // actually NAMED "Vincent Massey ...". The fix caps address-line-derived
+    // matches below genuinely-named matches (see scoreNameVariant's
+    // `isAddressLine` parameter) -- proven here with a synthetic,
+    // differently-named fixture (a diner on "Green Meadow Lane" vs. a place
+    // actually named "Green Meadow") alongside the founder's own
+    // illustrative example, to show this generalizes rather than being
+    // special-cased to one place name.
+    describe('an address/road-name match never out-ranks a genuinely NAMED match (Vincent Massey diagnosis)', () => {
+      it('a business merely located on a road sharing the query words does not out-rank -- or hide -- a place actually named that phrase', async () => {
+        const pool = [
+          // Located ON a road named "Vincent Massey Drive" -- not itself
+          // named "Vincent Massey" anything. This is the candidate that was
+          // previously winning (or tying) via its address line alone.
+          {
+            lat: '42.33', lon: '-83.05',
+            display_name: 'Petro-Canada, Vincent Massey Drive, Anytown, Ontario, Canada',
+            address: { road: 'Vincent Massey Drive', city: 'Anytown', state: 'Ontario' },
+          },
+          // Genuinely NAMED "Vincent Massey Secondary School", located on a
+          // completely different road.
+          {
+            lat: '42.31', lon: '-83.02',
+            display_name: 'Vincent Massey Secondary School, Anytown, Ontario, Canada',
+            address: { road: 'Somewhere Else Road', city: 'Anytown', state: 'Ontario' },
+          },
+        ];
+        mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+        const results = await searchPlaces('Vincent Massey');
+
+        // Both surface (the dropdown no longer collapses to the one
+        // unrelated business)...
+        expect(results).toHaveLength(2);
+        // ...with the genuinely-named place ranked first.
+        expect(results[0].label).toContain('Vincent Massey Secondary School');
+        expect(results[1].label).toContain('Petro-Canada');
+      });
+
+      it('generalizes to a synthetic, differently-named example (never special-cased to "Vincent Massey")', async () => {
+        const pool = [
+          {
+            lat: '43.11', lon: '-81.11',
+            display_name: 'Sunrise Diner, Green Meadow Lane, Anytown, Ontario, Canada',
+            address: { road: 'Green Meadow Lane', city: 'Anytown', state: 'Ontario' },
+          },
+          {
+            lat: '43.12', lon: '-81.12',
+            display_name: 'Green Meadow Elementary School, Anytown, Ontario, Canada',
+            address: { road: 'Learning Way', city: 'Anytown', state: 'Ontario' },
+          },
+        ];
+        mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+        const results = await searchPlaces('Green Meadow');
+
+        expect(results).toHaveLength(2);
+        expect(results[0].label).toContain('Green Meadow Elementary School');
+        expect(results[1].label).toContain('Sunrise Diner');
+      });
+    });
+
+    // Founder-requested "lightweight result diversity": several
+    // near-identical results of ONE category, all genuinely tied in
+    // relevance, must not consume the entire display window and crowd out
+    // a differently-categorized, equally-relevant match ranked just outside
+    // the naive top-N. Uses Nominatim's own `class` field as the category
+    // signal -- never affects WHICH candidates match, only which of several
+    // equally-ranked candidates make it into the limited display window.
+    describe('result diversity (soft per-category cap on the DISPLAYED window)', () => {
+      it('makes room for a differently-categorized match that would otherwise be crowded out by many tied same-category results', async () => {
+        const shopNames = [
+          'Pharmacy', 'Dental', 'Nails', 'Bakery', 'Cafe', 'Salon', 'Bank', 'Cleaners', 'Florist',
+          'Barber', 'Bookstore', 'Gym',
+        ];
+        const pool = [
+          ...shopNames.map((name, i) => ({
+            lat: String(43 + i * 0.001), lon: String(-81 - i * 0.001),
+            display_name: `Riverside Plaza ${name}, Anytown, Ontario, Canada`,
+            address: { road: `Unit ${i} Road`, city: 'Anytown', state: 'Ontario' },
+            class: 'shop',
+          })),
+          // Genuinely different category, same relevance tier -- listed
+          // LAST by the provider, which a naive top-8-by-original-order
+          // slice would cut off entirely.
+          {
+            lat: '43.5', lon: '-81.5',
+            display_name: 'Riverside Plaza Community Centre, Anytown, Ontario, Canada',
+            address: { road: 'Centre Lane', city: 'Anytown', state: 'Ontario' },
+            class: 'amenity',
+          },
+        ];
+        mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+        const results = await searchPlaces('Riverside Plaza');
+
+        expect(results).toHaveLength(10); // still respects DISPLAY_SUGGESTION_LIMIT
+        expect(results.some((r) => r.label.includes('Community Centre'))).toBe(true);
+      });
+
+      it('never drops a higher-scoring candidate for a lower one -- diversity only affects which TIED candidates fill the window', async () => {
+        const shopNames = ['Pharmacy', 'Dental', 'Nails', 'Bakery', 'Cafe'];
+        const pool = [
+          ...shopNames.map((name, i) => ({
+            lat: String(43 + i * 0.001), lon: String(-81 - i * 0.001),
+            display_name: `Green Court ${name}, Anytown, Ontario, Canada`,
+            address: { road: `Unit ${i} Road`, city: 'Anytown', state: 'Ontario' },
+            class: 'shop',
+          })),
+          // Matches only the first, generic token -- strictly LOWER
+          // relevance than the "Green Court ..." full-prefix-phrase
+          // matches above -- must never be promoted ahead of them just to
+          // add variety.
+          {
+            lat: '43.9', lon: '-81.9',
+            display_name: 'Green Apartments, Anytown, Ontario, Canada',
+            address: { road: 'Apartment Row', city: 'Anytown', state: 'Ontario' },
+            class: 'building',
+          },
+        ];
+        mockFetchOnce(() => ({ ok: true, status: 200, json: async () => pool }));
+
+        const results = await searchPlaces('Green Court');
+
+        expect(results[0].label).toContain('Green Court');
+        expect(results[results.length - 1].label).toBe('Green Apartments, Anytown, Ontario');
+      });
+    });
+  });
+
+  // Founder-reported real symptom: a full street address search would
+  // resolve/succeed, but place the marker in the WRONG location. Root
+  // cause (confirmed with synthetic data against the ranking as it stood
+  // before this section): scoreCandidateRelevance treats a candidate's
+  // house_number+road "street-line" purely as text -- it never asks
+  // whether the underlying OSM entity is actually a plain address point
+  // versus a business/POI that Nominatim happens to have geocoded to the
+  // SAME house number (a business occupies a real numbered building). Both
+  // then score identically at the address-line ceiling for an exact-phrase
+  // match, and the tie silently falls back to Nominatim's own original
+  // order -- which commonly ranks a named, "important" POI above a bare
+  // residential address node. This section adds a narrow, ADDITIONAL
+  // scoring path (scoreAddressIntentCandidate), active only when the query
+  // itself looks like a full street address (a leading house number), that
+  // classifies each candidate's KIND from Nominatim's own class/type/
+  // address metadata (never from its name/text) and enforces:
+  // address > road > poi > neighborhood > city > postal. A bare place/POI
+  // name query is completely unaffected and keeps using
+  // scoreCandidateRelevance exactly as before.
+  describe('address-intent ranking (full street address queries)', () => {
+    // Every OSM class/type value below is Nominatim's own general-purpose
+    // vocabulary (documented taxonomy), not tied to any specific address,
+    // street, or city -- the same shape works for any Canadian address.
+    const poiOnSameHouseNumber = {
+      lat: '42.30100', lon: '-83.05200',
+      display_name: 'Sample Pharmacy, 452, Sample Street, Anytown, Ontario, Canada',
+      class: 'shop', type: 'pharmacy',
+      address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+    const exactAddressPoint = {
+      lat: '42.30150', lon: '-83.05250',
+      display_name: '452, Sample Street, Anytown, Ontario, Canada',
+      class: 'place', type: 'house',
+      address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+    const roadOnly = {
+      lat: '42.30500', lon: '-83.04800',
+      display_name: 'Sample Street, Anytown, Ontario, Canada',
+      class: 'highway', type: 'residential',
+      address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+
+    it('1. exact house-number + street beats a road-only result', async () => {
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [roadOnly, exactAddressPoint] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results[0].lat).toBe(42.3015);
+      expect(results[0].lng).toBe(-83.0525);
+    });
+
+    it('2. exact address beats a POI geocoded to the same house number on the same street', async () => {
+      // Reproduces the founder-reported bug directly: without kind-based
+      // ranking, this POI ties the address point's score (both hit the
+      // address-line ceiling for an exact-phrase match) and wins on
+      // Nominatim's own original order (listed first here, as it commonly
+      // is in real responses).
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [poiOnSameHouseNumber, exactAddressPoint] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results[0].lat).toBe(42.3015);
+      expect(results[0].lng).toBe(-83.0525);
+      expect(results[0].label).not.toContain('Pharmacy');
+    });
+
+    it('3. road-only still works when no exact address exists', async () => {
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [roadOnly] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].lat).toBe(42.305);
+      expect(results[0].lng).toBe(-83.048);
+    });
+
+    it('4. a named POI query (not address-shaped) still prefers the POI/name match, unaffected by address-intent ranking', async () => {
+      // No leading house number -- looksLikeFullAddress is false, so this
+      // must use the ordinary name-based scoreCandidateRelevance, exactly
+      // as it did before this section existed.
+      const namedPoi = {
+        lat: '42.31', lon: '-83.02',
+        display_name: 'Riverside Community Centre, Anytown, Ontario, Canada',
+        class: 'amenity', type: 'community_centre',
+        address: { road: 'Some Other Road', city: 'Anytown', state: 'Ontario' },
+      };
+      const unrelatedRoad = {
+        lat: '42.40', lon: '-83.10',
+        display_name: 'Riverside Drive, Anytown, Ontario, Canada',
+        class: 'highway', type: 'residential',
+        address: { road: 'Riverside Drive', city: 'Anytown', state: 'Ontario' },
+      };
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [unrelatedRoad, namedPoi] }));
+
+      const results = await searchPlaces('Riverside Community Centre');
+
+      expect(results[0].label).toContain('Riverside Community Centre');
+    });
+
+    it('5. Canada-only enforcement remains active for address-shaped queries', async () => {
+      const usAddressPoint = {
+        lat: '42.5', lon: '-83.5',
+        display_name: '452, Sample Street, Some City, Michigan, United States',
+        class: 'place', type: 'house',
+        address: { house_number: '452', road: 'Sample Street', city: 'Some City', state: 'Michigan', country_code: 'us' },
+      };
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [usAddressPoint, roadOnly] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results.some((r) => r.label.includes('Michigan'))).toBe(false);
+      expect(results[0].lat).toBe(42.305); // falls back to the (Canadian) road-only result
+    });
+  });
+
+  describe('resolvePlace (manual "search my complete typed text" resolve)', () => {
+    it('resolves to the top-ranked searchPlaces() result', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '42.30569', lon: '-83.06437',
+          display_name: 'Vincent Massey Secondary School, Anytown, Ontario, Canada',
+          address: { road: 'Somewhere Else Road', city: 'Anytown', state: 'Ontario' },
+        }],
+      }));
+
+      const result = await resolvePlace('Vincent Massey Secondary School');
+
+      expect(result).toEqual({ lat: 42.30569, lng: -83.06437 });
+    });
+
+    // Full-address queries no longer resolve through this Nominatim-only
+    // pipeline at all -- see tests/utils/geocodeGeocodioProvider.test.ts's
+    // "resolvePlace address-shaped split" coverage for that path. This
+    // block covers only what resolvePlace still does with searchPlaces():
+    // non-address (POI/place-name) manual searches, unaffected by the split.
+
+    it('returns null (never throws) when nothing matches', async () => {
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [] }));
+
+      const result = await resolvePlace('Nonexistent Fake Place 99999');
+
+      expect(result).toBeNull();
+    });
+
+    it('is Canada-only, same as searchPlaces -- a candidate resolved to a different country is dropped before it could ever be picked', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [{
+          lat: '42.33', lon: '-83.05',
+          display_name: 'Somewhere, Michigan, United States',
+          address: { city: 'Somewhere', state: 'Michigan', country_code: 'us' },
+        }],
+      }));
+
+      const result = await resolvePlace('Somewhere');
+
+      expect(result).toBeNull();
+    });
+
+    it('throws GeocodingUnavailableError (never silently returns null) when the provider is rate-limited', async () => {
+      mockFetchOnce(() => ({ ok: false, status: 429, json: async () => ({}) }));
+
+      await expect(resolvePlace('Some Place')).rejects.toThrow(GeocodingUnavailableError);
+    });
   });
 });

@@ -98,7 +98,7 @@ export default function BrowsePage() {
 
           {/* Horizontal filter bar - full width, no sidebar */}
           <div className="mb-6">
-            <ListingFilters />
+            <ListingFilters listings={listings.map(({ id, lat, lng }) => ({ id, lat, lng }))} />
           </div>
 
           {/* Listing grid - full width */}

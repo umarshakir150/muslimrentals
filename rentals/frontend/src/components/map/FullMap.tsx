@@ -23,6 +23,9 @@ import {
   APPROX_LOCATION_CIRCLE_STYLE,
   buildApproxZoneTooltipHtml,
   SEARCH_RADIUS_CIRCLE_STYLE,
+  SEARCH_LOCATION_ICON_SIZE,
+  SEARCH_LOCATION_ICON_ANCHOR,
+  buildSearchLocationMarkerHtml,
 } from '@/lib/mapMarkers';
 
 interface FullMapProps {
@@ -52,6 +55,13 @@ export default function FullMap({
   const clusterRef = useRef<any>(null);
   const userLocationMarkerRef = useRef<any>(null);
   const searchCircleRef = useRef<any>(null);
+  const searchMarkerRef = useRef<any>(null);
+  // Tracks whether the map has already been fitted to the CURRENT search
+  // circle, so panning/zooming manually afterward (or an unrelated listings
+  // refetch) never yanks the view back -- the fit is a one-time "here's what
+  // you searched" framing when a search is set or changed, not a persistent
+  // camera lock.
+  const lastFittedSearchRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
   // The Leaflet module resolved once by the init IIFE below, reused by
   // follow-up effects instead of a redundant `import('leaflet')` per redraw
@@ -153,7 +163,7 @@ export default function FullMap({
 
       // Render markers with data available at init time
       renderMarkers(L);
-      renderSearchCircle(L);
+      renderSearchLocation(L);
 
       // ── invalidateSize after paint ─────────────────────────────────────
       // Two staggered calls handle slow paints and CSS transitions.
@@ -214,15 +224,15 @@ export default function FullMap({
   // marker-rerender effect above -- on first mount, this and the main init
   // effect both fire in the same commit, but the map itself is only
   // created inside that init effect's own async IIFE, so `mapRef.current`
-  // is briefly still null here; renderSearchCircle(L) is called directly
+  // is briefly still null here; renderSearchLocation(L) is called directly
   // from inside that same IIFE (below) once the map is actually ready, so
   // an already-active search on first load still draws correctly.
   useEffect(() => {
     if (!initializedRef.current || !mapRef.current) return;
     if (leafletRef.current) {
-      renderSearchCircle(leafletRef.current);
+      renderSearchLocation(leafletRef.current);
     } else {
-      import('leaflet').then(({ default: L }) => renderSearchCircle(L));
+      import('leaflet').then(({ default: L }) => renderSearchLocation(L));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchCenter?.[0], searchCenter?.[1], searchRadiusKm]);
@@ -313,12 +323,15 @@ export default function FullMap({
     });
   }
 
-  // Draws (or removes) the subtle "searched area" circle for the renter
-  // location+radius filter. Distinct from the per-listing approximate-
-  // location privacy circle in renderMarkers above -- this one is purely a
-  // display aid for where the user searched; the actual filtering already
-  // happened server-side against each listing's public approximate point.
-  function renderSearchCircle(L: any) {
+  // Draws (or removes) the searched location's distinct marker + the
+  // subtle "searched area" circle for the renter location+radius filter,
+  // and fits the map to the circle's bounds once per new/changed search so
+  // the point/radius/listings can be understood without excessive manual
+  // zooming. Distinct from the per-listing approximate-location privacy
+  // circle in renderMarkers above -- this one is purely a display aid for
+  // where the user searched; the actual filtering already happened
+  // server-side against each listing's public approximate point.
+  function renderSearchLocation(L: any) {
     const map = mapRef.current;
     if (!map) return;
 
@@ -326,15 +339,40 @@ export default function FullMap({
       map.removeLayer(searchCircleRef.current);
       searchCircleRef.current = null;
     }
+    if (searchMarkerRef.current) {
+      map.removeLayer(searchMarkerRef.current);
+      searchMarkerRef.current = null;
+    }
 
     const center = searchCenterRef.current;
     const radiusKm = searchRadiusKmRef.current;
-    if (!center || !radiusKm) return;
+    if (!center || !radiusKm) {
+      // Search was cleared -- reset so a later new search still fits.
+      lastFittedSearchRef.current = null;
+      return;
+    }
 
     searchCircleRef.current = L.circle(center, {
       radius: radiusKm * 1000,
       ...SEARCH_RADIUS_CIRCLE_STYLE,
     }).addTo(map);
+
+    const icon = L.divIcon({
+      html: buildSearchLocationMarkerHtml(),
+      className: '',
+      iconSize: SEARCH_LOCATION_ICON_SIZE,
+      iconAnchor: SEARCH_LOCATION_ICON_ANCHOR,
+    });
+    searchMarkerRef.current = L.marker(center, { icon, interactive: false }).addTo(map);
+
+    // Fit once per distinct search (same center+radius) rather than on
+    // every effect re-run, so panning/zooming afterward to inspect a
+    // result isn't fought by re-fitting back to the same bounds.
+    const searchKey = `${center[0]},${center[1]},${radiusKm}`;
+    if (lastFittedSearchRef.current !== searchKey) {
+      lastFittedSearchRef.current = searchKey;
+      map.fitBounds(searchCircleRef.current.getBounds(), { padding: [40, 40] });
+    }
   }
 
   async function handleLocateMe() {

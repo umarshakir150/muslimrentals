@@ -1349,6 +1349,126 @@ function applyResultDiversity(
   return ranked.filter((_, i) => included.has(i)).slice(0, limit).map((item) => item.suggestion);
 }
 
+// ─── Address-intent ranking ─────────────────────────────────────────────────
+// searchPlaces's local relevance re-ranking above (scoreCandidateRelevance)
+// is a NAME-matching model: it treats a candidate's house_number+road
+// "street-line" purely as TEXT that happens to look like an address, and
+// caps it at the same ceiling no matter what kind of OSM entity actually
+// produced it. That is not enough once the query itself is a full street
+// address: Nominatim frequently also returns a business/POI geocoded to the
+// SAME house number (a business occupies a real numbered building), and
+// that POI's own street-line variant matches the typed address text just as
+// exactly as the plain address point's does -- both score identically, and
+// the tie is broken by Nominatim's own original order, which commonly ranks
+// a named, "important" POI above a bare residential address node. Confirmed
+// against the unmodified ranking with synthetic data before this section was
+// added: a "452 Elm Street" search returned "Elm Street Pharmacy" (also
+// geocoded to house_number 452) ahead of the actual address point purely on
+// that tie-break, with the real address point second and the bare road
+// third. The renter typed a specific building's address, not a business
+// name, so that tie must never be left to chance.
+//
+// This section is a NARROW addition, active ONLY when the query itself
+// looks like a full street address (see looksLikeFullAddress) -- a bare
+// place/POI name search (no leading house number) is completely unaffected
+// and keeps using scoreCandidateRelevance exactly as before.
+
+// A full street address starts with a house number (optionally a single
+// trailing unit letter, e.g. "123A") followed by more text (the street
+// name) -- deliberately just this shape check, not an exhaustive address
+// grammar, and not tied to any specific address/city, so it generalizes the
+// same way to any Canadian street address.
+function looksLikeFullAddress(query: string): boolean {
+  return /^\d+[a-zA-Z]?\s+\S/.test(query.trim());
+}
+
+// The leading house-number token itself (e.g. "452" from "452 Elm Street"),
+// or null if the query doesn't start with one -- only ever called after
+// looksLikeFullAddress has already confirmed the shape.
+function extractLeadingHouseNumber(query: string): string | null {
+  return query.trim().match(/^(\d+[a-zA-Z]?)\b/)?.[1]?.toLowerCase() ?? null;
+}
+
+type CandidateKind = 'address' | 'road' | 'poi' | 'neighborhood' | 'city' | 'postal';
+
+// Nominatim's general-purpose `class` values that mean "a named business/
+// amenity/attraction" -- checked BEFORE the house_number fallback in
+// classifyCandidateKind below, since many POIs carry a full, accurate
+// address breakdown (including their own house_number) alongside their
+// name, and that must never be mistaken for the plain address record for
+// that same building.
+const POI_CLASSES = new Set([
+  'amenity', 'shop', 'tourism', 'leisure', 'office', 'craft', 'healthcare', 'historic', 'religion',
+]);
+const CITY_PLACE_TYPES = new Set(['city', 'town', 'municipality', 'borough', 'county']);
+const NEIGHBORHOOD_PLACE_TYPES = new Set(['suburb', 'neighbourhood', 'neighborhood', 'quarter', 'hamlet', 'village', 'locality']);
+
+// Classifies what KIND of OSM entity a candidate actually is, using the same
+// class/type/address metadata Nominatim already returns (see the
+// GeocodeCandidate shape) -- never a candidate's own text/name, which is
+// exactly what scoreCandidateRelevance already judges separately. Order
+// matters: a road is checked first (its own address breakdown sometimes
+// echoes its own name as `address.road` with no house_number, which would
+// otherwise fall through further down), then postal/city/neighborhood area
+// classes, then POI classes (checked before the house_number fallback for
+// the reason in POI_CLASSES's own comment), then finally "has a
+// house_number, or Nominatim's own `type=house` marker" for a plain
+// address. Anything left over is treated as a generic named place (poi) --
+// not a road, not an area, not a confirmed address.
+function classifyCandidateKind(candidate: GeocodeCandidate): CandidateKind {
+  const addr = candidate.address ?? {};
+  const cls = candidate.class;
+  const type = candidate.type;
+
+  if (cls === 'highway') return 'road';
+  if (cls === 'place' && type === 'postcode') return 'postal';
+  if (cls === 'boundary' || (cls === 'place' && type && CITY_PLACE_TYPES.has(type))) return 'city';
+  if (cls === 'place' && type && NEIGHBORHOOD_PLACE_TYPES.has(type)) return 'neighborhood';
+  if (POI_CLASSES.has(cls ?? '')) return 'poi';
+  if (type === 'house' || addr.house_number) return 'address';
+  return 'poi';
+}
+
+// Priority order requested for a full-address query: exact address-level
+// results outrank POIs, roads, neighborhoods, cities, and postal/admin
+// areas. Spaced far enough apart (KIND_PRIORITY_SCALE) that no amount of
+// textual relevance (scoreCandidateRelevance's own max is a few thousand)
+// can ever let a lower kind outrank a higher one.
+const KIND_PRIORITY: Record<CandidateKind, number> = {
+  address: 5, road: 4, poi: 3, neighborhood: 2, city: 1, postal: 0,
+};
+const KIND_PRIORITY_SCALE = 100_000;
+// Extra credit within the 'address' kind for a candidate whose OWN
+// house_number matches what was actually typed, over one that's merely
+// address-kind but a different number on a similarly-matching street --
+// kept below KIND_PRIORITY_SCALE so it can never itself cross into a
+// different kind's range.
+const HOUSE_NUMBER_MATCH_BONUS = KIND_PRIORITY_SCALE / 2;
+
+// The address-intent scorer used in place of scoreCandidateRelevance ONLY
+// when looksLikeFullAddress(query) is true. Deliberately requires a genuine
+// baseline text match first (relevance > TIER_NONE, i.e. at least one real
+// token actually matched) before applying any kind-based boost -- an
+// address-kind candidate sharing NOTHING textually with the query (e.g. an
+// unrelated result Nominatim returned for some other reason) must never be
+// artificially promoted just because it happens to be an address record.
+function scoreAddressIntentCandidate(
+  candidate: GeocodeCandidate,
+  queryTokens: string[],
+  leadingHouseNumber: string | null
+): number {
+  const relevance = scoreCandidateRelevance(candidate, queryTokens);
+  if (relevance <= TIER_NONE) return TIER_NONE;
+
+  const kind = classifyCandidateKind(candidate);
+  const houseNumber = candidate.address?.house_number?.trim().toLowerCase();
+  const houseNumberBonus = kind === 'address' && leadingHouseNumber && houseNumber === leadingHouseNumber
+    ? HOUSE_NUMBER_MATCH_BONUS
+    : 0;
+
+  return KIND_PRIORITY[kind] * KIND_PRIORITY_SCALE + houseNumberBonus + relevance;
+}
+
 // ─── Renter-facing place/POI search (autocomplete) ─────────────────────────
 // Distinct from geocodeAddress's free-text path (used by the single-result
 // GET /geocode endpoint that ConfirmLocationMap.tsx's listing-creation flow
@@ -1417,6 +1537,14 @@ function applyResultDiversity(
 //      autocomplete dropdown showing "no results" is a normal, expected UI
 //      state, not an error condition the way a single-result lookup's 404
 //      is for GET /geocode.
+//   7. When the query itself looks like a full street address (see
+//      looksLikeFullAddress), scores candidates with scoreAddressIntentCandidate
+//      instead of scoreCandidateRelevance -- see that section's own doc
+//      comment for why plain name-phrase matching alone lets a POI/business
+//      geocoded to the same house number as the plain address point win a
+//      tie it should never win. A bare place/POI name query (no leading
+//      house number) is completely unaffected and still uses
+//      scoreCandidateRelevance exactly as before.
 //
 // Never accepts/returns a provider API key -- same stance as every other
 // function in this file; the frontend only ever calls this app's own
@@ -1436,6 +1564,8 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
   });
 
   const queryTokens = normalizeForRanking(query);
+  const addressIntent = looksLikeFullAddress(query);
+  const leadingHouseNumber = addressIntent ? extractLeadingHouseNumber(query) : null;
 
   const scored = candidates
     .map((candidate) => {
@@ -1444,7 +1574,9 @@ export async function searchPlaces(query: string): Promise<PlaceSuggestion[]> {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
       return {
         suggestion: { label: toPlaceSuggestionLabel(candidate, query), lat, lng },
-        score: scoreCandidateRelevance(candidate, queryTokens),
+        score: addressIntent
+          ? scoreAddressIntentCandidate(candidate, queryTokens, leadingHouseNumber)
+          : scoreCandidateRelevance(candidate, queryTokens),
         category: candidateCategory(candidate),
       };
     })

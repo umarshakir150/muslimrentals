@@ -1585,30 +1585,11 @@ describe('searchPlaces', () => {
       expect(result).toEqual({ lat: 42.30569, lng: -83.06437 });
     });
 
-    it('resolves a full street address to the exact address point, not a POI on the same block, independently of the dropdown -- manual search is never gated by what searchPlaces happened to display', async () => {
-      mockFetchOnce(() => ({
-        ok: true,
-        status: 200,
-        json: async () => [
-          {
-            lat: '42.30100', lon: '-83.05200',
-            display_name: 'Sample Pharmacy, 452, Sample Street, Anytown, Ontario, Canada',
-            class: 'shop', type: 'pharmacy',
-            address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
-          },
-          {
-            lat: '42.30150', lon: '-83.05250',
-            display_name: '452, Sample Street, Anytown, Ontario, Canada',
-            class: 'place', type: 'house',
-            address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
-          },
-        ],
-      }));
-
-      const result = await resolvePlace('452 Sample Street');
-
-      expect(result).toEqual({ lat: 42.3015, lng: -83.0525 });
-    });
+    // Full-address queries no longer resolve through this Nominatim-only
+    // pipeline at all -- see tests/utils/geocodeGeocodioProvider.test.ts's
+    // "resolvePlace address-shaped split" coverage for that path. This
+    // block covers only what resolvePlace still does with searchPlaces():
+    // non-address (POI/place-name) manual searches, unaffected by the split.
 
     it('returns null (never throws) when nothing matches', async () => {
       mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [] }));

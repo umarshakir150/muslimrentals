@@ -14,7 +14,7 @@
  * same fixtures were used to reason about real Ontario addresses.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { geocodeAddress, verifyConfirmedPinLocation, GeocodingUnavailableError, GeocodingConfigError } from '../../src/utils/geocode';
+import { geocodeAddress, resolvePlace, verifyConfirmedPinLocation, GeocodingUnavailableError, GeocodingConfigError } from '../../src/utils/geocode';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -124,6 +124,104 @@ describe('Geocodio provider: successful forward geocode', () => {
 
     expect(result).toEqual({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
     expect(callCount).toBe(2);
+  });
+});
+
+// Coverage for the narrow split added to resolvePlace() (Browse's manual
+// Search/Enter, GET /geocode/resolve): a query that LOOKS LIKE a full
+// street address (a leading house number) now resolves via Geocodio's own
+// forward-geocoding free-text path instead of the Nominatim-only
+// searchPlaces() pipeline -- reusing the exact accuracy_type -> house_number
+// gating geocodioResultToCandidate already applies (see that function's own
+// doc comment), never a new or re-applied Nominatim ranking heuristic.
+// Non-address queries are unaffected and still resolve through
+// searchPlaces()/Nominatim, proven here by asserting Geocodio is never
+// called for one even with GEOCODING_PROVIDER=geocodio active.
+describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () => {
+  it('resolves a full address to Geocodio\'s rooftop-precision coordinate', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([rooftopResult()]));
+
+    const result = await resolvePlace('1051 Cedarglen Gate');
+
+    expect(result).toEqual({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+  });
+
+  it('sends the query to Geocodio\'s free-text endpoint with an explicit Canada hint, never a structured street/city query', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url: any) => {
+      capturedUrl = String(url);
+      return geocodioForwardResponse([rooftopResult()]) as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    await resolvePlace('1051 Cedarglen Gate');
+
+    expect(capturedUrl).toContain('api.geocod.io');
+    const params = new URL(capturedUrl).searchParams;
+    expect(params.get('q')).toBe('1051 Cedarglen Gate, Canada');
+    expect(params.has('street')).toBe(false);
+  });
+
+  it('returns null (never a road/area centroid) for a street_center (range-interpolated) result -- refuses to place a misleading marker', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '732', street: 'Mill', suffix: 'St', formatted_street: 'Mill St', city: 'Windsor', state: 'ON', zip: 'N9C', country: 'CA' },
+      formatted_address: '732 Mill St, Windsor, ON N9C, Canada',
+      location: { lat: 42.2905, lng: -83.0455 },
+      accuracy: 0.8, accuracy_type: 'street_center', source: 'TIGER/Line',
+    }]));
+
+    const result = await resolvePlace('732 Mill St');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null for a bare place/city-level match', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
+      formatted_address: 'Windsor, ON, Canada',
+      location: { lat: 42.3, lng: -83.03 },
+      accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
+    }]));
+
+    const result = await resolvePlace('999 Nonexistent Mill St');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when Geocodio\'s best free-text result resolves outside Canada', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
+      formatted_address: '100 Main St, Detroit, MI 48226',
+      location: { lat: 42.33, lng: -83.04 },
+      accuracy: 1, accuracy_type: 'rooftop', source: 'Geocodio',
+    }]));
+
+    const result = await resolvePlace('100 Main St');
+
+    expect(result).toBeNull();
+  });
+
+  it('propagates GeocodingUnavailableError (never silently returns null) when Geocodio is rate-limited', async () => {
+    mockFetchOnce(() => ({ ok: false, status: 429, json: async () => ({}) }));
+
+    await expect(resolvePlace('1051 Cedarglen Gate')).rejects.toThrow(GeocodingUnavailableError);
+  });
+
+  it('does NOT call Geocodio for a non-address (POI/place-name) query -- that still resolves via Nominatim, unchanged', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = vi.fn(async (url: any) => {
+      capturedUrl = String(url);
+      return { ok: true, status: 200, json: async () => [{
+        lat: '42.30569', lon: '-83.06437',
+        display_name: 'Vincent Massey Secondary School, Windsor, Ontario, Canada',
+        address: { road: 'Somewhere Else Road', city: 'Windsor', state: 'Ontario' },
+      }] } as Response;
+    }) as unknown as typeof fetch;
+
+    const result = await resolvePlace('Vincent Massey Secondary School');
+
+    expect(capturedUrl).toContain('nominatim.openstreetmap.org');
+    expect(capturedUrl).not.toContain('api.geocod.io');
+    expect(result).toEqual({ lat: 42.30569, lng: -83.06437 });
   });
 });
 

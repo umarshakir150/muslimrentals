@@ -525,6 +525,12 @@ function geocodioResultToCandidate(result: GeocodioResult): GeocodeCandidate {
       city: c.city,
       state: c.state,
       postcode: c.zip,
+      // Geocodio's own resolved country for this result (echoed back in the
+      // same shape structured requests send it in, e.g. "CA") -- normalized
+      // to lowercase so it can be checked with the exact same defense-in-
+      // depth pattern searchPlaces() already uses for Nominatim's
+      // country_code (see geocodeFullAddress below).
+      country_code: c.country ? c.country.toLowerCase() : undefined,
     },
     // No Nominatim-style class/place_rank/importance equivalent -- logged
     // via `type` instead so evaluateAddressMatch's diagnostic `meta` string
@@ -1612,6 +1618,71 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
   });
 }
 
+// ─── Full-address resolve for Browse's manual Search/Enter (2026-09) ───────
+// A real, founder-reported bug: routing EVERY manual search (including full
+// street addresses) through searchPlaces()'s Nominatim-only place/POI
+// pipeline meant an address search's marker accuracy was only ever as good
+// as local re-ranking of Nominatim's own candidates -- and Nominatim
+// frequently has no house-level data for a given Canadian address at all,
+// or returns a business/road/area result ranking indistinguishably from a
+// genuine address point. This app already pays for and runs Geocodio
+// specifically for address-level geocoding (the listing-creation pipeline,
+// see geocodeAddress above) -- reusing that path for a FULL ADDRESS query
+// specifically (never for POI/place-name queries, see resolvePlace below)
+// fixes this without adding a new provider or any new credential.
+//
+// Deliberately does NOT reuse geocodeAddress() as-is -- neither of its two
+// existing modes fits a single raw typed string:
+//   - Its default (non-requirePreciseMatch) free-text mode has NO accuracy
+//     gating at all -- it blindly returns whatever candidate came back
+//     first. That is exactly the "silently present an approximate location
+//     as if it were the exact address" failure this function exists to
+//     close, not something to inherit.
+//   - Its requirePreciseMatch mode DOES have real accuracy gating
+//     (evaluateAddressMatch/pickBestCandidate), but that machinery
+//     validates a candidate's own resolved city/province against SEPARATELY
+//     SUPPLIED requested street/city/province fields -- Browse's search box
+//     is one raw typed string with nothing decomposed to validate against.
+//
+// So this applies ONE simple, already-established acceptance rule instead
+// of inventing a new heuristic: geocodioResultToCandidate (see its own doc
+// comment) only ever populates address.house_number when Geocodio's own
+// accuracy_type is rooftop/point/nearest_rooftop_match -- never for
+// range_interpolation, street_center, or a bare place/state match,
+// regardless of what Geocodio's raw address_components.number said. That
+// existing, months-old normalization rule already IS this app's own
+// definition of "a genuinely precise address match" -- reused verbatim
+// here, not re-implemented, and NEVER re-ranked by any Nominatim/local
+// relevance heuristic (Geocodio's own top free-text result is used as-is,
+// or rejected outright).
+//
+// Canada-only: fetchCandidates' free-text mode (unlike its structured mode)
+// has no country= parameter for Geocodio, so the query text itself gets the
+// same explicit ", Canada" suffix geocodeAddress's own default free-text
+// mode already appends (a hint, not a hard filter) -- PLUS a result-side
+// country_code check (defense in depth, the exact pattern searchPlaces()
+// already uses for Nominatim): a candidate resolving outside Canada is
+// rejected outright, never presented.
+async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> {
+  const q = [query, 'Canada'].join(', ');
+  const description = `q="${q}" (Browse manual full-address search, free-text)`;
+
+  const [top] = await fetchCandidates({ kind: 'freeText', q }, description);
+  if (!top) return null;
+
+  const addr = top.address ?? {};
+  if (addr.country_code && addr.country_code !== 'ca') {
+    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate resolved outside Canada (country=${addr.country_code}).`);
+    return null;
+  }
+  if (!addr.house_number || !addr.road) {
+    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate has no house-number-level precision (type=${top.type ?? 'unknown'}) -- refusing to place a marker at an approximate location.`);
+    return null;
+  }
+
+  return toGeocodeResult(top, description, 'precise');
+}
+
 // ─── Manual "search my complete typed text" resolve ────────────────────────
 // Backs LocationRadiusSearch.tsx's Enter/Search action: autocomplete
 // suggestions are assistance, never a required gate. If the renter's
@@ -1620,35 +1691,20 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
 // this resolves that complete text to a single best Canadian location, or
 // null if nothing resolves.
 //
-// Deliberately reuses searchPlaces' entire pipeline (same Nominatim-only,
-// firmly Canada-restricted, locally re-ranked search that backs the
-// suggestion dropdown) and returns its #1 ranked result, rather than
-// calling geocodeAddress/GET /geocode. Diagnosed and rejected that reuse
-// for two concrete reasons, not just architectural taste:
-//   1. geocodeAddress's free-text path is switchable to Geocodio via
-//      GEOCODING_PROVIDER, and Geocodio's free-text (unstructured `q=`)
-//      mode has no hard country-restriction parameter at all -- only its
-//      STRUCTURED mode (street/city/state/country fields) can hard-filter
-//      by country. Nominatim's free-text mode, by contrast, always accepts
-//      `countrycodes=ca`. So geocodeAddress's free-text path is only
-//      reliably Canada-only when Nominatim is the active provider -- a
-//      firm, provider-independent Canada-only guarantee is exactly what
-//      this manual-search feature was asked for, and searchPlaces already
-//      always uses Nominatim regardless of GEOCODING_PROVIDER (see its own
-//      doc comment) for precisely this kind of free-form place text.
-//   2. geocodeAddress is a structured ADDRESS geocoder built to evaluate a
-//      landlord's entered street against a specific requested city/
-//      province (see the file-level doc comment) -- a different matching
-//      model than the place/POI relevance ranking that already decides
-//      what the renter sees in the suggestion dropdown. Resolving through
-//      that same ranking here means a manual search finds exactly the
-//      place the dropdown itself would have ranked #1 for that text, never
-//      a differently-tuned result from an unrelated code path.
-// This intentionally does NOT touch geocodeAddress, GET /geocode, or
-// ConfirmLocationMap.tsx's existing listing-creation search -- that is
-// live, already-shipped, unrelated functionality this task has no reason
-// to change.
+// Narrow split (2026-09, see geocodeFullAddress's own doc comment for the
+// full reasoning): a query that LOOKS LIKE a full street address (see
+// looksLikeFullAddress -- the same shape check searchPlaces' own
+// address-intent ranking already uses) resolves via Geocodio's address
+// geocoding instead of Nominatim, since accurate address-level coordinates
+// is exactly what this app already pays Geocodio for. Everything else --
+// POI/building/business/school/landmark/neighbourhood/city text -- keeps
+// resolving via searchPlaces()'s existing Nominatim-only pipeline exactly
+// as before; that pipeline, and the autocomplete suggestions dropdown that
+// shares it, are UNCHANGED by this split.
 export async function resolvePlace(query: string): Promise<GeocodeResult | null> {
+  if (looksLikeFullAddress(query)) {
+    return geocodeFullAddress(query);
+  }
   const [top] = await searchPlaces(query);
   return top ? { lat: top.lat, lng: top.lng } : null;
 }

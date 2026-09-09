@@ -131,19 +131,104 @@ describe('Geocodio provider: successful forward geocode', () => {
 // Search/Enter, GET /geocode/resolve): a query that LOOKS LIKE a full
 // street address (a leading house number) now resolves via Geocodio's own
 // forward-geocoding free-text path instead of the Nominatim-only
-// searchPlaces() pipeline -- reusing the exact accuracy_type -> house_number
-// gating geocodioResultToCandidate already applies (see that function's own
-// doc comment), never a new or re-applied Nominatim ranking heuristic.
-// Non-address queries are unaffected and still resolve through
-// searchPlaces()/Nominatim, proven here by asserting Geocodio is never
-// called for one even with GEOCODING_PROVIDER=geocodio active.
+// searchPlaces() pipeline. Acceptance is judged directly on Geocodio's own
+// accuracy_type string (never re-derived from house_number presence, which
+// is deliberately NOT populated for range_interpolation -- see
+// GEOCODIO_APPROXIMATE_ADDRESS_ACCURACY_TYPES's own comment) and never
+// re-ranked by any Nominatim heuristic. Non-address queries are unaffected
+// and still resolve through searchPlaces()/Nominatim, proven here by
+// asserting Geocodio is never called for one even with
+// GEOCODING_PROVIDER=geocodio active.
 describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () => {
-  it('resolves a full address to Geocodio\'s rooftop-precision coordinate', async () => {
+  it('1. accepts a rooftop result', async () => {
     mockFetchOnce(() => geocodioForwardResponse([rooftopResult()]));
 
     const result = await resolvePlace('1051 Cedarglen Gate');
 
-    expect(result).toEqual({ lat: 43.5789, lng: -79.6583, confidence: 'precise' });
+    expect(result).toEqual({
+      lat: 43.5789, lng: -79.6583, confidence: 'precise', accuracyType: 'rooftop', precision: 'exact',
+    });
+  });
+
+  it('2. accepts a point result', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([rooftopResult({ accuracy_type: 'point', accuracy: 1 })]));
+
+    const result = await resolvePlace('1051 Cedarglen Gate');
+
+    expect(result).toEqual({
+      lat: 43.5789, lng: -79.6583, confidence: 'precise', accuracyType: 'point', precision: 'exact',
+    });
+  });
+
+  it('3. accepts a nearest_rooftop_match result', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([rooftopResult({ accuracy_type: 'nearest_rooftop_match', accuracy: 0.8 })]));
+
+    const result = await resolvePlace('1051 Cedarglen Gate');
+
+    expect(result).toEqual({
+      lat: 43.5789, lng: -79.6583, confidence: 'precise', accuracyType: 'nearest_rooftop_match', precision: 'exact',
+    });
+  });
+
+  it('4. accepts a range_interpolation result -- a real, useful match, returned and clearly marked approximate, never rejected', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '732', street: 'Mill', suffix: 'St', formatted_street: 'Mill St', city: 'Windsor', state: 'ON', zip: 'N9C', country: 'CA' },
+      formatted_address: '732 Mill St, Windsor, ON N9C, Canada',
+      location: { lat: 42.2905, lng: -83.0455 },
+      accuracy: 0.8, accuracy_type: 'range_interpolation', source: 'TIGER/Line',
+    }]));
+
+    const result = await resolvePlace('732 Mill St');
+
+    expect(result).toEqual({
+      lat: 42.2905, lng: -83.0455, confidence: 'street', accuracyType: 'range_interpolation', precision: 'approximate',
+    });
+  });
+
+  it('5. rejects a street_center result -- too coarse to trust as an address match', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '732', street: 'Mill', suffix: 'St', formatted_street: 'Mill St', city: 'Windsor', state: 'ON', zip: 'N9C', country: 'CA' },
+      formatted_address: '732 Mill St, Windsor, ON N9C, Canada',
+      location: { lat: 42.2905, lng: -83.0455 },
+      accuracy: 0.8, accuracy_type: 'street_center', source: 'TIGER/Line',
+    }]));
+
+    const result = await resolvePlace('732 Mill St');
+
+    expect(result).toBeNull();
+  });
+
+  it('6. rejects a bare place/city-level or state-level match', async () => {
+    const placeLevel = geocodioForwardResponse([{
+      address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
+      formatted_address: 'Windsor, ON, Canada',
+      location: { lat: 42.3, lng: -83.03 },
+      accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
+    }]);
+    mockFetchOnce(() => placeLevel);
+    expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+
+    const stateLevel = geocodioForwardResponse([{
+      address_components: { state: 'ON', country: 'CA' },
+      formatted_address: 'Ontario, Canada',
+      location: { lat: 51.25, lng: -85.32 },
+      accuracy: 0.3, accuracy_type: 'state', source: 'Geocodio',
+    }]);
+    mockFetchOnce(() => stateLevel);
+    expect(await resolvePlace('999 Nonexistent Mill St')).toBeNull();
+  });
+
+  it('7. rejects a result that resolves outside Canada, even when rooftop-precise', async () => {
+    mockFetchOnce(() => geocodioForwardResponse([{
+      address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
+      formatted_address: '100 Main St, Detroit, MI 48226',
+      location: { lat: 42.33, lng: -83.04 },
+      accuracy: 1, accuracy_type: 'rooftop', source: 'Geocodio',
+    }]));
+
+    const result = await resolvePlace('100 Main St');
+
+    expect(result).toBeNull();
   });
 
   it('sends the query to Geocodio\'s free-text endpoint with an explicit Canada hint, never a structured street/city query', async () => {
@@ -159,45 +244,6 @@ describe('resolvePlace address-shaped split (Browse manual Search/Enter)', () =>
     const params = new URL(capturedUrl).searchParams;
     expect(params.get('q')).toBe('1051 Cedarglen Gate, Canada');
     expect(params.has('street')).toBe(false);
-  });
-
-  it('returns null (never a road/area centroid) for a street_center (range-interpolated) result -- refuses to place a misleading marker', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { number: '732', street: 'Mill', suffix: 'St', formatted_street: 'Mill St', city: 'Windsor', state: 'ON', zip: 'N9C', country: 'CA' },
-      formatted_address: '732 Mill St, Windsor, ON N9C, Canada',
-      location: { lat: 42.2905, lng: -83.0455 },
-      accuracy: 0.8, accuracy_type: 'street_center', source: 'TIGER/Line',
-    }]));
-
-    const result = await resolvePlace('732 Mill St');
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null for a bare place/city-level match', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { city: 'Windsor', state: 'ON', country: 'CA' },
-      formatted_address: 'Windsor, ON, Canada',
-      location: { lat: 42.3, lng: -83.03 },
-      accuracy: 0.5, accuracy_type: 'place', source: 'Geocodio',
-    }]));
-
-    const result = await resolvePlace('999 Nonexistent Mill St');
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null when Geocodio\'s best free-text result resolves outside Canada', async () => {
-    mockFetchOnce(() => geocodioForwardResponse([{
-      address_components: { number: '100', street: 'Main', formatted_street: 'Main St', city: 'Detroit', state: 'MI', zip: '48226', country: 'US' },
-      formatted_address: '100 Main St, Detroit, MI 48226',
-      location: { lat: 42.33, lng: -83.04 },
-      accuracy: 1, accuracy_type: 'rooftop', source: 'Geocodio',
-    }]));
-
-    const result = await resolvePlace('100 Main St');
-
-    expect(result).toBeNull();
   });
 
   it('propagates GeocodingUnavailableError (never silently returns null) when Geocodio is rate-limited', async () => {

@@ -164,6 +164,19 @@ export interface GeocodeResult {
   //   actual property, which is exactly why the landlord still
   //   confirms/drags the pin before anything is stored.
   confidence?: 'precise' | 'street';
+  // Only ever set by geocodeFullAddress (Browse's manual full-address
+  // Search/Enter resolve, see that function's own doc comment) -- the raw
+  // Geocodio accuracy_type string for the accepted candidate (e.g.
+  // 'rooftop', 'range_interpolation'), so a lower-confidence-but-still-
+  // useful match can be identified precisely, not just coarsely graded.
+  accuracyType?: string;
+  // Same accepted-but-not-rooftop distinction as accuracyType, collapsed to
+  // the two states a caller actually needs to act on: 'exact' means place
+  // the marker with full confidence; 'approximate' means the coordinate is
+  // genuinely on/near the right building but was only interpolated, not
+  // confirmed rooftop-precise -- never silently presented as identical to
+  // 'exact'.
+  precision?: 'exact' | 'approximate';
 }
 
 interface CandidateAddressDetails {
@@ -204,6 +217,10 @@ interface GeocodeCandidate {
   type?: string;
   place_rank?: number;
   importance?: number;
+  // Only ever populated for Geocodio (its own 0-1 accuracy score,
+  // alongside `type` carrying its accuracy_type string) -- diagnostic-log
+  // use only, same stance as importance/place_rank above.
+  accuracy?: number;
   display_name?: string;
   // Only ever populated when the query requested `namedetails=1` (see
   // searchPlaces below) -- Nominatim's full breakdown of every name-related
@@ -484,6 +501,16 @@ interface GeocodioResult {
 // house_number note below for why this can't just be "was a house number
 // present in the input".
 const GEOCODIO_PRECISE_ACCURACY_TYPES = new Set(['rooftop', 'point', 'nearest_rooftop_match']);
+// accuracy_type values that are still a genuinely useful ADDRESS match --
+// Geocodio estimated a point along the correct street segment between two
+// known addresses -- but not confirmed rooftop-precise. Used only by
+// geocodeFullAddress (Browse's manual full-address resolve) to accept and
+// clearly mark a result as approximate rather than reject it outright;
+// deliberately NOT added to GEOCODIO_PRECISE_ACCURACY_TYPES above, which
+// several OTHER call sites (evaluateAddressMatch's precise/street grading
+// for the listing-address pipeline) depend on meaning "rooftop-confirmed"
+// specifically.
+const GEOCODIO_APPROXIMATE_ADDRESS_ACCURACY_TYPES = new Set(['range_interpolation']);
 // accuracy_type values that mean "no real street match at all" -- a bare
 // city or province/state centroid, the Geocodio equivalent of Nominatim
 // returning a result with no `address.road`.
@@ -536,6 +563,7 @@ function geocodioResultToCandidate(result: GeocodioResult): GeocodeCandidate {
     // via `type` instead so evaluateAddressMatch's diagnostic `meta` string
     // still shows Geocodio's own confidence signal.
     type: result.accuracy_type,
+    accuracy: result.accuracy,
     display_name: result.formatted_address,
   };
 }
@@ -1644,17 +1672,27 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
 //     SUPPLIED requested street/city/province fields -- Browse's search box
 //     is one raw typed string with nothing decomposed to validate against.
 //
-// So this applies ONE simple, already-established acceptance rule instead
-// of inventing a new heuristic: geocodioResultToCandidate (see its own doc
-// comment) only ever populates address.house_number when Geocodio's own
-// accuracy_type is rooftop/point/nearest_rooftop_match -- never for
-// range_interpolation, street_center, or a bare place/state match,
-// regardless of what Geocodio's raw address_components.number said. That
-// existing, months-old normalization rule already IS this app's own
-// definition of "a genuinely precise address match" -- reused verbatim
-// here, not re-implemented, and NEVER re-ranked by any Nominatim/local
-// relevance heuristic (Geocodio's own top free-text result is used as-is,
-// or rejected outright).
+// Acceptance is judged directly on Geocodio's own accuracy_type string
+// (top.type, always threaded through by geocodioResultToCandidate
+// regardless of precision -- see that function's own doc comment),
+// NOT on address.house_number presence: that field is deliberately left
+// unpopulated for range_interpolation (to keep the LISTING-address
+// pipeline's own precise/street grading correct elsewhere in this file --
+// untouched, not something this function should perturb), which would
+// otherwise make a genuinely useful interpolated address indistinguishable
+// from a bare road/area match here. Two accepted tiers, never re-ranked by
+// any Nominatim/local relevance heuristic (Geocodio's own top free-text
+// result is used as-is, or rejected outright):
+//   'exact'       -- rooftop / point / nearest_rooftop_match. Presented
+//                    with full confidence.
+//   'approximate' -- range_interpolation. A real, useful match (Geocodio
+//                    estimated a point along the correct street segment
+//                    between two known addresses) -- returned, never
+//                    rejected, but tagged so a caller can show it as
+//                    approximate rather than implying rooftop precision.
+// Everything else (street_center, place, state, or no candidate at all) is
+// rejected outright -- "Location not found" is more honest than a marker
+// silently placed at a road or neighbourhood centroid.
 //
 // Canada-only: fetchCandidates' free-text mode (unlike its structured mode)
 // has no country= parameter for Geocodio, so the query text itself gets the
@@ -1663,6 +1701,12 @@ function dedupeByLabel<T extends { suggestion: PlaceSuggestion }>(items: T[]): T
 // country_code check (defense in depth, the exact pattern searchPlaces()
 // already uses for Nominatim): a candidate resolving outside Canada is
 // rejected outright, never presented.
+//
+// Every branch logs the same sanitized field set (never the full request/
+// response) for diagnosing a specific real-world address: accuracy_type,
+// accuracy score, formatted address, lat/lng, and resolved country -- all
+// data Geocodio already returns for the address as typed, never anything
+// beyond that.
 async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> {
   const q = [query, 'Canada'].join(', ');
   const description = `q="${q}" (Browse manual full-address search, free-text)`;
@@ -1671,16 +1715,30 @@ async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> 
   if (!top) return null;
 
   const addr = top.address ?? {};
+  const sanitizedFields = () =>
+    `accuracy_type=${top.type ?? 'unknown'}, accuracy=${top.accuracy ?? 'unknown'}, ` +
+    `formatted="${top.display_name ?? 'unknown'}", lat=${top.lat ?? 'unknown'}, lng=${top.lon ?? 'unknown'}, ` +
+    `country=${addr.country_code ?? 'unknown'}`;
+
   if (addr.country_code && addr.country_code !== 'ca') {
-    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate resolved outside Canada (country=${addr.country_code}).`);
-    return null;
-  }
-  if (!addr.house_number || !addr.road) {
-    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate has no house-number-level precision (type=${top.type ?? 'unknown'}) -- refusing to place a marker at an approximate location.`);
+    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate resolved outside Canada (${sanitizedFields()}).`);
     return null;
   }
 
-  return toGeocodeResult(top, description, 'precise');
+  const accuracyType = top.type;
+  const isExact = accuracyType ? GEOCODIO_PRECISE_ACCURACY_TYPES.has(accuracyType) : false;
+  const isApproximate = accuracyType ? GEOCODIO_APPROXIMATE_ADDRESS_ACCURACY_TYPES.has(accuracyType) : false;
+
+  if (!addr.road || (!isExact && !isApproximate)) {
+    logger.warn(`Full-address resolve REJECTED for [${description}]: best candidate is not address-level precision (${sanitizedFields()}).`);
+    return null;
+  }
+
+  const result = toGeocodeResult(top, description, isExact ? 'precise' : 'street');
+  if (!result) return null;
+
+  logger.info(`Full-address resolve ACCEPTED (${isExact ? 'exact' : 'approximate'}) for [${description}]: ${sanitizedFields()}.`);
+  return { ...result, accuracyType, precision: isExact ? 'exact' : 'approximate' };
 }
 
 // ─── Manual "search my complete typed text" resolve ────────────────────────

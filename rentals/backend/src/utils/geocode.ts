@@ -1773,9 +1773,19 @@ async function geocodeFullAddress(query: string): Promise<GeocodeResult | null> 
 // resolving via searchPlaces()'s existing Nominatim-only pipeline exactly
 // as before; that pipeline, and the autocomplete suggestions dropdown that
 // shares it, are UNCHANGED by this split.
+//
+// looksLikeFullAddress is a SHAPE check only (leading house number + more
+// text) -- it also matches plenty of real business/POI names that happen to
+// start with a number ("24 Hour Fitness", "7-Eleven Windsor", "3 Brewers").
+// Geocodio is a pure address geocoder with no POI data, so it legitimately
+// finds nothing for those -- rather than dead-ending on "Location not
+// found" for a query Nominatim could resolve just fine, fall back to the
+// same searchPlaces() path every non-address-shaped query already uses.
+// A genuine address that Geocodio DOES resolve never reaches this fallback.
 export async function resolvePlace(query: string): Promise<GeocodeResult | null> {
   if (looksLikeFullAddress(query)) {
-    return geocodeFullAddress(query);
+    const addressResult = await geocodeFullAddress(query);
+    if (addressResult) return addressResult;
   }
   const [top] = await searchPlaces(query);
   return top ? { lat: top.lat, lng: top.lng } : null;

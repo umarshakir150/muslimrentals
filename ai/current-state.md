@@ -24,6 +24,11 @@ still-in-progress future work. Until that deploy happens, do not describe
 report-a-user/message, the admin moderation toolkit, the location/privacy
 work, or the qualifying-interaction evidence below as "in production" —
 they are real and live in `main`/Render, not yet on `muslimrentals.ca`.
+**PR #21** (Browse place/address search + radius, see its own section
+below) is further behind still — open against `main`, not yet merged at
+all, though its backend is already live and founder-QA-passed on the
+shared Render-tracked branch (which powers PR #21's own Deploy Preview,
+not production).
 Update this file whenever the picture materially changes — don't let it
 drift into fiction.
 
@@ -64,6 +69,14 @@ drift into fiction.
 - User-initiated account deletion (Settings), anonymizing rather than
   hard-deleting to preserve other users' shared conversation history.
 - Seeded reference data: mosques and Canadian cities.
+- **Merged to the Render-tracked backend branch, NOT yet in `main`/
+  production** (open as PR #21, see its own section below): Browse's
+  location-radius search now resolves POIs/buildings/businesses/schools/
+  landmarks/neighbourhoods/cities (Nominatim) and full street addresses
+  (Geocodio, with real rooftop/approximate precision) via manual Search/
+  Enter, independent of autocomplete suggestions; search radius now goes
+  down to 0.5km (was 1km); an embedded mini-map previews the searched
+  point/radius/listings inline.
 
 ## Incomplete / not-yet-built features
 
@@ -73,15 +86,72 @@ drift into fiction.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 
+## PR #21 — Browse place/address search + radius (open, not merged)
+
+**Status (2026-09-09): implementation-complete, founder browser-QA-passed
+on Deploy Preview #21, backend already live and verified on the shared
+Render-tracked branch — but deliberately not yet merged to `main`.** See
+`ai/decisions.md`'s 2026-09-08/09 entry for the full round-by-round history
+(a release-blocking Render outage and diagnostic rollback midway through,
+root-caused as unconfirmed/likely infrastructure rather than this PR's own
+code; the search-ranking and geocoding work itself). Current architecture:
+
+- **Autocomplete/place suggestions** (`GET /geocode/suggestions`,
+  `searchPlaces()`): unchanged from the original design — always Nominatim
+  (no API key, free), Canada-only, locally re-ranked so POI/place names
+  aren't crowded out by address-line or road matches, soft per-category
+  diversity capping.
+- **Manual Search/Enter** (`GET /geocode/resolve`, `resolvePlace()`): a
+  full street address (a leading house number) now resolves via Geocodio
+  — the same provider/key already used for listing-creation geocoding, no
+  new credential — with real precision handling:
+  `rooftop`/`point`/`nearest_rooftop_match` → exact;
+  `range_interpolation`/`street_center` → accepted and returned, tagged
+  `precision: 'approximate'` (surfaced in the UI as "(Approximate
+  location)"); `place`/`state`/non-Canadian → rejected as
+  "Location not found" rather than silently placing a misleading marker.
+  Everything else (POI/building/business/school/landmark/neighbourhood/
+  city text) still resolves via the same Nominatim pipeline the dropdown
+  uses. The listing-creation address pipeline's own (stricter) precision
+  grading is untouched by any of this.
+- **Radius**: 0.5km–10km (was 1–10km), inclusive distance filtering
+  unchanged. Mini-map preview unchanged.
+- 578 backend / 388 frontend tests passing, `tsc --noEmit` and production
+  build clean on both stacks, at the PR's current head.
+
+**Outstanding before merge — not a code defect, a policy/ToS constraint:**
+autocomplete still runs on the public Nominatim instance
+(`nominatim.openstreetmap.org`), which is free but usage-policy-restricted
+(not licensed for sustained production autocomplete traffic at real
+scale). This was flagged explicitly during this PR's own design phase and
+remains unresolved and undecided — see `ai/decisions.md` for the full
+provider-options research (Google Maps Platform evaluated and its exact
+Cloud setup steps documented, pending founder's own manual provisioning;
+Geocodio confirmed to have no general place/POI-search product) — a
+separate decision from, and not blocking on, the address-geocoding fixes
+in this PR. Founder has not yet decided whether/when to migrate off
+Nominatim for this feature.
+
+**Not merged, not deployed to production:** PR #21 remains open; `main`
+and production Netlify are untouched by it. Production deploy stays
+pinned at the founder's explicit request, batched with the rest of the
+accumulated `main`-vs-production gap already described at the top of this
+file.
+
+**Revisit when:** the founder decides on the Nominatim migration question
+and/or is ready to merge PR #21.
+
 ## Testing status
 
-**No automated test suite exists.** No `*.test.*` or `*.spec.*` files, no
-test runner configured in `rentals/frontend/package.json` or
-`rentals/backend/package.json`. `type-check` (frontend `tsc --noEmit`) and
-`lint` scripts exist on both sides and can be run as a cheap correctness
-check, but they are not a substitute for tests. Until a test suite exists,
-QA and manual verification are the only correctness gates — do not skip
-them because "there are no tests to run."
+**Vitest test suites exist and are actively maintained on both sides** —
+578 backend tests (`rentals/backend/tests/`) and 388 frontend tests
+(`rentals/frontend/src/**/*.test.tsx`), run via `npm test` in each
+package. `type-check` (`tsc --noEmit`) and `lint` scripts also exist on
+both sides. There is still **no CI** enforcing any of this automatically
+on every push/PR (see "Security posture" below) — tests are run manually
+before each PR/port, not gated by GitHub Actions or equivalent. Until CI
+exists, treat "the suite passes locally" as necessary but not sufficient;
+don't skip manual/QA verification because automated tests exist now.
 
 ## Deployment status
 
@@ -152,7 +222,9 @@ them from scratch each time.
 
 ## Technical debt
 
-- No test suite, no CI — the biggest structural gap.
+- No CI — Vitest suites exist on both sides (see "Testing status" above)
+  but nothing enforces them automatically on push/PR. Still the biggest
+  structural gap.
 - Frontend has `swr` installed but the actual data-fetching path is a
   hand-rolled `ApiClient` — worth resolving one way or the other rather
   than growing both patterns in parallel.
@@ -169,8 +241,11 @@ them from scratch each time.
    non-destructive documentation work — good first task to validate this
    operating system, see the end of this task's final report for the
    suggested next prompt).
-3. Stand up a minimal test runner (even a handful of smoke tests) before
-   any large feature work, so QA has something automated to lean on.
+3. Wire the existing Vitest suites into CI (e.g. GitHub Actions) so they
+   run automatically on every push/PR — the suites themselves already
+   exist (see "Testing status" above); this is a pending founder approval
+   (backlog item, security-architecture-approval-required per the
+   autonomous orchestrator's own risk classifier).
 4. Scope roommate profiles as new feature work (schema + auth model +
    Trust & Safety + Legal review) before implementing — do not bolt it onto
    the existing `Listing` model without a deliberate design pass.

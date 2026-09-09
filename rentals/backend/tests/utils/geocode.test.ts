@@ -1453,6 +1453,121 @@ describe('searchPlaces', () => {
     });
   });
 
+  // Founder-reported real symptom: a full street address search would
+  // resolve/succeed, but place the marker in the WRONG location. Root
+  // cause (confirmed with synthetic data against the ranking as it stood
+  // before this section): scoreCandidateRelevance treats a candidate's
+  // house_number+road "street-line" purely as text -- it never asks
+  // whether the underlying OSM entity is actually a plain address point
+  // versus a business/POI that Nominatim happens to have geocoded to the
+  // SAME house number (a business occupies a real numbered building). Both
+  // then score identically at the address-line ceiling for an exact-phrase
+  // match, and the tie silently falls back to Nominatim's own original
+  // order -- which commonly ranks a named, "important" POI above a bare
+  // residential address node. This section adds a narrow, ADDITIONAL
+  // scoring path (scoreAddressIntentCandidate), active only when the query
+  // itself looks like a full street address (a leading house number), that
+  // classifies each candidate's KIND from Nominatim's own class/type/
+  // address metadata (never from its name/text) and enforces:
+  // address > road > poi > neighborhood > city > postal. A bare place/POI
+  // name query is completely unaffected and keeps using
+  // scoreCandidateRelevance exactly as before.
+  describe('address-intent ranking (full street address queries)', () => {
+    // Every OSM class/type value below is Nominatim's own general-purpose
+    // vocabulary (documented taxonomy), not tied to any specific address,
+    // street, or city -- the same shape works for any Canadian address.
+    const poiOnSameHouseNumber = {
+      lat: '42.30100', lon: '-83.05200',
+      display_name: 'Sample Pharmacy, 452, Sample Street, Anytown, Ontario, Canada',
+      class: 'shop', type: 'pharmacy',
+      address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+    const exactAddressPoint = {
+      lat: '42.30150', lon: '-83.05250',
+      display_name: '452, Sample Street, Anytown, Ontario, Canada',
+      class: 'place', type: 'house',
+      address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+    const roadOnly = {
+      lat: '42.30500', lon: '-83.04800',
+      display_name: 'Sample Street, Anytown, Ontario, Canada',
+      class: 'highway', type: 'residential',
+      address: { road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+    };
+
+    it('1. exact house-number + street beats a road-only result', async () => {
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [roadOnly, exactAddressPoint] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results[0].lat).toBe(42.3015);
+      expect(results[0].lng).toBe(-83.0525);
+    });
+
+    it('2. exact address beats a POI geocoded to the same house number on the same street', async () => {
+      // Reproduces the founder-reported bug directly: without kind-based
+      // ranking, this POI ties the address point's score (both hit the
+      // address-line ceiling for an exact-phrase match) and wins on
+      // Nominatim's own original order (listed first here, as it commonly
+      // is in real responses).
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [poiOnSameHouseNumber, exactAddressPoint] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results[0].lat).toBe(42.3015);
+      expect(results[0].lng).toBe(-83.0525);
+      expect(results[0].label).not.toContain('Pharmacy');
+    });
+
+    it('3. road-only still works when no exact address exists', async () => {
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [roadOnly] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].lat).toBe(42.305);
+      expect(results[0].lng).toBe(-83.048);
+    });
+
+    it('4. a named POI query (not address-shaped) still prefers the POI/name match, unaffected by address-intent ranking', async () => {
+      // No leading house number -- looksLikeFullAddress is false, so this
+      // must use the ordinary name-based scoreCandidateRelevance, exactly
+      // as it did before this section existed.
+      const namedPoi = {
+        lat: '42.31', lon: '-83.02',
+        display_name: 'Riverside Community Centre, Anytown, Ontario, Canada',
+        class: 'amenity', type: 'community_centre',
+        address: { road: 'Some Other Road', city: 'Anytown', state: 'Ontario' },
+      };
+      const unrelatedRoad = {
+        lat: '42.40', lon: '-83.10',
+        display_name: 'Riverside Drive, Anytown, Ontario, Canada',
+        class: 'highway', type: 'residential',
+        address: { road: 'Riverside Drive', city: 'Anytown', state: 'Ontario' },
+      };
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [unrelatedRoad, namedPoi] }));
+
+      const results = await searchPlaces('Riverside Community Centre');
+
+      expect(results[0].label).toContain('Riverside Community Centre');
+    });
+
+    it('5. Canada-only enforcement remains active for address-shaped queries', async () => {
+      const usAddressPoint = {
+        lat: '42.5', lon: '-83.5',
+        display_name: '452, Sample Street, Some City, Michigan, United States',
+        class: 'place', type: 'house',
+        address: { house_number: '452', road: 'Sample Street', city: 'Some City', state: 'Michigan', country_code: 'us' },
+      };
+      mockFetchOnce(() => ({ ok: true, status: 200, json: async () => [usAddressPoint, roadOnly] }));
+
+      const results = await searchPlaces('452 Sample Street');
+
+      expect(results.some((r) => r.label.includes('Michigan'))).toBe(false);
+      expect(results[0].lat).toBe(42.305); // falls back to the (Canadian) road-only result
+    });
+  });
+
   describe('resolvePlace (manual "search my complete typed text" resolve)', () => {
     it('resolves to the top-ranked searchPlaces() result', async () => {
       mockFetchOnce(() => ({
@@ -1468,6 +1583,31 @@ describe('searchPlaces', () => {
       const result = await resolvePlace('Vincent Massey Secondary School');
 
       expect(result).toEqual({ lat: 42.30569, lng: -83.06437 });
+    });
+
+    it('resolves a full street address to the exact address point, not a POI on the same block, independently of the dropdown -- manual search is never gated by what searchPlaces happened to display', async () => {
+      mockFetchOnce(() => ({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            lat: '42.30100', lon: '-83.05200',
+            display_name: 'Sample Pharmacy, 452, Sample Street, Anytown, Ontario, Canada',
+            class: 'shop', type: 'pharmacy',
+            address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          },
+          {
+            lat: '42.30150', lon: '-83.05250',
+            display_name: '452, Sample Street, Anytown, Ontario, Canada',
+            class: 'place', type: 'house',
+            address: { house_number: '452', road: 'Sample Street', city: 'Anytown', state: 'Ontario' },
+          },
+        ],
+      }));
+
+      const result = await resolvePlace('452 Sample Street');
+
+      expect(result).toEqual({ lat: 42.3015, lng: -83.0525 });
     });
 
     it('returns null (never throws) when nothing matches', async () => {

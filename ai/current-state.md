@@ -176,9 +176,9 @@ don't skip manual/QA verification because automated tests exist now.
 ## Deployment status
 
 **Live in production** (as of 2026-08-28, founder-directed): frontend on
-Netlify (`muslimrentals.netlify.app`, deploys from `main`), backend on
-Render (`muslim-rentals-backend`, a pre-existing service from June
-repointed to deploy from the `claude/multi-agent-os-setup-y2wprj` branch),
+Netlify (`muslimrentals.netlify.app`), backend on Render
+(`muslim-rentals-backend`, a pre-existing service from June repointed to
+deploy from the `claude/multi-agent-os-setup-y2wprj` branch),
 database on Supabase (project `mxpoenfnqrfwznquaibd`), connected via the
 `postgres` role over Supavisor's session pooler
 (`aws-1-us-east-2.pooler.supabase.com:5432` — the pooler only recognizes
@@ -199,6 +199,23 @@ bugs found and fixed live during this rollout (uploads.ts's AWS-config
 boot crash; GET /listings's 50-row cap rejecting the map page's real
 limit=200 requests; a wrong-password error message; a missing
 reset-password page; an empty City table blocking listing posts).
+
+**Netlify's production auto-deploy has been OFF since 2026-09-01**
+(founder's own action, a Netlify project setting — see
+`ai/operating-directive.md`'s "Milestone release workflow" section). This
+is why merging a PR into `main` no longer moves production forward on its
+own: `main` is the reviewed baseline that PRs build on, and production
+only advances when the founder explicitly triggers a deploy from a chosen
+`main` HEAD. **No session may ever change this setting** (auto-deploy
+toggle, production branch, or any other Netlify site/deploy config) —
+confirm it's still off before assuming so, rather than assuming it stays
+off indefinitely, and never toggle it. This is the mechanism behind the
+"one final accumulated deploy" framing at the top of this file and in
+`CLAUDE.md`'s standing status flag — it is not a manual reminder someone
+has to keep re-applying, it is how the Netlify project is actually
+configured right now. The Render backend is unaffected by this — it has
+no equivalent preview/gating mechanism and continues to auto-deploy from
+its tracked branch as described above.
 
 **Resolved — outbound email is configured and working.** Transactional
 email (password reset, change-email confirmation, welcome email) is sent

@@ -957,13 +957,14 @@ describe('searchPlaces', () => {
   // candidate for a short partial query was simply never fetched,
   // regardless of debounce timing or minimum query length (both already
   // correct and unrelated to this). Now split into two constants: a wider
-  // internal fetch pool (NOMINATIM_FETCH_LIMIT=15) so more of the
-  // candidates that COULD be relevant are actually available to rank, and
-  // a separate, smaller display cap (DISPLAY_SUGGESTION_LIMIT=8, still
-  // within the founder's own "5-8 is fine" guidance) applied only after
-  // local re-ranking.
+  // internal fetch pool (NOMINATIM_FETCH_LIMIT=30, raised again from an
+  // earlier 15 on 2026-09-09 -- a broader founder-reported "the dropdown
+  // misses many real places" complaint) so more of the candidates that
+  // COULD be relevant are actually available to rank, and a separate,
+  // smaller display cap (DISPLAY_SUGGESTION_LIMIT=10, raised from 8
+  // alongside it) applied only after local re-ranking.
   describe('candidate window (early partial-query suggestions + wider internal pool)', () => {
-    it('requests up to 15 candidates per query (a wider internal pool than what is ever displayed)', async () => {
+    it('requests up to 30 candidates per query (a wider internal pool than what is ever displayed)', async () => {
       let capturedUrl = '';
       globalThis.fetch = vi.fn(async (url) => {
         capturedUrl = String(url);
@@ -972,14 +973,14 @@ describe('searchPlaces', () => {
 
       await searchPlaces('Some Partial Query');
 
-      expect(new URL(capturedUrl).searchParams.get('limit')).toBe('15');
+      expect(new URL(capturedUrl).searchParams.get('limit')).toBe('30');
     });
 
-    it('never displays more than 8 suggestions even when Nominatim supplies more', async () => {
+    it('never displays more than 10 suggestions even when Nominatim supplies more', async () => {
       mockFetchOnce(() => ({
         ok: true,
         status: 200,
-        json: async () => Array.from({ length: 15 }, (_, i) => ({
+        json: async () => Array.from({ length: 30 }, (_, i) => ({
           lat: String(43 + i * 0.01), lon: String(-79 - i * 0.01),
           display_name: `Place ${i}, Anytown, Ontario, Canada`,
           address: { road: `Street ${i}`, city: 'Anytown', state: 'Ontario' },
@@ -988,14 +989,14 @@ describe('searchPlaces', () => {
 
       const results = await searchPlaces('Pla');
 
-      expect(results).toHaveLength(8);
+      expect(results).toHaveLength(10);
     });
 
-    it('returns all 8 candidates when Nominatim supplies that many for a genuinely broad partial query', async () => {
+    it('returns all 10 candidates when Nominatim supplies that many for a genuinely broad partial query', async () => {
       mockFetchOnce(() => ({
         ok: true,
         status: 200,
-        json: async () => Array.from({ length: 8 }, (_, i) => ({
+        json: async () => Array.from({ length: 10 }, (_, i) => ({
           lat: String(43 + i * 0.01), lon: String(-79 - i * 0.01),
           display_name: `Place ${i}, Anytown, Ontario, Canada`,
           address: { road: `Street ${i}`, city: 'Anytown', state: 'Ontario' },
@@ -1004,7 +1005,7 @@ describe('searchPlaces', () => {
 
       const results = await searchPlaces('Pla');
 
-      expect(results).toHaveLength(8);
+      expect(results).toHaveLength(10);
     });
   });
 
@@ -1393,7 +1394,10 @@ describe('searchPlaces', () => {
     // equally-ranked candidates make it into the limited display window.
     describe('result diversity (soft per-category cap on the DISPLAYED window)', () => {
       it('makes room for a differently-categorized match that would otherwise be crowded out by many tied same-category results', async () => {
-        const shopNames = ['Pharmacy', 'Dental', 'Nails', 'Bakery', 'Cafe', 'Salon', 'Bank', 'Cleaners', 'Florist'];
+        const shopNames = [
+          'Pharmacy', 'Dental', 'Nails', 'Bakery', 'Cafe', 'Salon', 'Bank', 'Cleaners', 'Florist',
+          'Barber', 'Bookstore', 'Gym',
+        ];
         const pool = [
           ...shopNames.map((name, i) => ({
             lat: String(43 + i * 0.001), lon: String(-81 - i * 0.001),
@@ -1415,7 +1419,7 @@ describe('searchPlaces', () => {
 
         const results = await searchPlaces('Riverside Plaza');
 
-        expect(results).toHaveLength(8); // still respects DISPLAY_SUGGESTION_LIMIT
+        expect(results).toHaveLength(10); // still respects DISPLAY_SUGGESTION_LIMIT
         expect(results.some((r) => r.label.includes('Community Centre'))).toBe(true);
       });
 

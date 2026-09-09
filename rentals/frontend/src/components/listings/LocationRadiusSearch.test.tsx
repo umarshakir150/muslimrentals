@@ -371,7 +371,7 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
     });
   });
 
-  it('shows the radius slider (1-10km) once a location is set', async () => {
+  it('shows the radius slider (0.5-10km) once a location is set', async () => {
     geocodeSuggestionsMock.mockResolvedValue({ data: [TOLDO_LANCER_CENTRE] });
     render(<LocationRadiusSearch />);
     const input = screen.getByLabelText('Search a location');
@@ -383,8 +383,22 @@ describe('LocationRadiusSearch (place/address autocomplete)', () => {
     fireEvent.mouseDown(await screen.findByText('Toldo Lancer Centre, Windsor, Ontario'));
 
     const slider = screen.getByRole('slider') as HTMLInputElement;
-    expect(slider.min).toBe('1');
+    expect(slider.min).toBe('0.5');
     expect(slider.max).toBe('10');
+    expect(slider.step).toBe('0.5');
+  });
+
+  it('allows moving the radius slider down to the 0.5km minimum', () => {
+    useFilterStore.setState((s) => ({ filters: { ...s.filters, lat: 43.773, lng: -79.257 } }));
+    render(<LocationRadiusSearch />);
+
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '0.5' } });
+
+    expect(useFilterStore.getState().filters.radiusKm).toBe(0.5);
+    // "0.5 km" legitimately appears twice once the value is at the floor:
+    // once as the current-value display, once as the slider's own min-bound
+    // label -- both correct now that they coincide.
+    expect(screen.getAllByText('0.5 km').length).toBeGreaterThan(0);
   });
 
   it('moving the radius slider updates filters.radiusKm', () => {

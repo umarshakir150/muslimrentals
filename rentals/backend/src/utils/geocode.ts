@@ -922,13 +922,27 @@ export interface PlaceSuggestion {
 // fixes that -- raising this alone, without local re-ranking, was already
 // tried and wasn't enough (a founder-reported symptom: "Vincent Massey"
 // staying dominated by unrelated "Vincent"-only matches while typing).
-const NOMINATIM_FETCH_LIMIT = 15;
+//
+// Raised from 15 -> 30 (2026-09-09, founder-reported "the dropdown misses
+// many real places") -- still comfortably under Nominatim's own documented
+// `limit` ceiling of 40 for the /search endpoint, and this only changes how
+// many results ONE request asks for, not how often requests are made, so it
+// does not affect the app's Nominatim rate-limit exposure (see the 429
+// handling elsewhere in this file). A bigger fetch pool can only ever add
+// candidates the local re-ranking below gets to consider -- it never
+// changes which candidates Nominatim itself decided to match in the first
+// place; that ceiling is the still-unresolved Nominatim autocomplete-policy
+// issue tracked separately as a PR #21 merge blocker.
+const NOMINATIM_FETCH_LIMIT = 30;
 
 // How many suggestions are actually shown, after local re-ranking and
 // dedup. Kept modest and separate from the fetch pool above -- widening
 // the fetch pool improves WHICH candidates are available to rank; this is
 // purely about not dumping a wall of noisy results into the dropdown.
-const DISPLAY_SUGGESTION_LIMIT = 8;
+// Raised from 8 -> 10 alongside the fetch-pool widening above, so a wider
+// candidate pool can actually surface as more distinct, diverse places in
+// the dropdown rather than being cut off at the old, narrower window.
+const DISPLAY_SUGGESTION_LIMIT = 10;
 
 // The alternate-name OSM tags Nominatim's `namedetails=1` can return
 // alongside an element's primary `name` -- checked, in this order, when the

@@ -9,8 +9,9 @@ import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import SearchRadiusMiniMap from './SearchRadiusMiniMap';
 
-const MIN_RADIUS_KM = 1;
+const MIN_RADIUS_KM = 0.5;
 const MAX_RADIUS_KM = 10;
+const RADIUS_STEP_KM = 0.5;
 
 // Matches the backend's own `q: z.string().trim().min(2)` -- no point
 // firing a request for a query the API will reject outright.
@@ -415,9 +416,9 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
             type="range"
             min={MIN_RADIUS_KM}
             max={MAX_RADIUS_KM}
-            step={1}
+            step={RADIUS_STEP_KM}
             value={filters.radiusKm || MIN_RADIUS_KM}
-            onChange={(e) => setFilters({ radiusKm: parseInt(e.target.value, 10) })}
+            onChange={(e) => setFilters({ radiusKm: parseFloat(e.target.value) })}
             className="w-full"
           />
           <div className="flex justify-between text-[10px] text-muted mt-0.5">

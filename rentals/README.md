@@ -216,17 +216,34 @@ npm run build
 npm start
 ```
 
-### Recommended stack
-- **Backend:** Railway, Render, or DigitalOcean App Platform
-- **Database:** Supabase, Railway PostgreSQL, or Neon
-- **Storage:** Cloudflare R2 (cheaper than S3) or AWS S3
-- **Frontend:** Vercel (zero-config for Next.js)
+### Actual production stack
+
+This is not a generic recommendation — it's the platform this project is
+actually deployed on today, founder-directed and verified end-to-end with
+real production traffic:
+
+- **Frontend:** Netlify (`muslimrentals.netlify.app`)
+- **Backend:** Render (`muslim-rentals-backend`)
+- **Database:** Supabase, connected via Supavisor's session pooler
+- **Storage:** Cloudflare R2 (S3-compatible; see `backend/.env.example`'s
+  `S3_ENDPOINT`/`S3_PUBLIC_URL_BASE` for the R2-specific env vars)
+
+Railway was evaluated and fully verified working early on, then explicitly
+decommissioned in favor of Render — do not deploy to or reconfigure
+Railway for this project. Neon was never used.
+
+**Netlify's production auto-deploy is currently OFF** (a deliberate,
+founder-controlled Netlify project setting) — merging into `main` does
+not by itself push a new production build. Production only updates when
+the founder explicitly triggers a deploy. See `ai/current-state.md`'s
+"Deployment status" section and `ai/operating-directive.md`'s "Milestone
+release workflow" for the full detail; no agent may change this setting.
 
 ### Environment setup for production
 1. Set `NODE_ENV=production` in backend
 2. Use strong, randomly generated JWT secrets (32+ chars each)
-3. Set `FRONTEND_URL` to your Vercel domain in backend env
-4. Set `NEXT_PUBLIC_API_URL` to your backend URL in Vercel env
+3. Set `FRONTEND_URL` to your production Netlify domain in backend env
+4. Set `NEXT_PUBLIC_API_URL` to your Render backend URL in Netlify env
 
 ---
 

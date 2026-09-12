@@ -340,6 +340,26 @@ describe('Admin Reports panel: targetType branching', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restrict user' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Ban user' })).not.toBeInTheDocument();
   });
+
+  // Regression coverage for the Reports panel's own "Unban user" action
+  // (distinct from -- and gated separately from -- the User Search panel's
+  // copy of the same button, see the "User Search / User Management"
+  // describe block below): PATCH /admin/users/:id/unban is ADMIN-only
+  // server-side (requireRole(ADMIN), admin.ts), and the frontend correctly
+  // hides it from MODERATOR here too, but nothing previously asserted that.
+  it('a MODERATOR does not see "Unban user" for an already-banned reported user (ADMIN-only)', async () => {
+    useUserMock.mockReturnValue(MODERATOR_USER);
+    mockReports([{
+      id: 'r9',
+      targetType: 'USER',
+      reason: 'Scam or fraud attempt',
+      reporter: { name: 'Bob' },
+      reportedUser: { id: 'u9', name: 'Dave', email: 'dave@example.com', isBanned: true, banReason: 'Repeated scam listings' },
+    }]);
+    render(<AdminPage />);
+    await waitFor(() => expect(screen.getByText(/Dave/)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Unban user' })).not.toBeInTheDocument();
+  });
 });
 
 describe('Admin Reports panel: emails shown alongside names for unambiguous identity', () => {

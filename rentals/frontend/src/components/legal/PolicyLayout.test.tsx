@@ -24,9 +24,7 @@ describe('PolicyLayout', () => {
     const h2s = screen.getAllByRole('heading', { level: 2 });
     expect(h2s[0]).toHaveTextContent('1. Section heading 0');
     expect(h2s[1]).toHaveTextContent('2. Section heading 1');
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.getElementById('section-0')).toBeInTheDocument();
-    // eslint-disable-next-line testing-library/no-node-access
     expect(document.getElementById('section-1')).toBeInTheDocument();
   });
 

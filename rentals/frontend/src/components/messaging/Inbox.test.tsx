@@ -133,7 +133,6 @@ describe('Inbox: sending a message never shows a client-side duplicate', () => {
 
     const sentMessage = message({ id: 'msg-race', body: "I'm interested!" });
     await user.type(screen.getByPlaceholderText('Write a message...'), "I'm interested!");
-    // eslint-disable-next-line testing-library/no-node-access
     await user.click(container.querySelector('form button[type="submit"]')!);
 
     // 1. REST/socket flow: the server's broadcast reaches this same client
@@ -228,7 +227,6 @@ describe('Inbox: messages stay in the conversation they belong to', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
 
     await user.type(screen.getByPlaceholderText('Write a message...'), 'meant for conv-1');
-    // eslint-disable-next-line testing-library/no-node-access
     await user.click(container.querySelector('form button[type="submit"]')!);
 
     // Switch to conv-2 before the send resolves. "Conv B listing" now

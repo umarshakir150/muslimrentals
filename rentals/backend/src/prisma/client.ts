@@ -13,7 +13,7 @@ export const prisma = globalThis.__prisma ?? new PrismaClient({
 });
 
 if (process.env.NODE_ENV === 'development') {
-  // @ts-ignore
+  // @ts-expect-error -- 'query' event typing requires the 'event' log config above, which is set
   prisma.$on('query', (e: any) => {
     if (process.env.LOG_QUERIES === 'true') {
       logger.debug(`Query: ${e.query} | Duration: ${e.duration}ms`);

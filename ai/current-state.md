@@ -86,8 +86,33 @@ drift into fiction.
 ## Incomplete / not-yet-built features
 
 - **Roommate profiles and roommate matching** — mentioned in the product
-  vision but not implemented anywhere in the codebase (no schema, no
-  routes, no UI). See `company/product.md`.
+  vision but not implemented anywhere in the current codebase (no schema,
+  no routes, no UI). See `company/product.md`. **A full MVP was actually
+  built and reviewed once already (2026-08-26, task
+  `ai/tasks/20260826-093438-design-and-build-the-first-production-ready`)
+  — QA PASS, Security APPROVED — but it was never merged, and its
+  branch/worktree
+  (`agents/20260826-093438-design-and-build-the-first-production-ready/integration`)
+  no longer exists locally or on the remote (confirmed 2026-09-10: not in
+  `git branch -a`, not in `git ls-remote origin`).** Legal's issue-spotting
+  pass on that build raised real, unresolved questions before any launch
+  (housing-discrimination exposure from filterable profile fields,
+  PIPEDA/consent for a new sensitive-PII category, public-directory
+  stalking/harassment risk, Terms/Privacy silence on the feature) — see
+  that task's `legal.md` for the full list. Two follow-up tasks
+  (`20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles`,
+  and pagination work on branches
+  `agents/20260901-192945-add-pagination-to-the-roommate-browse/engineering`
+  / `agents/20260906-050134-add-pagination-to-the-roommate-browse/engineering`)
+  also exist referencing this same never-merged base. **Do not silently
+  rebuild this from scratch, and do not resume/merge it unilaterally** —
+  whether to resume, rebuild, or abandon this work is a founder-level
+  product/legal decision (backlog item `bl_6fb0581a`, surfaced
+  2026-09-10), not something any agent should decide on its own. Note
+  also that this MVP was reviewed entirely by code reading — no
+  `tsc`/`prisma generate`/`prisma migrate` was ever run against it, so
+  even if resumed it needs real compiler/migration verification before
+  it can be trusted, not just a rebase.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 

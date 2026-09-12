@@ -89,7 +89,6 @@ describe('ContactPage', () => {
     expect(screen.queryByText(/Opening your email app/)).not.toBeInTheDocument();
     expect(capturedHref).toBe(''); // never navigated to a (possibly truncated) mailto: link
     // The full message is still available to copy, not lost.
-    // eslint-disable-next-line testing-library/no-node-access
     const fallbackTextarea = container.querySelector('textarea[readonly]') as HTMLTextAreaElement;
     expect(fallbackTextarea.value).toBe(longMessage);
 

@@ -42,7 +42,6 @@ describe('Map page stacking context', () => {
 
     await waitFor(() => expect(screen.getByTestId('navbar')).toBeInTheDocument());
 
-    // eslint-disable-next-line testing-library/no-node-access
     const card = container.querySelector('.border.border-ink\\/8.shadow-card.bg-white') as HTMLElement;
     expect(card).toBeInTheDocument();
     expect(card.style.isolation).toBe('isolate');

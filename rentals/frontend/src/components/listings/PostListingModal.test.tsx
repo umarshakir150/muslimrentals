@@ -107,7 +107,6 @@ describe('PostListingModal', () => {
 
     // The backdrop is the fixed inset-0 overlay -- click it directly by
     // finding the element whose class marks it as the backdrop.
-    // eslint-disable-next-line testing-library/no-node-access
     const backdrop = titleInput.closest('.fixed.inset-0') as HTMLElement;
     await user.click(backdrop);
 
@@ -121,7 +120,6 @@ describe('PostListingModal', () => {
     const onClose = vi.fn();
     const { container } = render(<PostListingModal open onClose={onClose} />);
 
-    // eslint-disable-next-line testing-library/no-node-access
     const closeBtn = container.querySelector('.border-b button') as HTMLElement;
     await user.click(closeBtn);
 

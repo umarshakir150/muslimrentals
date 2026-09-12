@@ -82,7 +82,6 @@ export default function SearchRadiusMiniMap({ center, radiusKm, listings = [], c
       if (cancelled) return;
       leafletRef.current = L;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({ iconRetinaUrl: '', iconUrl: '', shadowUrl: '' });
 

@@ -106,7 +106,6 @@ export default function FullMap({
       leafletRef.current = L;
 
       // Fix webpack-broken default icon
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({ iconRetinaUrl: '', iconUrl: '', shadowUrl: '' });
 
@@ -189,7 +188,6 @@ export default function FullMap({
     return () => {
       cancelled = true;
       delete (window as any).__mapListingClick;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ro = (container as any)?.__leaflet_ro as ResizeObserver | undefined;
       ro?.disconnect();
       if (mapRef.current) {

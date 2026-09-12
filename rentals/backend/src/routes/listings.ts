@@ -359,7 +359,11 @@ router.patch('/:id', validateUuidParam('id'), authenticate, writeRateLimiter, as
     }
 
     const data = listingUpdateSchema.parse(req.body);
-    const { amenities, imageUrls, ...rest } = data;
+    // imageUrls is never sent by the frontend on update (only on create,
+    // via a separate flow) -- pulled out here only so it can never be
+    // spread into the Prisma update as an unknown field, same reasoning
+    // as confirmedLat/confirmedLng below.
+    const { amenities, imageUrls: _imageUrls, ...rest } = data;
 
     // confirmedLat/confirmedLng only exist on the NEW shape (see
     // listingSchemas.ts) and are never Listing table columns -- pulled out

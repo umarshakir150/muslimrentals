@@ -11,31 +11,29 @@ advanced through PR #7 (report-a-user/report-a-message, merged
 ADMIN-only permanent account deletion, ADMIN-only User Search, merged
 2026-09-03, commit `83ff9417`), PR #9 (Locate Me, privacy-safe
 approximate listing locations, the universal confirm-property-location
-flow, and a Spiderfy fix, merged 2026-09-05, commit `87d23a7`), and PR
-#10 (fixes the report qualifying-interaction evidence contract mismatch
-from PR #9's Trust & Safety follow-up, merged 2026-09-06, commit
-`f8c20c4`) — see `ai/decisions.md` for all four. **Re-verified 2026-09-09:
-each of these four PRs' merge commits is a real ancestor of `main`'s
-current head** (`git merge-base --is-ancestor` against each PR's head
-SHA, not just trusting GitHub's "merged" label) — their code, and PR
-#21's fixes once that merges too, are simply what `main` already
-contains; there is no separate deploy tracked per PR. That combined work
-is implementation-complete, founder-approved via its own Netlify Deploy
-Previews, merged to `main`, its schema migrations are live on the
-production Supabase database, and the Render backend is deployed and
-healthy on it — but **the production Netlify frontend has not been
-redeployed to pick any of it up**, at the founder's explicit request: one
-single accumulated production deploy is being saved for whatever `main`
-HEAD is the intended final release point, rather than deploying each PR
-as it merges. Until that one deploy happens, do not describe
-report-a-user/message, the admin moderation toolkit, the location/privacy
-work, or the qualifying-interaction evidence below as "in production" —
-they are real and live in `main`/Render, not yet on `muslimrentals.ca`.
-**PR #21** (Browse place/address search + radius, see its own section
-below) is QA-cleared, Security-approved, and merge-ready as of
-2026-09-09, but not yet merged — once the founder merges it, its code
-becomes exactly the same kind of "on `main`, awaiting the one accumulated
-deploy" work as PR #7–#10 above, not a new separate deploy item either.
+flow, and a Spiderfy fix, merged 2026-09-05, commit `87d23a7`), PR #10
+(fixes the report qualifying-interaction evidence contract mismatch from
+PR #9's Trust & Safety follow-up, merged 2026-09-06, commit `f8c20c4`),
+and **PR #21** (Browse place/address search + radius, QA-cleared and
+Security-approved, merged 2026-09-09, merge commit `bddc8eb`, see its own
+section below for the full architecture) — see `ai/decisions.md` for the
+full history of all five. **Re-verified 2026-09-09 (before PR #21's
+merge, and again confirmed after):** each of these PRs' merge commits is
+a real ancestor of `main`'s current head (`git merge-base --is-ancestor`
+against each PR's head SHA, not just trusting GitHub's "merged" label) —
+their code is simply what `main` already contains; there is no separate
+deploy tracked per PR. That combined work is implementation-complete,
+founder-approved via its own Netlify Deploy Previews, merged to `main`,
+its schema migrations are live on the production Supabase database, and
+the Render backend is deployed and healthy on it — but **the production
+Netlify frontend has not been redeployed to pick any of it up**, at the
+founder's explicit request: one single accumulated production deploy is
+being saved for whatever `main` HEAD is the intended final release
+point, rather than deploying each PR as it merges. Until that one deploy
+happens, do not describe report-a-user/message, the admin moderation
+toolkit, the location/privacy work, the qualifying-interaction evidence,
+or the Browse place/address search below as "in production" — they are
+real and live in `main`/Render, not yet on `muslimrentals.ca`.
 Update this file whenever the picture materially changes — don't let it
 drift into fiction.
 
@@ -76,31 +74,56 @@ drift into fiction.
 - User-initiated account deletion (Settings), anonymizing rather than
   hard-deleting to preserve other users' shared conversation history.
 - Seeded reference data: mosques and Canadian cities.
-- **Merged to the Render-tracked backend branch, NOT yet in `main`/
-  production** (open as PR #21, see its own section below): Browse's
-  location-radius search now resolves POIs/buildings/businesses/schools/
-  landmarks/neighbourhoods/cities (Nominatim) and full street addresses
-  (Geocodio, with real rooftop/approximate precision) via manual Search/
-  Enter, independent of autocomplete suggestions; search radius now goes
-  down to 0.5km (was 1km); an embedded mini-map previews the searched
-  point/radius/listings inline.
+- **Merged to `main`, NOT yet in production** (PR #21, see its own
+  section below): Browse's location-radius search now resolves
+  POIs/buildings/businesses/schools/landmarks/neighbourhoods/cities
+  (Nominatim) and full street addresses (Geocodio, with real
+  rooftop/approximate precision) via manual Search/Enter, independent of
+  autocomplete suggestions; search radius now goes down to 0.5km (was
+  1km); an embedded mini-map previews the searched point/radius/listings
+  inline.
 
 ## Incomplete / not-yet-built features
 
 - **Roommate profiles and roommate matching** — mentioned in the product
-  vision but not implemented anywhere in the codebase (no schema, no
-  routes, no UI). See `company/product.md`.
+  vision but not implemented anywhere in the current codebase (no schema,
+  no routes, no UI). See `company/product.md`. **A full MVP was actually
+  built and reviewed once already (2026-08-26, task
+  `ai/tasks/20260826-093438-design-and-build-the-first-production-ready`)
+  — QA PASS, Security APPROVED — but it was never merged, and its
+  branch/worktree
+  (`agents/20260826-093438-design-and-build-the-first-production-ready/integration`)
+  no longer exists locally or on the remote (confirmed 2026-09-10: not in
+  `git branch -a`, not in `git ls-remote origin`).** Legal's issue-spotting
+  pass on that build raised real, unresolved questions before any launch
+  (housing-discrimination exposure from filterable profile fields,
+  PIPEDA/consent for a new sensitive-PII category, public-directory
+  stalking/harassment risk, Terms/Privacy silence on the feature) — see
+  that task's `legal.md` for the full list. Two follow-up tasks
+  (`20260827-062622-minor-non-blocking-follow-ups-from-roommate-profiles`,
+  and pagination work on branches
+  `agents/20260901-192945-add-pagination-to-the-roommate-browse/engineering`
+  / `agents/20260906-050134-add-pagination-to-the-roommate-browse/engineering`)
+  also exist referencing this same never-merged base. **Do not silently
+  rebuild this from scratch, and do not resume/merge it unilaterally** —
+  whether to resume, rebuild, or abandon this work is a founder-level
+  product/legal decision (backlog item `bl_6fb0581a`, surfaced
+  2026-09-10), not something any agent should decide on its own. Note
+  also that this MVP was reviewed entirely by code reading — no
+  `tsc`/`prisma generate`/`prisma migrate` was ever run against it, so
+  even if resumed it needs real compiler/migration verification before
+  it can be trusted, not just a rebase.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 
-## PR #21 — Browse place/address search + radius (QA-cleared, merge-ready, not yet merged)
+## PR #21 — Browse place/address search + radius (merged into `main`, not yet in production)
 
 **Status (2026-09-09): implementation-complete, founder browser-QA-passed
 on Deploy Preview #21, formally QA-cleared and Security-approved, backend
-already live and verified on the shared Render-tracked branch — merge-ready,
-but deliberately not yet merged to `main` pending the founder's explicit
-merge approval.** Two rounds of independent QA re-review each caught a
-real, narrow gap in the address-shaped-query fallback logic added late in
+already live and verified on the shared Render-tracked branch — merged
+into `main` by the founder's explicit approval (merge commit `bddc8eb`),
+not yet deployed to production.** Two rounds of independent QA re-review
+each caught a real, narrow gap in the address-shaped-query fallback logic added late in
 this PR (a numbered-POI query like "24 Hour Fitness" being misrouted to
 Geocodio with no fallback, then a follow-up fix that fell back to
 Nominatim too broadly for a Geocodio-rejected coarse match) — both were
@@ -138,28 +161,27 @@ architecture:
 - 588 backend / 388 frontend tests passing, `tsc --noEmit` and production
   build clean on both stacks, at the PR's current head.
 
-**Outstanding before merge — not a code defect, a policy/ToS constraint:**
-autocomplete still runs on the public Nominatim instance
-(`nominatim.openstreetmap.org`), which is free but usage-policy-restricted
-(not licensed for sustained production autocomplete traffic at real
-scale). This was flagged explicitly during this PR's own design phase and
-remains unresolved and undecided — see `ai/decisions.md` for the full
-provider-options research (Google Maps Platform evaluated and its exact
-Cloud setup steps documented, pending founder's own manual provisioning;
-Geocodio confirmed to have no general place/POI-search product) — a
-separate decision from, and not blocking on, the address-geocoding fixes
-in this PR. Founder has not yet decided whether/when to migrate off
+**Outstanding, non-blocking, still unresolved — a policy/ToS constraint,
+not a code defect:** autocomplete still runs on the public Nominatim
+instance (`nominatim.openstreetmap.org`), which is free but
+usage-policy-restricted (not licensed for sustained production
+autocomplete traffic at real scale). This was flagged explicitly during
+this PR's own design phase and remains unresolved and undecided — see
+`ai/decisions.md` for the full provider-options research (Google Maps
+Platform evaluated and its exact Cloud setup steps documented, pending
+founder's own manual provisioning; Geocodio confirmed to have no general
+place/POI-search product) — a separate decision from, and not blocking
+on, the address-geocoding fixes in this PR, which are complete and
+merged. Founder has not yet decided whether/when to migrate off
 Nominatim for this feature.
 
-**Not merged, not deployed to production:** PR #21 remains open; `main`
-and production Netlify are untouched by it. Merging is the founder's own
-explicit decision to make (not automatic on a passing review), and once
-merged this becomes ordinary `main` content awaiting the same single
-accumulated production deploy described at the top of this file — not a
-new, separate pending-deploy item of its own.
+**Merged to `main` (2026-09-09, merge commit `bddc8eb`), not yet deployed
+to production:** this is now ordinary `main` content awaiting the same
+single accumulated production deploy described at the top of this file —
+not a separate pending-deploy item of its own.
 
 **Revisit when:** the founder decides on the Nominatim migration question
-and/or explicitly approves merging PR #21.
+and/or is ready to trigger the one accumulated production deploy.
 
 ## Testing status
 

@@ -10,11 +10,9 @@
  *  - Refresh token rotation: each /refresh issues a new token and invalidates the old
  *  - Forgot-password always returns 200 (prevents email enumeration)
  *  - Password reset tokens are 32-byte CSPRNG hex, expire in 1 hour
- *  - Google OAuth: token verified server-side against known audience
  */
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
-import { OAuth2Client } from 'google-auth-library';
 import crypto from 'crypto';
 
 import { prisma } from '../prisma/client';
@@ -23,12 +21,9 @@ import { sendEmail, passwordResetEmail, passwordResetEmailText, welcomeEmail, we
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
-import { registerSchema, loginSchema, googleSchema, forgotSchema, resetSchema } from '../validation/authSchemas';
+import { registerSchema, loginSchema, forgotSchema, resetSchema } from '../validation/authSchemas';
 
 const router = Router();
-
-// OWASP: GOOGLE_CLIENT_ID must come from env — never hardcoded
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Refresh-token cookie options
 const COOKIE_OPTIONS = {
@@ -96,62 +91,6 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response, next:
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
     // Reached this line only with a valid passwordHash (checked above).
     res.json({ success: true, data: { user: { ...safeUser, hasPassword: true }, accessToken } });
-  } catch (err) { next(err); }
-});
-
-// ─── POST /auth/google ────────────────────────────────────────────────────────
-router.post('/google', authRateLimiter, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { credential } = googleSchema.parse(req.body);
-
-    // Verify the token server-side — never trust the client payload alone
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload?.email) throw new AppError('Invalid Google token.', 401);
-
-    let user = await prisma.user.findFirst({
-      where: { OR: [{ googleId: payload.sub }, { email: payload.email }] },
-      select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true, passwordHash: true },
-    });
-    let hasPassword: boolean;
-
-    if (!user) {
-      const created = await prisma.user.create({
-        data: {
-          name:       payload.name || payload.email.split('@')[0],
-          email:      payload.email,
-          googleId:   payload.sub,
-          avatarUrl:  payload.picture,
-          isVerified: true,
-        },
-        select: { id: true, name: true, email: true, role: true, avatarUrl: true, createdAt: true, isActive: true, isBanned: true },
-      });
-      user = { ...created, passwordHash: null };
-      hasPassword = false;
-      sendEmail({ to: payload.email, subject: 'Welcome to Muslim Rentals', html: welcomeEmail(user.name), text: welcomeEmailText(user.name) }).catch(() => {});
-    } else {
-      // OWASP A07: matches the same guard /login and /refresh already apply
-      // -- without this, a deleted (isActive: false) or banned account could
-      // still mint a fresh session via Google, since googleId/email survive
-      // account deletion by design (see the Settings delete-account flow).
-      if (!user.isActive) throw new AppError('Account is inactive.', 401, 'ACCOUNT_INACTIVE');
-      if (user.isBanned)  throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403, 'ACCOUNT_SUSPENDED');
-
-      hasPassword = Boolean(user.passwordHash);
-      await prisma.user.update({ where: { id: user.id }, data: { googleId: payload.sub, avatarUrl: payload.picture } });
-    }
-
-    const { passwordHash: _, ...safeUser } = user;
-    const accessToken  = signAccessToken(safeUser);
-    const refreshToken = signRefreshToken(safeUser);
-    await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
-
-    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
-    res.json({ success: true, data: { user: { ...safeUser, hasPassword }, accessToken } });
   } catch (err) { next(err); }
 });
 

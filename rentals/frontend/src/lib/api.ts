@@ -25,7 +25,6 @@ const BASE_URL = buildBaseUrl();
 const PUBLIC_AUTH_ENDPOINTS = new Set([
   '/auth/register',
   '/auth/login',
-  '/auth/google',
   '/auth/forgot-password',
   '/auth/reset-password',
 ]);
@@ -208,9 +207,6 @@ export const authApi = {
 
   login: (data: { email: string; password: string }) =>
     api.post<{ data: { user: any; accessToken: string } }>('/auth/login', data),
-
-  googleAuth: (credential: string) =>
-    api.post<{ data: { user: any; accessToken: string } }>('/auth/google', { credential }),
 
   logout: () => api.post('/auth/logout', {}),
   me: () => api.get<{ data: any }>('/auth/me'),

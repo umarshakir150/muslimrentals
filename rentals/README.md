@@ -100,8 +100,6 @@ Open [http://localhost:3000](http://localhost:3000)
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Secret for access tokens (min 32 chars) |
 | `JWT_REFRESH_SECRET` | Secret for refresh tokens (min 32 chars) |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 | `AWS_ACCESS_KEY_ID` | S3 access key |
 | `AWS_SECRET_ACCESS_KEY` | S3 secret key |
 | `AWS_S3_BUCKET` | S3 bucket name |
@@ -117,7 +115,6 @@ Open [http://localhost:3000](http://localhost:3000)
 |---|---|
 | `NEXT_PUBLIC_API_URL` | Backend API URL |
 | `NEXT_PUBLIC_SOCKET_URL` | WebSocket server URL |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth client ID |
 
 ---
 
@@ -128,7 +125,6 @@ Open [http://localhost:3000](http://localhost:3000)
 |---|---|---|
 | POST | `/api/v1/auth/register` | Create account |
 | POST | `/api/v1/auth/login` | Login |
-| POST | `/api/v1/auth/google` | Google OAuth |
 | POST | `/api/v1/auth/refresh` | Refresh access token |
 | POST | `/api/v1/auth/logout` | Logout |
 | GET | `/api/v1/auth/me` | Get current user |
@@ -252,7 +248,6 @@ Run with: `cd backend && npx ts-node prisma/seed.ts`
 - `socket.io` — Real-time messaging
 - `bcryptjs` — Password hashing
 - `jsonwebtoken` — JWT auth
-- `google-auth-library` — Google OAuth
 - `multer-s3` — S3 image uploads
 - `nodemailer` — Transactional email
 - `winston` — Structured logging

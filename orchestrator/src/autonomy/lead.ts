@@ -72,6 +72,12 @@ function summarizeBacklogItem(item: BacklogItem) {
     strategicRelevance: item.strategicRelevance,
     evidence: item.evidence,
     rationale: item.rationale,
+    // Omitting this previously hid exactly the context that explains a
+    // DEFERRED/DONE status — confirmed as a real contributing cause of a
+    // 2026-09-14 incident where a DEFERRED, founder-decided item was
+    // re-escalated: its own resolution text ("do not repeatedly re-surface
+    // this... unless something materially changes") was never shown here.
+    resolution: item.resolution,
     dependencies: item.dependencies,
     relatedTasks: item.relatedTasks,
     lastEvaluatedAt: item.lastEvaluatedAt,
@@ -298,6 +304,27 @@ export async function runLeadPlanning(params: RunLeadPlanningParams): Promise<Le
         message: `Lead escalation referenced unresolvable backlog item id "${escalation.backlogItemId}" — approval created without a backlog-item link instead of inventing/guessing an id.`,
       });
     }
+    // A DEFERRED status is itself a founder decision (see backlogStore.ts's
+    // UpdateBacklogItemInput.resolution doc) — "not now, revisit later,"
+    // not "still open." Confirmed for real (2026-09-14 incident): a
+    // DEFERRED, founder-decided item was re-escalated into a brand new
+    // PENDING approval, because createApprovalRequest's own dedup
+    // (approvalStore.ts) only checks for an existing PENDING request, so
+    // it can't catch a re-escalation once the original request was already
+    // decided and closed. This is the one deterministic backstop — no
+    // escalation may reopen a DEFERRED item; the only way out of DEFERRED
+    // is an explicit updatedBacklogItems status change (new evidence,
+    // stated rationale), never a side effect of a plain escalation.
+    if (resolvedBacklogItemId && getBacklogItem(resolvedBacklogItemId)?.status === 'DEFERRED') {
+      logAutonomyEvent({
+        type: 'BACKLOG_ITEM_UPDATED',
+        cycleId,
+        backlogItemId: resolvedBacklogItemId,
+        message: `Lead escalation "${escalation.title}" suppressed — backlog item ${resolvedBacklogItemId} is DEFERRED (a standing founder decision) and must not resurface without a materially-changed status first.`,
+      });
+      continue;
+    }
+
     const request = createApprovalRequest({
       type: escalation.type,
       title: escalation.title,

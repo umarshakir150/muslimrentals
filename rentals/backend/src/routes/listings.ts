@@ -50,6 +50,26 @@ const s3 = AWS_CONFIGURED
 
 const router = Router();
 
+// Contact info (phone/WhatsApp/email) is only for someone who's at least
+// created an account -- not a fully anonymous visitor. An unauthenticated
+// GET (list or detail) previously returned it to anyone, making every
+// landlord's contact info trivially scrapeable at scale via a plain,
+// paginated, unauthenticated crawl -- and it bypasses the in-app messaging
+// system's own moderation/reporting surface entirely. Stripped (not just
+// nulled) for the same reason address/unit are stripped rather than nulled
+// for a non-owner/staff viewer -- see toPublicListingLocation in
+// utils/geo.ts. Any authenticated viewer (any role, not just the listing's
+// own owner) still sees it exactly as before -- this only changes what a
+// fully anonymous request receives.
+function stripContactInfoIfAnonymous<T extends { contactInfo: string }>(
+  listing: T,
+  isAuthenticated: boolean
+): T | Omit<T, 'contactInfo'> {
+  if (isAuthenticated) return listing;
+  const { contactInfo: _contactInfo, ...rest } = listing;
+  return rest;
+}
+
 // ─── Universal confirm-property-location flow ──────────────────────────────
 // Every new or address-changing listing requires the landlord to confirm
 // (or drag) a pin before its exact private coordinate is ever stored --
@@ -224,12 +244,12 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response, next: Next
     // Public browse/search/map results never carry a listing's real
     // address or precise coordinates -- see utils/geo.ts's
     // toPublicListingLocation for what "approximate" means here.
-    const result = listings.map(l => ({
+    const result = listings.map(l => stripContactInfoIfAnonymous({
       ...toPublicListingLocation(l),
       isSaved:      savedIds.has(l.id),
       amenities:    l.amenities.map(a => a.name),
       thumbnailUrl: l.images[0]?.url || null,
-    }));
+    }, !!req.user));
 
     res.json({
       success: true,
@@ -273,7 +293,10 @@ router.get('/:id', validateUuidParam('id'), optionalAuth, async (req: AuthReques
     const isOwnerOrStaff = !!req.user && (req.user.id === listing.userId || req.user.role !== 'USER');
     const locationSafeListing = isOwnerOrStaff ? listing : toPublicListingLocation(listing);
 
-    res.json({ success: true, data: { ...locationSafeListing, isSaved, amenities: listing.amenities.map(a => a.name) } });
+    res.json({
+      success: true,
+      data: stripContactInfoIfAnonymous({ ...locationSafeListing, isSaved, amenities: listing.amenities.map(a => a.name) }, !!req.user),
+    });
   } catch (err) { next(err); }
 });
 

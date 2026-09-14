@@ -117,7 +117,10 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
       // neighbourhood-only shape as an input.
       address: listing.address ?? '',
       unit: listing.unit ?? undefined,
-      contactInfo: listing.contactInfo,
+      // Editing always requires the listing's own authenticated owner, so
+      // this is never actually missing in practice -- the fallback only
+      // satisfies the type now that an anonymous fetch omits the field.
+      contactInfo: listing.contactInfo ?? '',
     });
     setSelectedAmenities(listing.amenities ?? []);
     setExistingImages(listing.images ?? []);

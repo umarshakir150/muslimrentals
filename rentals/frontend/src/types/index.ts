@@ -63,7 +63,12 @@ export interface Listing {
   // to fall around the approximate point above -- only present alongside
   // locationApproximate. Render this as the "approximate area" circle.
   locationPrecisionRadiusM?: number;
-  contactInfo: string;
+  // Present only for an authenticated viewer -- a fully anonymous visitor
+  // never receives this field at all (stripped, not just hidden, by the
+  // backend; see rentals/backend/src/routes/listings.ts's
+  // stripContactInfoIfAnonymous), same "stripped for everyone but the
+  // right viewer" pattern as address/unit above.
+  contactInfo?: string;
   status: ListingStatus;
   isActive: boolean;
   isFeatured: boolean;

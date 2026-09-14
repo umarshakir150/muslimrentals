@@ -4,9 +4,10 @@ import userEvent from '@testing-library/user-event';
 import ListingDetail from './ListingDetail';
 import { Listing, ListingImage } from '@/types';
 
-const { getByIdMock, reportMock } = vi.hoisted(() => ({
+const { getByIdMock, reportMock, toastMock } = vi.hoisted(() => ({
   getByIdMock: vi.fn(),
   reportMock: vi.fn().mockResolvedValue({ success: true }),
+  toastMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -19,7 +20,7 @@ vi.mock('@/store/authStore', () => ({
 }));
 
 vi.mock('@/components/ui/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastMock }),
 }));
 
 // ListingDetail now embeds ListingLocationMap (a compact Leaflet map), which
@@ -335,6 +336,34 @@ describe('ListingDetail approximate-location disclosure', () => {
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
     expect(screen.queryByText('123 Real Street, Unit 4')).not.toBeInTheDocument();
+  });
+});
+
+describe('ListingDetail contact info -- gated behind authentication (backend strips it for anonymous requests)', () => {
+  beforeEach(() => {
+    getByIdMock.mockReset();
+    toastMock.mockReset();
+  });
+
+  it('shows the Contact button and reveals contactInfo when the fetched detail includes it (an authenticated viewer)', async () => {
+    mockDetailFetch([]);
+    const user = userEvent.setup();
+    render(<ListingDetail listing={makeListing([])} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    const contactButton = await screen.findByRole('button', { name: /contact/i });
+    await user.click(contactButton);
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: 'test info' }));
+  });
+
+  it('never shows the Contact button when the listing prop has no contactInfo -- what an anonymous browse/detail fetch now returns (the field is stripped, not just empty; ListingDetail\'s own internal getById refetch only backfills the image gallery, never contactInfo -- see the component\'s fullImages comment)', async () => {
+    mockDetailFetch([]);
+    const anonymousListing = { ...makeListing([]) };
+    delete (anonymousListing as Partial<Listing>).contactInfo;
+    render(<ListingDetail listing={anonymousListing} onClose={vi.fn()} onMessage={vi.fn()} />);
+
+    await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /contact/i })).not.toBeInTheDocument();
   });
 });
 

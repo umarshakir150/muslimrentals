@@ -18,7 +18,7 @@ import { getAutonomyDbPath } from '../src/paths.js';
 process.env.ORCHESTRATOR_AUTONOMY_DB = path.join(path.dirname(getAutonomyDbPath()), 'autonomy-lead.db');
 import { ScriptedClaudeInvoker } from '../src/claude/fakeInvoker.js';
 import { runLeadPlanning } from '../src/autonomy/lead.js';
-import { createBacklogItem, getBacklogItem } from '../src/autonomy/backlogStore.js';
+import { createBacklogItem, getBacklogItem, updateBacklogItem } from '../src/autonomy/backlogStore.js';
 import { createApprovalRequest, getApprovalRequest, listApprovalRequests } from '../src/autonomy/approvalStore.js';
 import type { LeadPlan } from '../src/autonomy/types.js';
 
@@ -370,6 +370,70 @@ describe('runLeadPlanning', () => {
     expect(call?.options.userPrompt).toContain(existingApproval.id);
     expect(call?.options.userPrompt).toContain(item.id);
     expect(call?.options.userPrompt).toMatch(/do not re-escalate/i);
+  });
+
+  it("does not re-escalate a DEFERRED backlog item — a founder decision to defer must not resurface as a new approval request (2026-09-14 incident)", async () => {
+    const item = createBacklogItem({
+      title: 'Decide the fate of the already-built Roommate Profiles MVP branch',
+      description: 'Resume, rebuild, or abandon.',
+      source: 'test',
+      category: 'PRODUCT_OPPORTUNITY',
+      userImpact: 2,
+      severity: 1,
+      confidence: 0.6,
+      effort: 2,
+      strategicRelevance: 2,
+      rationale: 'Founder-level product/legal call.',
+      status: 'DEFERRED',
+    });
+    updateBacklogItem(item.id, {
+      resolution: 'Founder decision: intentionally DEFERRED, not abandoned. Do not repeatedly re-surface this unless something materially changes.',
+      changeReason: 'test setup',
+    });
+
+    const plan: LeadPlan = {
+      ...emptyPlan,
+      escalations: [
+        {
+          type: 'AMBIGUOUS_HIGH_IMPACT_PRODUCT_DECISION',
+          title: 'Decide the fate of the already-built Roommate Profiles MVP branch (resume, rebuild, or abandon)',
+          description: 'Re-raising this for a decision.',
+          backlogItemId: item.id,
+          options: ['Resume', 'Rebuild', 'Abandon'],
+        },
+      ],
+    };
+    const result = await runLeadPlanning({ invoker: leadInvoker(plan), cycleId: 'cyc_deferred_test', signals: [] });
+
+    // No new approval request created at all -- not just the status left alone.
+    expect(result.approvalRequestIds).toHaveLength(0);
+    expect(listApprovalRequests('PENDING').filter((r) => r.backlogItemId === item.id)).toHaveLength(0);
+    // The backlog item's DEFERRED status is untouched.
+    expect(getBacklogItem(item.id)?.status).toBe('DEFERRED');
+  });
+
+  it("surfaces a backlog item's resolution text to the Lead's own prompt context, so a past founder decision (e.g. DEFERRED) is visible, not just its status", async () => {
+    const item = createBacklogItem({
+      title: 'Decide the fate of the already-built Roommate Profiles MVP branch',
+      description: 'Resume, rebuild, or abandon.',
+      source: 'test',
+      category: 'PRODUCT_OPPORTUNITY',
+      userImpact: 2,
+      severity: 1,
+      confidence: 0.6,
+      effort: 2,
+      strategicRelevance: 2,
+      rationale: 'Founder-level product/legal call.',
+      status: 'DEFERRED',
+    });
+    const distinctiveResolutionText = 'do not repeatedly re-surface this as a mystery gap unless something material changes';
+    updateBacklogItem(item.id, { resolution: distinctiveResolutionText, changeReason: 'test setup' });
+
+    const invoker = leadInvoker(emptyPlan);
+    await runLeadPlanning({ invoker, cycleId: 'cyc_resolution_context_test', signals: [] });
+
+    const call = invoker.callsFor('lead')[0];
+    expect(call?.options.userPrompt).toContain(distinctiveResolutionText);
   });
 
   it('an output that fails LeadPlan schema validation falls back to a safe no-op plan instead of throwing', async () => {

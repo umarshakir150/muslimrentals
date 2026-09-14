@@ -22,7 +22,7 @@
  */
 import { getDb } from './db.js';
 import { nowIso } from './ids.js';
-import { getCycleLock } from './cycleStore.js';
+import { getCycleLock, isLockStale, releaseCycleLock } from './cycleStore.js';
 import { runCycle, type RunCycleOptions, type CycleOutcome } from './cycle.js';
 import { logAutonomyEvent } from './eventLog.js';
 
@@ -124,6 +124,21 @@ export interface SchedulerTickOutcome {
 export async function runSchedulerTick(cycleOptions: RunCycleOptions): Promise<SchedulerTickOutcome> {
   const state = getSchedulerState();
   if (state.status !== 'RUNNING') return { result: 'disabled' };
+
+  // Mirrors runCycle()'s own startup check (cycle.ts) — without this, a
+  // process that held the lock and was killed externally (a wrapper
+  // timeout, a crash, a container recycle) leaves cycle_lock permanently
+  // HELD by a dead PID, and every future tick reports cycle_already_running
+  // forever even though nothing is actually running (confirmed for real
+  // 2026-09-13). isLockStale() only ever clears a lock whose cycle already
+  // reached a terminal status or whose owning PID is confirmed dead — see
+  // its own doc comment in cycleStore.ts — never a time-based guess, so
+  // this can't false-recover a slow-but-genuinely-running cycle.
+  if (isLockStale()) {
+    releaseCycleLock();
+    logAutonomyEvent({ type: 'CYCLE_FAILED', message: 'scheduler-tick cleared a stale cycle lock left by a previous process (crash, restart, or container recycle).' });
+  }
+
   if (getCycleLock().locked) return { result: 'cycle_already_running' };
 
   const now = nowIso();

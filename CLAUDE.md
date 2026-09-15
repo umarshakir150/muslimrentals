@@ -102,7 +102,13 @@ For any meaningful feature work, follow this sequence (full diagram in
     be involved.
 13. Resolve every `CHANGES_REQUIRED` finding before proceeding.
 14. Create a final task report (fill in the `## Final result` section of the
-    task file).
+    task file). If the task produced meaningful merged work — a product
+    feature, a real bug fix, or an infra/security change (not a docs-only
+    tweak or internal orchestrator housekeeping) — add one short,
+    plain-English, dated entry to `CHANGELOG.md` at the repo root, noting
+    the PR number and whether it's deployed to production or just merged
+    to `main`. Skip trivial or internal-only changes; the goal is a
+    changelog a human wants to read, not an automated activity log.
 15. **Never deploy without explicit founder authorization**, even if every
     review passed.
 
@@ -121,6 +127,8 @@ never overrides it.
 
 ```
 CLAUDE.md                  ← you are here
+CHANGELOG.md               ← human-readable project history (newest first);
+                              see "Required workflow" step 14
 
 agents/                    ← persistent role definitions
   supervisor.md

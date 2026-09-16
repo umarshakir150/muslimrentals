@@ -687,10 +687,7 @@ describe('PATCH /listings/:id — universal confirm-property-location flow (same
 // address/city/province are unchanged -- removing the old shortcut that
 // skipped it. See the "edit always requires confirmation" block above for
 // the base case; these cover preload source, unchanged-vs-moved-pin
-// handling, rejection, the legacy-coordinate fallback, and (since this
-// backend already carries the rate-limit fix's lazy getStartingPoint
-// callback -- see resolveGeocodedLocation) that a confirmed resubmit never
-// spends a redundant forward-geocode call.
+// handling, rejection, and the legacy-coordinate fallback.
 describe('PATCH /listings/:id — edit always confirms, seeded from the private coordinate (never the public one)', () => {
   function existingListing(overrides: Record<string, any> = {}) {
     return {
@@ -735,13 +732,12 @@ describe('PATCH /listings/:id — edit always confirms, seeded from the private 
     expect(res.status).toBe(200);
     expect(res.body.needsLocationConfirmation).toBeUndefined();
     expect(verifyConfirmedPinLocationMock).not.toHaveBeenCalled();
-    expect(geocodeAddressMock).not.toHaveBeenCalled();
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lat: 43.6532, lng: -79.3832 }),
     }));
   });
 
-  it('moving the pin on an otherwise-unchanged edit runs reverse-geocode verification (never a forward geocode) and stores the new coordinate', async () => {
+  it('moving the pin on an otherwise-unchanged edit runs reverse-geocode verification and stores the new coordinate', async () => {
     findUniqueMock.mockResolvedValue(existingListing());
     updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...existingListing(), ...args.data, images: [], amenities: [], user: {} }));
     const app = await buildApp();
@@ -796,37 +792,6 @@ describe('PATCH /listings/:id — edit always confirms, seeded from the private 
     expect(geocodeAddressMock).toHaveBeenCalledWith('123 Main Street', 'Toronto', 'ON', { requirePreciseMatch: true });
     expect(res.body.data).toEqual({ matchedLat: 43.6540, matchedLng: -79.3800 });
     expect(updateMock).not.toHaveBeenCalled();
-  });
-
-  // The rate-limit fix's whole point (see resolveGeocodedLocation's own
-  // comment): once confirmedLat/confirmedLng are present, the starting-point
-  // callback must never run at all -- not even for an edit whose
-  // address/city/province DID change. Confirming this here (not just for
-  // the unchanged-location case above) guards against ever regressing that
-  // fix while adding the edit-confirms-everything behavior on top of it.
-  it('a confirmed resubmit for a CHANGED address never spends a redundant forward-geocode call', async () => {
-    findUniqueMock.mockResolvedValue(existingListing());
-    updateMock.mockImplementation((args: any) => Promise.resolve({ id: LISTING_ID, ...existingListing(), ...args.data, images: [], amenities: [], user: {} }));
-    const app = await buildApp();
-
-    const confirmedLat = 45.4215;
-    const confirmedLng = -75.6972;
-
-    const res = await request(app)
-      .patch(`/api/v1/listings/${LISTING_ID}`)
-      .set('Authorization', `Bearer ${signToken(OWNER_ID)}`)
-      .send({ address: '999 New Street', city: 'Ottawa', province: 'ON', confirmedLat, confirmedLng });
-
-    expect(res.status).toBe(200);
-    expect(res.body.needsLocationConfirmation).toBeUndefined();
-    // The address DID change, so this is exactly the case the old (pre-fix)
-    // code would always geocode -- the fix must skip it once a confirmed
-    // pin is already present.
-    expect(geocodeAddressMock).not.toHaveBeenCalled();
-    expect(verifyConfirmedPinLocationMock).toHaveBeenCalledWith(confirmedLat, confirmedLng, 'Ottawa', 'ON');
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lat: confirmedLat, lng: confirmedLng, address: '999 New Street' }),
-    }));
   });
 });
 

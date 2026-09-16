@@ -1,6 +1,6 @@
 /**
  * Auth request-validation schemas, extracted from routes/auth.ts so they can
- * be unit-tested without booting Prisma/Google OAuth/rate limiters.
+ * be unit-tested without booting Prisma/rate limiters.
  * .strict() rejects any extra fields not listed — prevents mass-assignment attacks.
  */
 import { z } from 'zod';
@@ -14,10 +14,6 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({
   email:    z.string().email().max(254).toLowerCase().trim(),
   password: z.string().min(1).max(128),
-}).strict();
-
-export const googleSchema = z.object({
-  credential: z.string().min(1).max(4096),
 }).strict();
 
 export const forgotSchema = z.object({

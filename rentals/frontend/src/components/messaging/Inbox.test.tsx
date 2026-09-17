@@ -481,7 +481,7 @@ describe('Inbox: normal participant view attributes every message to its real se
     }
     function bubbleColorOf(text: string) {
       const bubble = screen.getByText(text).closest('div')!;
-      return bubble.className.includes('bg-brand-600') ? 'me' : 'gray';
+      return bubble.className.includes('bg-forest-600') ? 'me' : 'gray';
     }
 
     expect(bubbleSideOf('hey i like ur listing')).toBe('other');
@@ -519,13 +519,13 @@ describe('Inbox: normal participant view attributes every message to its real se
     const bubble = screen.getByText('their live reply').closest('div')!;
     const row = bubble.parentElement!;
     expect(row.className).toContain('justify-start');
-    expect(bubble.className).not.toContain('bg-brand-600');
+    expect(bubble.className).not.toContain('bg-forest-600');
 
     // And a live message genuinely from ME (e.g. delivered back via the
     // sender's own room, per the existing dedupe logic) still renders as "me".
     socket.serverPush('message:new', message({ id: 'm3', conversationId: 'conv-live', body: 'my own live message', sender: ME_SENDER }));
     await waitFor(() => expect(screen.getByText('my own live message')).toBeInTheDocument());
     const myBubble = screen.getByText('my own live message').closest('div')!;
-    expect(myBubble.className).toContain('bg-brand-600');
+    expect(myBubble.className).toContain('bg-forest-600');
   });
 });

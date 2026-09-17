@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ArrowLeft, Loader2, MessageSquare, Flag } from 'lucide-react';
+import { Send, ArrowLeft, MessageSquare, Flag } from 'lucide-react';
 import { Conversation, Message } from '@/types';
 import { messagesApi, usersApi } from '@/lib/api';
 import { useUser } from '@/store/authStore';
@@ -10,6 +10,10 @@ import { formatTimeAgo, cn, initials } from '@/lib/utils';
 import { connectSocket, disconnectSocket } from '@/lib/socket';
 import { useToast } from '@/components/ui/use-toast';
 import ReportModal, { ReportTargetType } from '@/components/reports/ReportModal';
+import Surface from '@/components/ui/Surface';
+import Spinner from '@/components/ui/Spinner';
+import EmptyState from '@/components/ui/EmptyState';
+import Button from '@/components/ui/Button';
 
 interface InboxProps {
   initialConvId?: string;
@@ -248,25 +252,27 @@ export default function Inbox({ initialConvId }: InboxProps) {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-72px)] bg-white rounded-3xl border border-ink/8 shadow-card overflow-hidden">
+    <Surface className="flex h-[calc(100dvh-72px)] p-0 sm:p-0 overflow-hidden">
       {/* Conversations list */}
       <div className={cn(
-        'w-full md:w-80 lg:w-96 border-r border-ink/8 flex flex-col',
+        'w-full md:w-80 lg:w-96 border-r border-neutral-200 flex flex-col',
         activeConv ? 'hidden md:flex' : 'flex'
       )}>
-        <div className="px-5 py-4 border-b border-ink/8">
+        <div className="px-5 py-4 border-b border-neutral-200">
           <h2 className="font-serif text-xl">Messages</h2>
         </div>
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
-            <Loader2 size={24} className="animate-spin text-muted" />
+            <Spinner size={24} className="text-neutral-500" />
           </div>
         ) : conversations.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <MessageSquare size={48} className="text-muted mb-4 opacity-30" />
-            <p className="font-semibold text-ink mb-1">No messages yet</p>
-            <p className="text-sm text-muted">Find a listing and message the landlord to get started.</p>
+          <div className="flex-1 flex items-center justify-center">
+            <EmptyState
+              icon={MessageSquare}
+              title="No messages yet"
+              description="Find a listing and message the landlord to get started."
+            />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
@@ -278,11 +284,11 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   key={conv.id}
                   onClick={() => openConversation(conv.id, conv)}
                   className={cn(
-                    'w-full flex items-start gap-3 px-5 py-4 text-left hover:bg-brand-50/60 transition-colors border-b border-ink/5',
-                    activeConv?.id === conv.id && 'bg-brand-50'
+                    'w-full flex items-start gap-3 px-5 py-4 text-left hover:bg-forest-50/60 transition-colors border-b border-neutral-100',
+                    activeConv?.id === conv.id && 'bg-forest-50'
                   )}
                 >
-                  <div className="w-11 h-11 rounded-full bg-brand-gradient flex items-center justify-center text-white font-bold text-sm shrink-0">
+                  <div className="w-11 h-11 rounded-full bg-forest-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
                     {other?.avatarUrl ? (
                       <img src={other.avatarUrl} className="w-full h-full rounded-full object-cover" alt={other.name} />
                     ) : initials(other?.name || '?')}
@@ -290,15 +296,15 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline mb-0.5">
                       <span className="font-semibold text-sm truncate">{other?.name || 'Unknown'}</span>
-                      {lastMsg && <span className="text-xs text-muted shrink-0 ml-2">{formatTimeAgo(lastMsg.createdAt)}</span>}
+                      {lastMsg && <span className="text-xs text-neutral-500 shrink-0 ml-2">{formatTimeAgo(lastMsg.createdAt)}</span>}
                     </div>
-                    <p className="text-xs text-brand-600 font-medium truncate mb-0.5">{conv.listing?.title}</p>
+                    <p className="text-xs text-forest-700 font-medium truncate mb-0.5">{conv.listing?.title}</p>
                     {lastMsg && (
-                      <p className="text-xs text-muted truncate">{lastMsg.sender?.id === user?.id ? 'You: ' : ''}{lastMsg.body}</p>
+                      <p className="text-xs text-neutral-600 truncate">{lastMsg.sender?.id === user?.id ? 'You: ' : ''}{lastMsg.body}</p>
                     )}
                   </div>
                   {(conv.unreadCount || 0) > 0 && (
-                    <span className="w-5 h-5 rounded-full bg-brand-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                    <span className="w-5 h-5 rounded-full bg-forest-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
                       {conv.unreadCount}
                     </span>
                   )}
@@ -314,13 +320,13 @@ export default function Inbox({ initialConvId }: InboxProps) {
         {activeConv ? (
           <>
             {/* Thread header */}
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-ink/8">
-              <button onClick={() => setActiveConv(null)} className="md:hidden p-2 rounded-full hover:bg-gray-100">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-neutral-200">
+              <button onClick={() => setActiveConv(null)} className="md:hidden p-2 rounded-full hover:bg-neutral-100">
                 <ArrowLeft size={18} />
               </button>
               {viewerIsParticipant ? (
                 <>
-                  <div className="w-10 h-10 rounded-full bg-brand-gradient flex items-center justify-center text-white font-bold text-sm shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-forest-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
                     {(() => {
                       const other = otherParticipant(activeConv);
                       return other?.avatarUrl
@@ -330,20 +336,22 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm">{otherParticipant(activeConv)?.name}</p>
-                    <p className="text-xs text-muted truncate max-w-xs">{activeConv.listing?.title}</p>
+                    <p className="text-xs text-neutral-500 truncate max-w-xs">{activeConv.listing?.title}</p>
                   </div>
                   {(() => {
                     const other = otherParticipant(activeConv);
                     if (!other) return null;
                     return (
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => reportUser(other.id, other.name)}
                         aria-label={`Report ${other.name}`}
                         title={`Report ${other.name}`}
-                        className="p-2.5 rounded-full hover:bg-gray-100 text-muted shrink-0"
+                        className="w-9 h-9 p-0 rounded-full text-neutral-600 shrink-0"
                       >
                         <Flag size={16} />
-                      </button>
+                      </Button>
                     );
                   })()}
                 </>
@@ -357,7 +365,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   <p className="font-semibold text-sm truncate">
                     {activeConv.participants.map(p => p.user.name).join(' & ')}
                   </p>
-                  <p className="text-xs text-muted truncate max-w-xs">
+                  <p className="text-xs text-neutral-500 truncate max-w-xs">
                     {activeConv.listing?.title} · Moderator view (read-only)
                   </p>
                 </div>
@@ -369,7 +377,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
               {messages.map((msg, i) => {
                 const showDate = i === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[i-1].createdAt).toDateString();
                 const dateLabel = showDate && (
-                  <div className="text-center text-xs text-muted my-3">
+                  <div className="text-center text-xs text-neutral-500 my-3">
                     {new Date(msg.createdAt).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
                   </div>
                 );
@@ -382,10 +390,10 @@ export default function Inbox({ initialConvId }: InboxProps) {
                       <div className={cn('flex items-end gap-0.5', isMe ? 'justify-end' : 'justify-start')}>
                         <div className={cn(
                           'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed',
-                          isMe ? 'bg-brand-600 text-white rounded-br-sm' : 'bg-gray-100 text-ink rounded-bl-sm'
+                          isMe ? 'bg-forest-600 text-white rounded-br-sm' : 'bg-neutral-100 text-neutral-900 rounded-bl-sm'
                         )}>
                           {msg.body}
-                          <div className={cn('text-[10px] mt-1', isMe ? 'text-white/60 text-right' : 'text-muted')}>
+                          <div className={cn('text-[10px] mt-1', isMe ? 'text-white/60 text-right' : 'text-neutral-500')}>
                             {new Date(msg.createdAt).toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         </div>
@@ -400,7 +408,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
                             onClick={() => reportMessage(msg)}
                             aria-label="Report message"
                             title="Report this message"
-                            className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-muted hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="w-[44px] h-[44px] shrink-0 flex items-center justify-center rounded-full text-neutral-600 hover:text-destructive hover:bg-destructive/10 transition-colors"
                           >
                             <Flag size={15} />
                           </button>
@@ -452,9 +460,9 @@ export default function Inbox({ initialConvId }: InboxProps) {
 
               {typing && (
                 <div className="flex justify-start">
-                  <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1">
-                    <span className="text-xs text-muted">{typing} is typing</span>
-                    <span className="flex gap-1">{[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-muted animate-bounce" style={{ animationDelay: `${i*0.1}s` }} />)}</span>
+                  <div className="bg-neutral-100 px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1">
+                    <span className="text-xs text-neutral-600">{typing} is typing</span>
+                    <span className="flex gap-1">{[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce" style={{ animationDelay: `${i*0.1}s` }} />)}</span>
                   </div>
                 </div>
               )}
@@ -465,7 +473,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
                 get a compose box: this view is strictly read-only, and the
                 backend itself would 403 a non-participant's reply anyway. */}
             {viewerIsParticipant ? (
-              <form onSubmit={sendMessage} className="px-4 py-4 border-t border-ink/8 flex gap-3">
+              <form onSubmit={sendMessage} className="px-4 py-4 border-t border-neutral-200 flex gap-3">
                 <input
                   type="text"
                   value={body}
@@ -474,24 +482,31 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   className="input-field flex-1"
                   disabled={sending}
                 />
-                <button type="submit" disabled={!body.trim() || sending} className={cn(
-                  'w-12 h-12 rounded-full flex items-center justify-center transition-all',
-                  body.trim() ? 'bg-brand-gradient text-white shadow-lg shadow-brand-600/25 hover:-translate-y-px' : 'bg-gray-100 text-muted cursor-not-allowed'
-                )}>
-                  {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                </button>
+                <Button
+                  type="submit"
+                  disabled={!body.trim() || sending}
+                  loading={sending}
+                  className={cn(
+                    'w-12 h-12 p-0 rounded-full',
+                    body.trim() ? 'bg-forest-600 text-white hover:bg-forest-700' : 'bg-neutral-100 text-neutral-400'
+                  )}
+                >
+                  {!sending && <Send size={16} />}
+                </Button>
               </form>
             ) : (
-              <div className="px-4 py-3 border-t border-ink/8 text-center text-xs text-muted">
+              <div className="px-4 py-3 border-t border-neutral-200 text-center text-xs text-neutral-500">
                 Moderator view — read-only. Messages can't be sent from here.
               </div>
             )}
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-20 h-20 rounded-2xl bg-brand-50 flex items-center justify-center text-3xl mb-4">💬</div>
-            <h3 className="font-serif text-xl mb-2">Select a conversation</h3>
-            <p className="text-sm text-muted">Choose a conversation from the list to start messaging.</p>
+          <div className="flex-1 flex items-center justify-center">
+            <EmptyState
+              icon={MessageSquare}
+              title="Select a conversation"
+              description="Choose a conversation from the list to start messaging."
+            />
           </div>
         )}
       </div>
@@ -503,6 +518,6 @@ export default function Inbox({ initialConvId }: InboxProps) {
         contextLabel={reportTarget?.contextLabel ?? ''}
         onSubmit={reportTarget?.submit ?? (async () => {})}
       />
-    </div>
+    </Surface>
   );
 }

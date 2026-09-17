@@ -26,17 +26,19 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_PROGRESS` — Milestones 1, 3, 4, and 5 approved, 2 rejected/reverted/
-skipped, 6 (Account + Marketplace Utilities) starting.
+`IN_REVIEW` — Milestones 1, 3, 4, and 5 approved, 2 rejected/reverted/
+skipped, 6 (Account + Marketplace Utilities) implemented and awaiting
+founder visual approval before Milestone 7.
 
-**Process correction (this milestone):** for Milestones 3–5, the founder
-had to send a follow-up message before the Deploy Preview URL in the
-final report was actually confirmed working — the report was sent before
-polling confirmed the Netlify build had finished. Starting with Milestone
-6, the Deploy Preview is polled to a confirmed terminal state (and
-verified actually reachable) before the founder-facing report is sent,
-with no follow-up required. If a deploy fails, that gets investigated and
-fixed before reporting, not left for the founder to notice.
+**Process correction (applied starting this milestone):** for Milestones
+3–5, the founder had to send a follow-up message before the Deploy
+Preview URL in the final report was actually confirmed working — the
+report was sent before polling confirmed the Netlify build had finished.
+From Milestone 6 onward, the Deploy Preview is polled to a confirmed
+terminal state (and verified actually reachable) before the
+founder-facing report is sent, with no follow-up required. If a deploy
+fails, that gets investigated and fixed before reporting, not left for
+the founder to notice.
 
 ## Owner
 
@@ -331,6 +333,67 @@ warning category, now also on this file's two new preview `<img>` uses —
 consistent with its own pre-existing style, no new warning category),
 full suite 401/401 passing, production build succeeds, manual dev-server
 smoke check of `/post` and `/my-listings`.
+
+### Milestone 6 — Account + Marketplace Utilities — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+
+Scope (a deliberate scoping call, not a founder-expanded list): the
+account-management page (Settings + `DeleteAccountDialog`) and the three
+pages where a signed-in user manages their own marketplace activity
+(Saved listings, My Listings, Messages/Inbox). `/contact` was explicitly
+excluded — a support/legal-adjacent page, better suited to a later
+milestone. Implemented per a Product Designer spec (its first attempt
+hit a session rate limit mid-run and was retried cleanly). Presentation-
+layer only — no change to any API call, auth/ownership check, real-time
+socket behavior, avatar/profile/email/password flows, the account-
+deletion confirmation mechanism, or listing edit/delete/save wiring.
+
+Key changes:
+- **Settings**: `SectionCard` → `Surface`; all inputs → `Input`/
+  `Textarea`; all submit actions → `Button` (using its built-in `loading`
+  prop); avatar gradient → flat `forest-600`; danger zone retoned to the
+  `destructive` token. `DeleteAccountDialog` got the same token-level-only
+  pass already established for `DeleteListingDialog` in Milestone 4 (no
+  structural change — it's a single confirm-or-cancel dialog with no
+  reason to go further). Zero test changes needed in either file — every
+  assertion targets copy/placeholders/roles that didn't move.
+- **Saved / My Listings**: loading/empty/error states migrated to
+  `Skeleton`/`EmptyState`, the exact pattern Browse established in
+  Milestone 3 (no test file exists for `saved/page.tsx`, so zero risk
+  there). My Listings' rows migrated to `Surface hoverable` with `Button`
+  actions. **Status badges** (`ACTIVE`/`INACTIVE`/`PENDING`/`REMOVED`) got
+  their own explicit, reasoned call — this is a real status indicator,
+  not the audience rainbow-color bug fixed in Milestone 3, so it wasn't
+  auto-collapsed to one flat scheme: `ACTIVE` gets a light forest accent,
+  `INACTIVE`/`PENDING` share one neutral tone (differentiated by label
+  text — "Pending review" vs. "Inactive"), and `REMOVED` keeps a
+  destructive flag since it's the one state (possibly moderation-driven)
+  an owner most needs to notice. `my-listings/page.test.tsx` needed zero
+  changes.
+- **Messages/Inbox**: the highest-risk file in this milestone (real-time
+  Socket.IO messaging) — confirmed zero change to socket connect/
+  disconnect lifecycle, room join/leave timing, or any listener
+  registration/cleanup/dedupe logic; every change is a className/
+  component swap on JSX those handlers already render. Outer shell →
+  `Surface`; conversation rows, avatars, unread pill, thread header
+  retoned from `brand`/gradient to `forest`/`neutral`; "me" message
+  bubbles → `forest-600` (the primary participant-to-participant
+  messaging path); the moderator (read-only) view's two-side
+  purple/gray colors were **deliberately left untouched** this round — a
+  real, different case (functional sender disambiguation on an admin-
+  only screen, not decorative rainbow-coding) noted as a candidate for a
+  later internal-tooling-only pass rather than folded in here. Two
+  genuine low-risk UX fixes made in passing: the empty-inbox and
+  "select a conversation" placeholders now use `EmptyState`, and the
+  send button now uses `Button`'s `loading` prop. `Inbox.test.tsx`
+  needed one literal-string sync (`bg-brand-600` → `bg-forest-600` in
+  three "me"-bubble color assertions) — the guarantee those tests
+  protect (correct sender attribution, including over a live socket
+  push) is unchanged and still verified.
+
+Verified: type-check clean, lint clean (same pre-existing `<img>`-element
+warning category), full suite 401/401 passing, production build
+succeeds, manual dev-server smoke check of `/settings`, `/saved`,
+`/my-listings`, and `/messages`.
 
 ## Files likely affected
 

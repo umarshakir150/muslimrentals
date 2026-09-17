@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { usersApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/ui/use-toast';
+import Button from '@/components/ui/Button';
+import { Input } from '@/components/ui/Field';
 
 interface DeleteAccountDialogProps {
   open: boolean;
@@ -65,67 +67,63 @@ export default function DeleteAccountDialog({ open, onClose, hasPassword, userEm
             className="bg-white rounded-3xl shadow-elevated p-6 max-w-md w-full"
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                <AlertTriangle size={18} className="text-red-500" />
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-destructive" />
               </div>
               <div>
                 <h3 id="delete-account-title" className="font-serif text-xl leading-snug">Delete your account?</h3>
               </div>
             </div>
 
-            <p className="text-sm text-muted leading-relaxed mb-4">
+            <p className="text-sm text-neutral-600 leading-relaxed mb-4">
               This permanently deletes your login and profile. It can&apos;t be undone. Your listings will be removed
               from the site. Messages you&apos;ve already sent stay visible to the people you messaged, shown as
               from &ldquo;Deleted user.&rdquo;
             </p>
 
             {hasPassword ? (
-              <div className="mb-4">
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
-                  Enter your password to confirm
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoFocus
-                  className="input-field"
-                  placeholder="Current password"
-                />
-              </div>
+              <Input
+                label="Enter your password to confirm"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoFocus
+                placeholder="Current password"
+                wrapperClassName="mb-4"
+              />
             ) : (
               <div className="mb-4">
-                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                <label className="block text-sm font-medium text-neutral-900 mb-1.5">
                   Type your account email to confirm: <span className="font-mono normal-case">{userEmail}</span>
                 </label>
-                <input
+                <Input
                   type="email"
                   value={confirmEmail}
                   onChange={e => setConfirmEmail(e.target.value)}
                   autoFocus
-                  className="input-field"
                   placeholder={userEmail}
                 />
               </div>
             )}
 
             {error && (
-              <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2 mb-4">{error}</p>
+              <p className="text-sm text-destructive bg-destructive/10 rounded-control px-3 py-2 mb-4">{error}</p>
             )}
 
             <div className="flex gap-3">
-              <button type="button" onClick={handleClose} disabled={deleting} className="btn-ghost flex-1 py-2.5 text-sm">
+              <Button type="button" variant="ghost" onClick={handleClose} disabled={deleting} className="flex-1">
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="destructive-solid"
                 onClick={handleDelete}
                 disabled={deleting || !canSubmit}
-                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                loading={deleting}
+                className="flex-1"
               >
-                {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
                 {deleting ? 'Deleting…' : 'Delete my account'}
-              </button>
+              </Button>
             </div>
           </motion.div>
         </motion.div>

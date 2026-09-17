@@ -3,13 +3,15 @@
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Heart } from 'lucide-react';
+import { Heart, AlertCircle } from 'lucide-react';
 import ListingCard from '@/components/listings/ListingCard';
 import AuthModal from '@/components/auth/AuthModal';
 import SendMessageModal from '@/components/messaging/SendMessageModal';
 import { usersApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useIsAuthenticated } from '@/store/authStore';
+import Skeleton from '@/components/ui/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 
@@ -68,7 +70,7 @@ export default function SavedPage() {
 
           <div className="mb-6">
             <h1 className="section-title text-3xl md:text-4xl mb-1">Saved listings</h1>
-            <p className="text-muted text-sm">
+            <p className="text-neutral-600 text-sm">
               {loading
                 ? 'Loading your saved listings...'
                 : hasError
@@ -80,29 +82,29 @@ export default function SavedPage() {
           {loading ? (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {[...Array(6)].map((_, i) => (
-                <div key={i} className="bg-white rounded-3xl overflow-hidden border border-ink/8 animate-pulse">
-                  <div className="h-48 bg-gray-100" />
+                <div key={i} className="bg-white rounded-surface overflow-hidden border border-neutral-200">
+                  <Skeleton className="h-48 rounded-none" />
                   <div className="p-4 space-y-3">
-                    <div className="h-4 bg-gray-100 rounded-lg w-3/4" />
-                    <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
                   </div>
                 </div>
               ))}
             </div>
           ) : hasError ? (
-            <div className="text-center py-20">
-              <p className="text-muted mb-4">Unable to load your saved listings right now.</p>
-              <button onClick={fetchSaved} className="btn-brand px-6 py-2.5 text-sm">Try again</button>
-            </div>
+            <EmptyState
+              icon={AlertCircle}
+              title="Couldn't load your saved listings"
+              description="Something went wrong. Try refreshing."
+              action={{ label: 'Try again', onClick: fetchSaved }}
+            />
           ) : listings.length === 0 ? (
-            <div className="text-center py-20">
-              <Heart size={32} className="mx-auto mb-3 opacity-20" />
-              <h3 className="font-serif text-2xl mb-2">No saved listings yet</h3>
-              <p className="text-muted mb-6">Tap the heart on a listing to save it here for later.</p>
-              <button onClick={() => router.push('/browse')} className="btn-brand px-8 py-3">
-                Browse rentals
-              </button>
-            </div>
+            <EmptyState
+              icon={Heart}
+              title="No saved listings yet"
+              description="Tap the heart on a listing to save it here for later."
+              action={{ label: 'Browse rentals', onClick: () => router.push('/browse') }}
+            />
           ) : (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {listings.map((listing, i) => (

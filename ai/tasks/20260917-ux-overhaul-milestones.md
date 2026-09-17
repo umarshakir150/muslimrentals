@@ -26,9 +26,17 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_REVIEW` — Milestones 1, 3, and 4 approved, 2 rejected/reverted/
-skipped, 5 (Post + Edit Listing) implemented and awaiting founder visual
-approval before Milestone 6.
+`IN_PROGRESS` — Milestones 1, 3, 4, and 5 approved, 2 rejected/reverted/
+skipped, 6 (Account + Marketplace Utilities) starting.
+
+**Process correction (this milestone):** for Milestones 3–5, the founder
+had to send a follow-up message before the Deploy Preview URL in the
+final report was actually confirmed working — the report was sent before
+polling confirmed the Netlify build had finished. Starting with Milestone
+6, the Deploy Preview is polled to a confirmed terminal state (and
+verified actually reachable) before the founder-facing report is sent,
+with no follow-up required. If a deploy fails, that gets investigated and
+fixed before reporting, not left for the founder to notice.
 
 ## Owner
 
@@ -245,7 +253,7 @@ assertion), production build succeeds, and a manual dev-server smoke
 check of `/browse`, `/saved`, and `/my-listings` (all pages that render
 `ListingDetail`).
 
-### Milestone 5 — Post + Edit Listing — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+### Milestone 5 — Post + Edit Listing — **APPROVED**
 
 Scope: `PostListingModal.tsx` (the single 612-line component that handles
 both create and edit via a `mode` prop) plus its exhaustive existing test

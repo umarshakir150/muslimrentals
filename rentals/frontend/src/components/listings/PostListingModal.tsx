@@ -4,19 +4,38 @@ import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { X, Upload, Loader2, ImageIcon, ChevronDown } from 'lucide-react';
+import { X, Upload, ImageIcon, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { listingsApi, needsLocationConfirmation } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
-import { cn } from '@/lib/utils';
+import { cn, formatCAD, audienceLabel } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import CityAutocomplete from '@/components/ui/CityAutocomplete';
 import AuthModal from '@/components/auth/AuthModal';
 import ConfirmLocationMap from '@/components/listings/ConfirmLocationMap';
+import Button from '@/components/ui/Button';
+import { Input, Textarea } from '@/components/ui/Field';
+import Chip from '@/components/ui/Chip';
+import Badge from '@/components/ui/Badge';
+import Surface from '@/components/ui/Surface';
+import Spinner from '@/components/ui/Spinner';
 import { postListingSchema, PostListingFormData as FormData } from '@/lib/postListingSchema';
 import type { Listing, ListingImage } from '@/types';
 
 const MAX_PHOTOS = 10;
+const TOTAL_STEPS = 5;
+
+const STEP_LABELS = ['Property', 'Details', 'Preferences', 'Photos', 'Review'] as const;
+
+// Which schema fields gate "Continue" for each step -- Preferences and
+// Photos have no schema-validated fields of their own (audience always has
+// a valid default, amenities/photos aren't part of postListingSchema), so
+// Continue is never blocked there, matching what the backend actually
+// requires today.
+const STEP_FIELDS: Partial<Record<number, (keyof FormData)[]>> = {
+  1: ['city', 'address', 'unit', 'town', 'bedrooms', 'bathrooms'],
+  2: ['title', 'description', 'price', 'contactInfo'],
+};
 
 interface PostListingModalProps {
   open: boolean;
@@ -64,10 +83,24 @@ const AMENITIES = [
   'Private entrance', 'Basement unit', 'Balcony', 'Backyard access',
 ];
 
+const AUDIENCE_OPTIONS = [
+  { v: 'BROTHERS', label: '🧔 Brothers' },
+  { v: 'SISTERS', label: '🧕 Sisters' },
+  { v: 'COUPLES', label: '💑 Couples' },
+  { v: 'FAMILIES', label: '👨‍👩‍👧 Families' },
+  { v: 'ALL', label: '🤝 Everyone' },
+] as const;
+
 export default function PostListingModal({ open, onClose, mode = 'create', listing, onSaved }: PostListingModalProps) {
   const isAuth = useIsAuthenticated();
   const [authOpen, setAuthOpen] = useState(false);
   const [step, setStep] = useState(1);
+  // Create mode: how far forward the poster has actually validated via
+  // Continue -- the step-jump row can only ever go back to/through this,
+  // never skip ahead unvalidated. Edit mode ignores this entirely (every
+  // step is treated as pre-validated from a real, already-live listing --
+  // see the step-jump handler below), so its initial value doesn't matter.
+  const [maxStepReached, setMaxStepReached] = useState(1);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
@@ -91,6 +124,7 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
   });
 
   const city = watch('city');
+  const formValues = watch();
 
   // Populate the form from the listing being edited every time the modal
   // opens for it -- deliberately keyed on `open` (not just `listing.id`)
@@ -127,6 +161,7 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
     setImages([]);
     setImagePreviews([]);
     setStep(1);
+    setMaxStepReached(TOTAL_STEPS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, listing?.id]);
 
@@ -150,6 +185,25 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
     const newFiles = images.filter((_, idx) => idx !== i);
     const newPreviews = imagePreviews.filter((_, idx) => idx !== i);
     setImages(newFiles);
+    setImagePreviews(newPreviews);
+  };
+
+  // Reordering the pending (not-yet-uploaded) batch is fully supported by
+  // the backend today with zero API changes: uploads.ts assigns each new
+  // image's stored `order` as `existingCount + arrayIndex`, so whatever
+  // order this array is in when listingsApi.uploadImages actually sends it
+  // IS the final stored order. There is no equivalent endpoint to reorder
+  // an already-uploaded/existing image after the fact, so this is
+  // deliberately only offered for `images`/`imagePreviews`, never
+  // `existingImages` (which stay remove-only, exactly as before).
+  const moveImage = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= images.length) return;
+    const newImages = [...images];
+    const newPreviews = [...imagePreviews];
+    [newImages[index], newImages[target]] = [newImages[target], newImages[index]];
+    [newPreviews[index], newPreviews[target]] = [newPreviews[target], newPreviews[index]];
+    setImages(newImages);
     setImagePreviews(newPreviews);
   };
 
@@ -216,7 +270,7 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
         ? { title: 'Listing updated!', description: 'Your changes are live.' }
         : { title: 'Listing posted! 🎉', description: 'Your rental listing is now live.' }
     );
-    setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setExistingImages([]); setSelectedAmenities([]); setStep(1); onClose(); }, 2500);
+    setTimeout(() => { setSuccess(false); reset(); setImages([]); setImagePreviews([]); setExistingImages([]); setSelectedAmenities([]); setStep(1); setMaxStepReached(1); onClose(); }, 2500);
   }
 
   async function onSubmit(data: FormData) {
@@ -282,14 +336,43 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
   }
 
   async function nextStep() {
-    const fieldsToValidate: (keyof FormData)[] = step === 1
-      ? ['title', 'description', 'price', 'bedrooms', 'bathrooms', 'audience']
-      : ['city', 'address', 'contactInfo'];
-    const valid = await trigger(fieldsToValidate);
-    if (valid) setStep(s => s + 1);
+    const fields = STEP_FIELDS[step];
+    if (fields) {
+      const valid = await trigger(fields);
+      if (!valid) return;
+    }
+    setStep(s => {
+      const next = Math.min(s + 1, TOTAL_STEPS);
+      setMaxStepReached(m => Math.max(m, next));
+      return next;
+    });
   }
 
-  const handleClose = () => { if (!loading) { reset(); setStep(1); setImages([]); setImagePreviews([]); setExistingImages([]); setSelectedAmenities([]); setPendingConfirmation(null); onClose(); } };
+  // Step-jump navigation (the labeled step row, desktop-only -- see the
+  // header below). Edit mode treats every step as pre-validated, since the
+  // form started from a real, already-live listing -- an owner can jump
+  // straight to Photos and back to Review without marching through
+  // Continue. Create mode can only ever jump back to/through the furthest
+  // step already reached via Continue -- never skip ahead unvalidated.
+  function goToStep(n: number) {
+    if (mode === 'edit' || n <= maxStepReached) setStep(n);
+  }
+
+  const handleClose = () => {
+    if (!loading) {
+      reset(); setStep(1); setMaxStepReached(1); setImages([]); setImagePreviews([]);
+      setExistingImages([]); setSelectedAmenities([]); setPendingConfirmation(null); onClose();
+    }
+  };
+
+  // The effective, combined photo set in real stored order (existing
+  // photos first, then pending ones) -- used only for the Review step's
+  // preview; every other step keeps existing/pending strictly separate.
+  const reviewPhotos: string[] = [
+    ...existingImages.map(img => img.url),
+    ...imagePreviews,
+  ];
+  const totalPhotoCount = existingImages.length + images.length;
 
   if (!isAuth && open) return (
     <>
@@ -319,23 +402,51 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
           className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4 bg-ink/50 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 60 }}
             transition={{ type: 'spring', damping: 25, stiffness: 280 }}
-            className="w-full sm:max-w-2xl bg-white rounded-t-3xl sm:rounded-3xl shadow-elevated overflow-hidden max-h-[95dvh] flex flex-col">
+            className="w-full sm:max-w-3xl bg-white rounded-t-panel sm:rounded-panel shadow-elevated overflow-hidden max-h-[95dvh] flex flex-col">
 
             {/* Header */}
-            <div className="px-6 py-5 border-b border-ink/8 flex items-center justify-between shrink-0">
+            <div className="px-6 py-5 border-b border-neutral-200 flex items-center justify-between shrink-0">
               <div>
                 <h2 className="font-serif text-xl">
                   {pendingConfirmation ? 'Confirm property location' : mode === 'edit' ? 'Edit listing' : 'Post rental listing'}
                 </h2>
-                {!pendingConfirmation && <p className="text-xs text-muted mt-0.5">Step {step} of 3</p>}
+                {!pendingConfirmation && !success && (
+                  <p className="text-xs text-neutral-500 mt-0.5">Step {step} of {TOTAL_STEPS} — {STEP_LABELS[step - 1]}</p>
+                )}
               </div>
-              <button onClick={handleClose} className="p-2 rounded-full hover:bg-gray-100 transition-colors"><X size={18} /></button>
+              <Button variant="ghost" size="sm" onClick={handleClose} className="w-9 h-9 p-0 rounded-full">
+                <X size={18} />
+              </Button>
             </div>
 
             {/* Progress bar */}
-            {!pendingConfirmation && (
-              <div className="h-1 bg-gray-100 shrink-0">
-                <div className="h-full bg-brand-gradient transition-all duration-400" style={{ width: `${(step / 3) * 100}%` }} />
+            {!pendingConfirmation && !success && (
+              <div className="h-1 bg-neutral-100 shrink-0">
+                <div className="h-full bg-forest-600 transition-all duration-400" style={{ width: `${(step / TOTAL_STEPS) * 100}%` }} />
+              </div>
+            )}
+
+            {/* Desktop-only labeled step row with jump navigation */}
+            {!pendingConfirmation && !success && (
+              <div className="hidden sm:flex items-center gap-2 px-6 py-3 border-b border-neutral-200 shrink-0">
+                {STEP_LABELS.map((label, i) => {
+                  const n = i + 1;
+                  const reachable = mode === 'edit' || n <= maxStepReached;
+                  const complete = n < step;
+                  return (
+                    <Chip
+                      key={label}
+                      type="button"
+                      active={n === step}
+                      disabled={!reachable}
+                      onClick={() => goToStep(n)}
+                      className={cn('gap-1.5', !reachable && 'opacity-40 cursor-not-allowed')}
+                    >
+                      {complete ? <Check size={12} /> : <span className="text-[11px] font-bold">{n}</span>}
+                      {label}
+                    </Chip>
+                  );
+                })}
               </div>
             )}
 
@@ -343,9 +454,9 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
             {success && (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', duration: 0.5 }}
-                  className="w-20 h-20 rounded-full bg-brand-50 flex items-center justify-center text-4xl mb-4">🎉</motion.div>
+                  className="w-20 h-20 rounded-full bg-forest-50 flex items-center justify-center text-4xl mb-4">🎉</motion.div>
                 <h3 className="font-serif text-2xl mb-2">{mode === 'edit' ? 'Listing updated!' : 'Listing posted!'}</h3>
-                <p className="text-muted">{mode === 'edit' ? 'Your changes are live.' : 'Your rental listing is now live.'}</p>
+                <p className="text-neutral-600">{mode === 'edit' ? 'Your changes are live.' : 'Your rental listing is now live.'}</p>
               </div>
             )}
 
@@ -358,28 +469,33 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
                 listing's own current private coordinate rather than
                 re-geocoding; a legacy listing with no valid stored
                 coordinate preloads from a fresh geocode of its address
-                instead of ever exposing the public randomized point. Nothing
-                has been saved yet; confirming here is what actually
-                creates/updates the listing. Reuses ConfirmLocationMap as-is
-                (drag, click/tap, and search all report through the same
-                onChange below) -- identical in create and edit mode. */}
+                instead of ever exposing the public randomized point.
+                Nothing has been saved yet; confirming here is what
+                actually creates/updates the listing. "Back" returns to
+                Review (the step whose submit triggered this), since `step`
+                itself never changes while this overlay is shown. Reuses
+                ConfirmLocationMap as-is (drag, click/tap, and search all
+                report through the same onChange below) -- identical in
+                create and edit mode. */}
             {!success && pendingConfirmation && (
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                <p className="text-sm text-muted">
+                <p className="text-sm text-neutral-600">
                   Make sure the pin is on the property. Drag, tap, or search for it below. Your exact property location will remain private.
                 </p>
-                <ConfirmLocationMap
-                  initialLat={pendingConfirmation.matchedLat}
-                  initialLng={pendingConfirmation.matchedLng}
-                  onChange={(lat, lng) => setPendingConfirmation(prev => prev ? { ...prev, pinLat: lat, pinLng: lng } : prev)}
-                />
+                <div className="rounded-panel overflow-hidden">
+                  <ConfirmLocationMap
+                    initialLat={pendingConfirmation.matchedLat}
+                    initialLng={pendingConfirmation.matchedLng}
+                    onChange={(lat, lng) => setPendingConfirmation(prev => prev ? { ...prev, pinLat: lat, pinLng: lng } : prev)}
+                  />
+                </div>
                 <div className="flex gap-3 pt-1">
-                  <button type="button" disabled={loading} onClick={() => setPendingConfirmation(null)} className="btn-ghost flex-1 py-3">
+                  <Button type="button" variant="ghost" size="lg" disabled={loading} onClick={() => setPendingConfirmation(null)} className="flex-1">
                     Back
-                  </button>
-                  <button type="button" disabled={loading} onClick={confirmPendingLocation} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
-                    {loading ? <><Loader2 size={16} className="animate-spin" /> Confirming...</> : 'Confirm location'}
-                  </button>
+                  </Button>
+                  <Button type="button" variant="primary" size="lg" disabled={loading} loading={loading} onClick={confirmPendingLocation} className="flex-1">
+                    {loading ? 'Confirming...' : 'Confirm location'}
+                  </Button>
                 </div>
               </div>
             )}
@@ -389,65 +505,11 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
               <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col flex-1 overflow-hidden">
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-                  {/* Step 1: Details */}
+                  {/* Step 1: Property */}
                   {step === 1 && (
                     <>
                       <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Listing title *</label>
-                        <input {...register('title')} placeholder="e.g. Bright 2BR in North York, Toronto" className="input-field" />
-                        {errors.title && <p className="text-red-500 text-xs mt-1">{errors.title.message}</p>}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Description *</label>
-                        <textarea {...register('description')} rows={4} placeholder="Describe the rental: layout, rules, features, what makes it great..." className="input-field resize-none" />
-                        {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description.message}</p>}
-                      </div>
-                      <div className="grid grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Price (CAD/mo) *</label>
-                          <input {...register('price')} type="number" min={100} placeholder="1200" className="input-field" />
-                          {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price.message}</p>}
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Beds *</label>
-                          <input {...register('bedrooms')} type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 2" className="input-field" />
-                          <p className="text-[11px] text-muted mt-1">Enter 0 for a studio</p>
-                          {errors.bedrooms && <p className="text-red-500 text-xs mt-1">{errors.bedrooms.message}</p>}
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Baths *</label>
-                          <input {...register('bathrooms')} type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 1" className="input-field" />
-                          {errors.bathrooms && <p className="text-red-500 text-xs mt-1">{errors.bathrooms.message}</p>}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Suitable for *</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {[
-                            { v: 'BROTHERS', label: '🧔 Brothers' },
-                            { v: 'SISTERS', label: '🧕 Sisters' },
-                            { v: 'COUPLES', label: '💑 Couples' },
-                            { v: 'FAMILIES', label: '👨‍👩‍👧 Families' },
-                            { v: 'ALL', label: '🤝 Everyone' },
-                          ].map(opt => (
-                            <label key={opt.v} className={cn(
-                              'flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 cursor-pointer transition-all text-sm font-semibold',
-                              watch('audience') === opt.v ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-ink/10 hover:border-brand-300'
-                            )}>
-                              <input type="radio" {...register('audience')} value={opt.v} className="sr-only" />
-                              {opt.label}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Step 2: Location + contact */}
-                  {step === 2 && (
-                    <>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">City *</label>
+                        <label className="block text-sm font-medium text-neutral-900 mb-1.5">City <span className="text-destructive">*</span></label>
                         <CityAutocomplete
                           value={city || ''}
                           onChange={(city, _coords, province) => {
@@ -460,125 +522,279 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
                           }}
                           placeholder="Search city..."
                         />
-                        {errors.city && <p className="text-red-500 text-xs mt-1">{errors.city.message}</p>}
+                        {errors.city && <p className="text-[13px] text-destructive mt-1">{errors.city.message}</p>}
+                      </div>
+                      <Input label="Street address" required {...register('address')} placeholder="e.g. 123 Main Street"
+                        error={errors.address?.message}
+                        helperText="Used to place your listing on the map. Your exact address is never shown publicly — renters only ever see an approximate area." />
+                      <Input label="Unit / Apt #" {...register('unit')} placeholder="e.g. Unit 4B"
+                        helperText="Kept private — never shown to renters or used to place your listing on the map." />
+                      <Input label="Town / Area" {...register('town')} placeholder="e.g. Mississauga" />
+                      <div className="grid grid-cols-2 gap-4">
+                        <Input label="Bedrooms" required type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 2"
+                          {...register('bedrooms')} error={errors.bedrooms?.message} helperText="Enter 0 for a studio" />
+                        <Input label="Bathrooms" required type="number" inputMode="numeric" step={1} min={0} max={20} placeholder="e.g. 1"
+                          {...register('bathrooms')} error={errors.bathrooms?.message} />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Step 2: Details */}
+                  {step === 2 && (
+                    <>
+                      <Input label="Listing title" required {...register('title')} placeholder="e.g. Bright 2BR in North York, Toronto"
+                        error={errors.title?.message} />
+                      <Textarea label="Description" required {...register('description')} rows={5}
+                        placeholder="Describe the rental: layout, rules, features, what makes it great..."
+                        error={errors.description?.message} />
+                      <Input label="Price (CAD/mo)" required type="number" min={100} placeholder="1200"
+                        {...register('price')} error={errors.price?.message} />
+                      <Input label="Contact info" required {...register('contactInfo')} placeholder="Phone, WhatsApp, or email for serious inquiries..."
+                        error={errors.contactInfo?.message} />
+                    </>
+                  )}
+
+                  {/* Step 3: Preferences */}
+                  {step === 3 && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-900 mb-2">Suitable for <span className="text-destructive">*</span></label>
+                        <div className="flex flex-wrap gap-2">
+                          {AUDIENCE_OPTIONS.map(opt => (
+                            <Chip key={opt.v} type="button" active={watch('audience') === opt.v} onClick={() => setValue('audience', opt.v)}>
+                              {opt.label}
+                            </Chip>
+                          ))}
+                        </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Street address *</label>
-                        <input {...register('address')} placeholder="e.g. 123 Main Street" className="input-field" />
-                        <p className="text-xs text-muted mt-1.5">
-                          Used to place your listing on the map. Your exact address is never shown publicly — renters only ever see an approximate area.
-                        </p>
-                        {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address.message}</p>}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Unit / Apt # (optional)</label>
-                        <input {...register('unit')} placeholder="e.g. Unit 4B" className="input-field" />
-                        <p className="text-xs text-muted mt-1.5">Kept private — never shown to renters or used to place your listing on the map.</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Town / Area</label>
-                        <input {...register('town')} placeholder="e.g. Mississauga" className="input-field" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Contact info *</label>
-                        <input {...register('contactInfo')} placeholder="Phone, WhatsApp, or email for serious inquiries..." className="input-field" />
-                        {errors.contactInfo && <p className="text-red-500 text-xs mt-1">{errors.contactInfo.message}</p>}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Amenities</label>
+                        <label className="block text-sm font-medium text-neutral-900 mb-1">Amenities</label>
+                        <p className="text-[13px] text-neutral-600 mb-2">Optional — select all that apply.</p>
                         <div className="flex flex-wrap gap-2">
                           {AMENITIES.map(a => (
-                            <button key={a} type="button" onClick={() => toggleAmenity(a)}
-                              className={cn('px-3.5 py-2 rounded-full text-sm font-semibold border-2 transition-all',
-                                selectedAmenities.includes(a) ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-ink/10 text-muted hover:border-brand-300 hover:text-brand-700')}>
+                            <Chip key={a} type="button" active={selectedAmenities.includes(a)} onClick={() => toggleAmenity(a)}>
                               {a}
-                            </button>
+                            </Chip>
                           ))}
                         </div>
                       </div>
                     </>
                   )}
 
-                  {/* Step 3: Images */}
-                  {step === 3 && (
+                  {/* Step 4: Photos */}
+                  {step === 4 && (
                     <>
                       <div>
-                        <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-2">Photos (up to {MAX_PHOTOS})</label>
+                        <div className="flex items-baseline justify-between mb-2">
+                          <label className="block text-sm font-medium text-neutral-900">Photos</label>
+                          <span className="text-[13px] text-neutral-500">{totalPhotoCount} of {MAX_PHOTOS} used</span>
+                        </div>
+                        {mode === 'edit' && existingImages.length > 0 && (
+                          <p className="text-[13px] text-neutral-500 mb-2">
+                            Your {existingImages.length} existing photo{existingImages.length !== 1 ? 's' : ''} count toward the {MAX_PHOTOS}-photo limit.
+                          </p>
+                        )}
                         {maxNewPhotos > 0 ? (
                           <div {...getRootProps()} className={cn(
-                            'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
-                            isDragActive ? 'border-brand-500 bg-brand-50' : 'border-ink/15 hover:border-brand-400 hover:bg-brand-50/30'
+                            'border-2 border-dashed rounded-panel p-8 text-center cursor-pointer transition-all',
+                            isDragActive ? 'border-forest-600 bg-forest-50' : 'border-neutral-300 hover:border-forest-400 hover:bg-forest-50/30'
                           )}>
                             <input {...getInputProps()} />
-                            <Upload size={28} className="mx-auto text-muted mb-3" />
-                            <p className="text-sm font-semibold text-ink mb-1">{isDragActive ? 'Drop here' : 'Drag photos here, or click to browse'}</p>
-                            <p className="text-xs text-muted">JPEG, PNG, WEBP · Max 10MB each · Up to {MAX_PHOTOS} photos total</p>
+                            <Upload size={28} className="mx-auto text-neutral-400 mb-3" />
+                            <p className="text-sm font-semibold text-neutral-900 mb-1">{isDragActive ? 'Drop here' : 'Drag photos here, or click to browse'}</p>
+                            <p className="text-xs text-neutral-500">JPEG, PNG, WEBP · Max 10MB each · Up to {MAX_PHOTOS} photos total</p>
                           </div>
                         ) : (
-                          <p className="text-xs text-muted">
+                          <p className="text-xs text-neutral-500">
                             You're at the {MAX_PHOTOS}-photo limit. Remove one below to add another.
                           </p>
                         )}
                       </div>
 
-                      {/* Existing photos (edit mode only) -- each removes
+                      {/* Existing photos (edit mode only) -- remove-only, no
+                          reorder control: there is no backend endpoint to
+                          persist a reordered existing-image order, only to
+                          add new ones or delete one outright. Each removes
                           immediately via DELETE /uploads/listing-images/:id,
                           independent of pressing "Save changes" below. */}
                       {mode === 'edit' && existingImages.length > 0 && (
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                          {existingImages.map((img, i) => (
-                            <div key={img.id} className="relative aspect-square rounded-xl overflow-hidden group">
-                              <img src={img.url} alt="" className="w-full h-full object-cover" />
-                              <button
-                                type="button"
-                                aria-label="Remove photo"
-                                disabled={removingImageIds.has(img.id)}
-                                onClick={() => removeExistingImage(img)}
-                                className="absolute inset-0 bg-ink/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity disabled:opacity-100"
-                              >
-                                {removingImageIds.has(img.id) ? <Loader2 size={18} className="text-white animate-spin" /> : <X size={18} className="text-white" />}
-                              </button>
-                              {i === 0 && imagePreviews.length === 0 && (
-                                <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-full bg-white/90 text-[10px] font-bold text-brand-700">Cover</span>
-                              )}
-                            </div>
-                          ))}
+                        <div>
+                          <p className="text-xs font-semibold text-neutral-600 uppercase tracking-wider mb-2">Current photos</p>
+                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                            {existingImages.map((img, i) => (
+                              <div key={img.id} className="relative aspect-square rounded-control overflow-hidden group">
+                                <img src={img.url} alt="" className="w-full h-full object-cover" />
+                                <button
+                                  type="button"
+                                  aria-label="Remove photo"
+                                  disabled={removingImageIds.has(img.id)}
+                                  onClick={() => removeExistingImage(img)}
+                                  className={cn(
+                                    'absolute inset-0 bg-ink/50 flex items-center justify-center transition-opacity disabled:opacity-100',
+                                    '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100',
+                                    '[@media(hover:none)]:opacity-100 [@media(hover:none)]:bg-ink/25'
+                                  )}
+                                >
+                                  {removingImageIds.has(img.id) ? <Spinner size={18} className="text-white" /> : <X size={18} className="text-white" />}
+                                </button>
+                                {i === 0 && imagePreviews.length === 0 && (
+                                  <Badge variant="emphasis" className="absolute bottom-1.5 left-1.5">Cover</Badge>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
+                      {/* New (pending, not-yet-uploaded) photos -- reorderable
+                          via the arrow buttons, since the array order sent to
+                          listingsApi.uploadImages IS the final stored order
+                          for these (see uploads.ts: order = existingCount +
+                          arrayIndex). Arrow buttons rather than drag-and-drop
+                          so this works identically, and accessibly, on
+                          mobile touch and desktop alike. */}
                       {imagePreviews.length > 0 && (
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                          {imagePreviews.map((src, i) => (
-                            <div key={i} className="relative aspect-square rounded-xl overflow-hidden group">
-                              <img src={src} alt="" className="w-full h-full object-cover" />
-                              <button type="button" aria-label="Remove photo" onClick={() => removeImage(i)}
-                                className="absolute inset-0 bg-ink/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                <X size={18} className="text-white" />
-                              </button>
-                              {i === 0 && existingImages.length === 0 && <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-full bg-white/90 text-[10px] font-bold text-brand-700">Cover</span>}
-                            </div>
-                          ))}
+                        <div>
+                          {mode === 'edit' && existingImages.length > 0 && (
+                            <p className="text-xs font-semibold text-neutral-600 uppercase tracking-wider mb-2">New photos</p>
+                          )}
+                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                            {imagePreviews.map((src, i) => (
+                              <div key={i} className="relative aspect-square rounded-control overflow-hidden group">
+                                <img src={src} alt="" className="w-full h-full object-cover" />
+                                <button
+                                  type="button"
+                                  aria-label="Remove photo"
+                                  onClick={() => removeImage(i)}
+                                  className={cn(
+                                    'absolute inset-0 bg-ink/50 flex items-center justify-center transition-opacity',
+                                    '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100',
+                                    '[@media(hover:none)]:opacity-100 [@media(hover:none)]:bg-ink/25'
+                                  )}
+                                >
+                                  <X size={18} className="text-white" />
+                                </button>
+                                {i === 0 && existingImages.length === 0 && (
+                                  <Badge variant="emphasis" className="absolute bottom-1.5 left-1.5">Cover</Badge>
+                                )}
+                                {imagePreviews.length > 1 && (
+                                  <div className="absolute top-1.5 right-1.5 flex gap-1">
+                                    {i > 0 && (
+                                      <button type="button" aria-label="Move photo earlier" onClick={() => moveImage(i, -1)}
+                                        className="w-6 h-6 rounded-full bg-white/90 flex items-center justify-center hover:bg-white">
+                                        <ChevronLeft size={13} />
+                                      </button>
+                                    )}
+                                    {i < imagePreviews.length - 1 && (
+                                      <button type="button" aria-label="Move photo later" onClick={() => moveImage(i, 1)}
+                                        className="w-6 h-6 rounded-full bg-white/90 flex items-center justify-center hover:bg-white">
+                                        <ChevronRight size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
                       {imagePreviews.length === 0 && existingImages.length === 0 && (
-                        <div className="text-center py-4 text-sm text-muted">
+                        <div className="text-center py-4 text-sm text-neutral-500">
                           <ImageIcon size={40} className="mx-auto mb-3 opacity-20" />
                           <p>No photos yet. Listings with photos get 3× more inquiries.</p>
                         </div>
                       )}
                     </>
                   )}
+
+                  {/* Step 5: Review */}
+                  {step === 5 && (
+                    <>
+                      <Surface>
+                        {reviewPhotos.length > 0 ? (
+                          <div className="mb-4">
+                            <div className="relative aspect-video rounded-control overflow-hidden bg-neutral-100 mb-2">
+                              <img src={reviewPhotos[0]} alt="" className="w-full h-full object-cover" />
+                            </div>
+                            {reviewPhotos.length > 1 && (
+                              <div className="flex gap-2 overflow-x-auto">
+                                {reviewPhotos.slice(1).map((src, i) => (
+                                  <img key={i} src={src} alt="" className="w-16 h-16 rounded-control object-cover shrink-0" />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="aspect-video rounded-control bg-forest-50 flex items-center justify-center mb-4">
+                            <ImageIcon size={32} className="text-forest-300" />
+                          </div>
+                        )}
+
+                        <Badge variant="emphasis" className="mb-2">{audienceLabel(formValues.audience || 'ALL')}</Badge>
+                        <h3 className="font-serif text-xl leading-snug mb-1">{formValues.title || 'Untitled listing'}</h3>
+                        <p className="text-2xl font-bold text-forest-700 mb-2">
+                          {formValues.price ? formatCAD(Number(formValues.price)) : '$0'}<span className="text-sm font-normal text-neutral-500">/mo</span>
+                        </p>
+                        <p className="text-sm text-neutral-600 mb-3">{formValues.city}</p>
+                        <div className="flex items-center gap-4 text-sm mb-4 pb-4 border-b border-neutral-200">
+                          <span className="font-semibold">{formValues.bedrooms === 0 ? 'Studio' : `${formValues.bedrooms} bed`}</span>
+                          <span className="font-semibold">{formValues.bathrooms} bath</span>
+                        </div>
+                        <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line mb-4">{formValues.description}</p>
+                        {selectedAmenities.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {selectedAmenities.map(a => <Badge key={a} variant="neutral">{a}</Badge>)}
+                          </div>
+                        )}
+                      </Surface>
+
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium text-neutral-900">Details you're submitting</p>
+
+                        <div className="flex items-start justify-between gap-3 py-2 border-t border-neutral-200">
+                          <p className="text-sm text-neutral-600">
+                            <span className="font-semibold text-neutral-900">Address (private — never shown to renters):</span>{' '}
+                            {formValues.address}{formValues.unit ? `, ${formValues.unit}` : ''}
+                            {formValues.town ? ` · ${formValues.town}` : ''}{formValues.province ? `, ${formValues.province}` : ''}
+                          </p>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => goToStep(1)}>Edit</Button>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-3 py-2 border-t border-neutral-200">
+                          <p className="text-sm text-neutral-600">
+                            <span className="font-semibold text-neutral-900">Contact info:</span> {formValues.contactInfo}
+                          </p>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => goToStep(2)}>Edit</Button>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-3 py-2 border-t border-neutral-200">
+                          <p className="text-sm text-neutral-600">
+                            <span className="font-semibold text-neutral-900">Suitability & amenities:</span>{' '}
+                            {audienceLabel(formValues.audience || 'ALL')} · {selectedAmenities.length} amenit{selectedAmenities.length === 1 ? 'y' : 'ies'} selected
+                          </p>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => goToStep(3)}>Edit</Button>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-3 py-2 border-t border-neutral-200">
+                          <p className="text-sm text-neutral-600">
+                            <span className="font-semibold text-neutral-900">Photos:</span> {totalPhotoCount} photo{totalPhotoCount !== 1 ? 's' : ''}
+                          </p>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => goToStep(4)}>Edit</Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Footer */}
-                <div className="px-6 py-4 border-t border-ink/8 flex gap-3 shrink-0 bg-white">
+                <div className="px-6 py-4 border-t border-neutral-200 flex gap-3 shrink-0 bg-white">
                   {step > 1 && (
-                    <button type="button" onClick={() => setStep(s => s - 1)} className="btn-ghost flex-1 py-3">
+                    <Button type="button" variant="ghost" size="lg" onClick={() => setStep(s => s - 1)} className="flex-1">
                       Back
-                    </button>
+                    </Button>
                   )}
-                  {step < 3 ? (
+                  {step < TOTAL_STEPS ? (
                     // Distinct `key`s from the type="submit" button below are
                     // required, not cosmetic: without them, React reconciles
                     // both branches as "the same button" at this JSX position
@@ -591,15 +807,15 @@ export default function PostListingModal({ open, onClose, mode = 'create', listi
                     // a real unmount/remount instead of an in-place patch,
                     // so the click that landed on the old (type="button")
                     // node can never retroactively submit anything.
-                    <button key="continue" type="button" onClick={nextStep} className="btn-brand flex-1 py-3">
+                    <Button key="continue" type="button" variant="primary" size="lg" onClick={nextStep} className="flex-1">
                       Continue →
-                    </button>
+                    </Button>
                   ) : (
-                    <button key="submit" type="submit" disabled={loading} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+                    <Button key="submit" type="submit" variant="primary" size="lg" disabled={loading} loading={loading} className="flex-1">
                       {loading
-                        ? <><Loader2 size={16} className="animate-spin" /> {mode === 'edit' ? 'Saving...' : 'Posting...'}</>
+                        ? (mode === 'edit' ? 'Saving...' : 'Posting...')
                         : mode === 'edit' ? 'Save changes' : 'Post listing'}
-                    </button>
+                    </Button>
                   )}
                 </div>
               </form>

@@ -26,8 +26,9 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_PROGRESS` — Milestones 1, 3, and 4 approved, 2 rejected/reverted/
-skipped, 5 (Post + Edit Listing) starting.
+`IN_REVIEW` — Milestones 1, 3, and 4 approved, 2 rejected/reverted/
+skipped, 5 (Post + Edit Listing) implemented and awaiting founder visual
+approval before Milestone 6.
 
 ## Owner
 
@@ -243,6 +244,85 @@ warnings), full suite 395/395 passing (including the one updated
 assertion), production build succeeds, and a manual dev-server smoke
 check of `/browse`, `/saved`, and `/my-listings` (all pages that render
 `ListingDetail`).
+
+### Milestone 5 — Post + Edit Listing — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+
+Scope: `PostListingModal.tsx` (the single 612-line component that handles
+both create and edit via a `mode` prop) plus its exhaustive existing test
+suite. Implemented per a Product Designer spec, restructuring the old
+generic 3-step wizard into 5 named steps: **Property** (city, address,
+unit, town, bedrooms, bathrooms) → **Details** (title, description, price,
+contactInfo) → **Preferences** (audience, amenities) → **Photos** →
+**Review** (new — a read-only renter-facing preview + the real submit
+action). No new fields, no redefined fields, no weakened validation, no
+backend changes, no change to the confirm-property-location gate's
+mandatory/unskippable nature.
+
+Key changes:
+- **Field regrouping** per the spec's rationale (Property = objective
+  facts about the place, Details = the fields that require composing
+  something plus price/contact, Preferences unchanged conceptually,
+  Photos unchanged). Per-step "Continue" validation gates only the
+  schema-backed fields in that step (Preferences/Photos have none, so
+  Continue is never blocked there — matches what the backend already
+  allows).
+- **Progress**: a thin bar (all breakpoints) plus a desktop-only labeled
+  5-step row (`Chip`s) with jump navigation — in **create mode**, a step
+  chip is only reachable at or before the furthest step already validated
+  via Continue (no skip-ahead on an unproven submission); in **edit
+  mode**, since the form starts from a real, already-live, already-valid
+  listing, every step is jump-reachable immediately (an owner can go
+  straight to Photos and back to Review without walking through Continue
+  five times) — a UX rule keyed on `mode`, not a new code path.
+- **Preferences**: audience (single-select) and amenities (multi-select)
+  migrated from ad hoc pill/radio markup to the shared `Chip` component.
+- **Photos**: pending (not-yet-uploaded) photos are now reorderable via
+  move-earlier/move-later icon buttons — genuinely supported with zero
+  backend changes, since `uploads.ts` assigns each new image's stored
+  `order` from its position in the uploaded array. Already-existing
+  photos in edit mode stay remove-only with no reorder control, since
+  there is no endpoint to persist a reordered existing-image order (a
+  real backend gap, correctly left alone rather than worked around).
+  Fixed a real pre-existing mobile bug in passing: the photo-remove
+  button was hover-only (`opacity-0 group-hover:opacity-100`), unreachable
+  on touch devices without an extra tap; it's now always visible on
+  coarse/touch pointers and hover-reveals only on real hover-capable
+  pointers.
+- **Review** (new): a `Surface`-wrapped visual preview (hero photo, title,
+  price, audience `Badge`, beds/baths, city, full description, amenity
+  `Badge`s) using the same visual grammar established in Milestones 3–4,
+  plus a plain "details you're submitting" list (address/unit — flagged
+  private, contact info, suitability/amenities, photo count) each with a
+  small "Edit" link that jumps straight back to the step owning that
+  field — safe since the form never unmounts across steps, so no data is
+  lost. The real submit button lives here, with unchanged copy/logic
+  ("Post listing" / "Save changes").
+- **Confirm-property-location gate**: mechanism, copy, and unskippable
+  nature are byte-for-byte unchanged (still triggered by the backend's
+  `needsLocationConfirmation` response on literally every create and every
+  edit submission) — only its buttons/map-container chrome were migrated
+  to `Button`/`panel` radius. "Back" from it now returns to Review (the
+  step whose submit triggered it), the direct generalization of its old
+  "return to wherever submission was initiated, nothing created" behavior.
+- Field inputs migrated to `Input`/`Textarea` (gaining built-in error
+  styling), buttons to `Button`, tags to `Badge`.
+- **Test suite**: comprehensively rewritten to match the new 5-step
+  structure and field regrouping (step-count/label strings, per-step
+  field-fill helpers) while preserving every behavioral guarantee the
+  original ~35 tests encoded — the universal confirm-location flow (both
+  create and edit), the create-vs-edit photo-upload-failure divergence
+  (full rollback vs. save-anyway-with-a-warning-toast), immediate
+  existing-photo removal/restore-on-failure, PATCH-vs-POST, prefill,
+  auth gating, and the type="button"/type="submit" key-remount guard —
+  plus new tests for pending-photo reordering, the absence of a reorder
+  control on existing photos, and both modes' step-jump gating. 401/401
+  tests pass (six net-new tests; zero guarantees removed or weakened).
+
+Verified: type-check clean, lint clean (same pre-existing `<img>`-element
+warning category, now also on this file's two new preview `<img>` uses —
+consistent with its own pre-existing style, no new warning category),
+full suite 401/401 passing, production build succeeds, manual dev-server
+smoke check of `/post` and `/my-listings`.
 
 ## Files likely affected
 

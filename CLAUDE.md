@@ -12,33 +12,6 @@ skips its checklist to "just get it done," is doing it wrong. The Supervisor
 exists to keep everyone in their lane and to make sure the right specialists
 actually get involved before work is called done.
 
-## Standing status flag — remove once resolved
-
-**One final accumulated Netlify production deploy is pending — nothing
-else.** PR #7, PR #8, PR #9, PR #10 (report-a-user/report-a-message + the
-admin moderation toolkit: Remove/Restore Listing, ADMIN-only permanent
-account deletion, ADMIN-only User Search; Locate Me + privacy-safe
-approximate listing locations + Spiderfy fix + the universal
-confirm-property-location flow; and the report qualifying-interaction
-evidence fix), and PR #21 (Browse place/address search + radius,
-QA-cleared and Security-approved) are already fully merged into `main`
-(verified 2026-09-09: each PR's merge commit is a real ancestor of
-`main`'s current head, not just marked "merged" on GitHub), migrations
-are live on production Supabase, and Render is deployed and healthy on
-all of it. **They are not waiting on their own separate deploy and must
-not be tracked or reported as one** — they will be included
-automatically, along with whatever else is on `main` by then, in the
-single final accumulated Netlify production deploy the founder triggers
-from whatever `main` HEAD is the intended release point. Until the
-founder decides to trigger that deploy, the production Netlify frontend
-keeps serving its
-current, older build, and none of `main`'s post-`49d4bb7` work should be
-described as "in production."
-**Whichever agent completes and reports on the next PR should surface a
-one-line reminder that this one final accumulated deploy is still
-pending — not that any specific past PR has its own pending deploy.**
-Delete this section once that production deploy actually happens.
-
 ## Product
 
 Muslim Rentals is a **free** housing marketplace / community platform built

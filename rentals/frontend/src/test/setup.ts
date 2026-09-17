@@ -19,10 +19,17 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// jsdom does not implement Element.scrollIntoView at all (throws "not a
-// function"); Inbox.tsx calls it to keep the message thread scrolled down.
+// jsdom does not implement Element.scrollIntoView or Element.scrollTo at all
+// (both throw "not a function"). Inbox.tsx calls scrollTo directly on the
+// message-thread pane's own container to keep it scrolled to the newest
+// message without dragging the outer page along with it (see Inbox.test.tsx
+// for the regression coverage); scrollIntoView is stubbed too since some
+// tests spy on it to assert it's never used for that purpose.
 if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
+}
+if (typeof Element !== 'undefined' && !Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = () => {};
 }
 
 // jsdom doesn't implement matchMedia; framer-motion's useReducedMotion calls it on mount.

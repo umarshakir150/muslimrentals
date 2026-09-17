@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Inbox from './Inbox';
@@ -527,5 +527,81 @@ describe('Inbox: normal participant view attributes every message to its real se
     await waitFor(() => expect(screen.getByText('my own live message')).toBeInTheDocument());
     const myBubble = screen.getByText('my own live message').closest('div')!;
     expect(myBubble.className).toContain('bg-forest-600');
+  });
+});
+
+describe('Inbox: sending a message keeps scrolling contained inside the thread pane', () => {
+  /**
+   * Regression coverage for a founder-reported bug: sending a message
+   * successfully scrolled the whole outer page/viewport downward, not just
+   * the conversation thread. Root cause was Element.scrollIntoView(), which
+   * (per spec, with the default block:'start') can walk and adjust every
+   * scrollable ancestor in the containing-block chain -- not just the
+   * nearest one -- so it could drag the outer page along with it. Fixed by
+   * scrolling the message-thread pane's own container directly via
+   * Element.scrollTo(), which only ever affects the element it's called on.
+   * jsdom implements neither method by default, so both are stubbed here to
+   * assert *which* element receives the scroll call, rather than any real
+   * layout/geometry behavior jsdom can't provide.
+   */
+  let scrollIntoViewSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    if (!(Element.prototype as any).scrollIntoView) (Element.prototype as any).scrollIntoView = () => {};
+    scrollIntoViewSpy = vi.spyOn(Element.prototype as any, 'scrollIntoView').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    scrollIntoViewSpy.mockRestore();
+  });
+
+  it('after a successful send, the message-thread pane scrolls itself via scrollTo -- scrollIntoView (which can drag the outer page along with it) is never used', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({ data: { ...conversation(), messages: [] } });
+    sendMessageMock.mockResolvedValue({ data: message({ id: 'sent-1', body: 'ping' }) });
+
+    const user = userEvent.setup();
+    const { container } = render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
+
+    const thread = screen.getByTestId('message-thread');
+    const threadScrollToSpy = vi.spyOn(thread, 'scrollTo').mockImplementation(() => {});
+
+    await user.type(screen.getByPlaceholderText('Write a message...'), 'ping');
+    await user.click(container.querySelector('form button[type="submit"]')!);
+
+    // The thread pane's own scroll container is what gets scrolled...
+    await waitFor(() => expect(threadScrollToSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'smooth' })
+    ));
+    // ...never scrollIntoView, anywhere -- that's the call that could leak
+    // the scroll effect out to the surrounding page.
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+  });
+
+  it('opening a conversation and receiving a live message also scroll only the thread pane, never via scrollIntoView', async () => {
+    const socket = new FakeSocket();
+    connectSocketMock.mockReturnValue(socket);
+    getConversationsMock.mockResolvedValue({ data: [conversation()] });
+    getConversationMock.mockResolvedValue({ data: { ...conversation(), messages: [] } });
+
+    render(<Inbox initialConvId="conv-1" />);
+    await waitFor(() => expect(screen.getByPlaceholderText('Write a message...')).toBeInTheDocument());
+
+    const thread = screen.getByTestId('message-thread');
+    const threadScrollToSpy = vi.spyOn(thread, 'scrollTo').mockImplementation(() => {});
+
+    // Opening the conversation itself already schedules a scroll-to-bottom.
+    await waitFor(() => expect(threadScrollToSpy).toHaveBeenCalled());
+    threadScrollToSpy.mockClear();
+
+    socket.serverPush('message:new', message({ id: 'incoming-1', body: 'live reply', sender: { ...OTHER, avatarUrl: null } }));
+
+    await waitFor(() => expect(threadScrollToSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'smooth' })
+    ));
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
   });
 });

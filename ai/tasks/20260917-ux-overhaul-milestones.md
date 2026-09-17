@@ -27,8 +27,10 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 ## Status
 
 `IN_REVIEW` — Milestones 1, 3, 4, and 5 approved, 2 rejected/reverted/
-skipped, 6 (Account + Marketplace Utilities) implemented and awaiting
-founder visual approval before Milestone 7.
+skipped, 6 (Account + Marketplace Utilities) called "good overall" by the
+founder but held pending one bug fix (Messages: sending a message scrolled
+the outer page, not just the thread — fixed, see Milestone log) before
+final approval and before Milestone 7 starts.
 
 **Process correction (applied starting this milestone):** for Milestones
 3–5, the founder had to send a follow-up message before the Deploy
@@ -394,6 +396,59 @@ Verified: type-check clean, lint clean (same pre-existing `<img>`-element
 warning category), full suite 401/401 passing, production build
 succeeds, manual dev-server smoke check of `/settings`, `/saved`,
 `/my-listings`, and `/messages`.
+
+### Milestone 6 fix — Messages: sending a message scrolled the outer page
+
+Founder visual review of Milestone 6 called it "good overall" but withheld
+approval pending this one bug: sending a message on `/messages`
+auto-scrolled the whole page/viewport downward, not just the conversation
+thread.
+
+Root cause: `Inbox.tsx`'s `scrollToBottom` called
+`messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })` on an
+anchor `<div>` at the end of the message list. `scrollIntoView()` with the
+default `block: 'start'` is specified to walk and adjust *every* scrollable
+ancestor in the containing-block chain as needed to bring the target into
+view, not just the nearest scrollable one — so if any ancestor between the
+thread pane and the document was itself scrollable, the browser could also
+move the outer page. This is a real engineering root cause, not a cosmetic
+symptom to paper over.
+
+Fix: replaced the anchor-based `scrollIntoView()` call with
+`container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })`
+called directly on the message-thread pane's own scroll container (a new
+`messageThreadRef` on the existing `data-testid="message-thread"` div).
+`Element.scrollTo()` only ever affects the element it's called on, so this
+is architecturally guaranteed to never leak a scroll effect to the outer
+page, regardless of any ancestor's scrollability — not dependent on
+`/messages/page.tsx`'s wrapper having (or continuing to have) any
+particular height/overflow setup. The now-unused `messagesEndRef` and its
+anchor `<div>` were removed as dead code. All three call sites (socket
+`message:new` handler, `openConversation`, and `sendMessage` — the exact
+path in the bug report) now go through the same fixed `scrollToBottom`.
+Zero change to sending, real-time delivery, typing indicators, read state,
+conversation selection, mobile behavior, or any socket event/listener
+logic — this is purely which element receives a scroll call.
+
+Regression test added: jsdom implements neither `Element.scrollIntoView`
+nor `Element.scrollTo` (both previously/newly stubbed as no-ops in
+`src/test/setup.ts`, matching the existing pattern for other jsdom gaps
+like `ResizeObserver`), so there's no real scroll-geometry behavior to
+assert against directly. Instead, two new tests in `Inbox.test.tsx` spy on
+the message-thread container's own `scrollTo` and on
+`Element.prototype.scrollIntoView` globally, asserting: (1) after a
+successful send, the thread pane's `scrollTo` is called and
+`scrollIntoView` is never called anywhere; (2) the same holds when opening
+a conversation and when a live message arrives over the socket. This
+guards against ever reintroducing `scrollIntoView` for this purpose.
+
+Verified: full suite 403/403 passing (15/15 in `Inbox.test.tsx`,
+confirmed with no unhandled errors after adding the `scrollTo` jsdom
+stub), type-check clean, lint clean (same pre-existing `<img>`-element
+warning category, unrelated to this file), production build succeeds.
+Manual reasoning: `Element.scrollTo()` scoped strictly to the element it's
+invoked on is a DOM API guarantee, not a jsdom quirk, so this fix holds in
+real browsers exactly as it does in the test double.
 
 ## Files likely affected
 

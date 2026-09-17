@@ -27,7 +27,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [typing, setTyping] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageThreadRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<any>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>();
   // The socket-listener effect below registers its handlers once (empty
@@ -52,8 +52,18 @@ export default function Inbox({ initialConvId }: InboxProps) {
     activeConvRef.current = activeConv;
   }, [activeConv]);
 
+  // Scrolls the message thread's own scroll container directly, via
+  // Element.scrollTo() rather than Element.scrollIntoView() on a child
+  // anchor. scrollIntoView() (with the default block:'start') is specified
+  // to walk and adjust every scrollable ancestor in the containing-block
+  // chain as needed to bring the target into view -- not just the nearest
+  // one -- so if any ancestor between this pane and the document is itself
+  // scrollable, it can also move the outer page/viewport. scrollTo() only
+  // ever affects the element it's called on, so calling it here can never
+  // leak a scroll effect out to the surrounding page.
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messageThreadRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, []);
 
   // Load conversations
@@ -373,7 +383,7 @@ export default function Inbox({ initialConvId }: InboxProps) {
             </div>
 
             {/* Messages */}
-            <div data-testid="message-thread" className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+            <div ref={messageThreadRef} data-testid="message-thread" className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
               {messages.map((msg, i) => {
                 const showDate = i === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[i-1].createdAt).toDateString();
                 const dateLabel = showDate && (
@@ -466,7 +476,6 @@ export default function Inbox({ initialConvId }: InboxProps) {
                   </div>
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Input -- moderators reviewing via "Full conversation" never

@@ -26,9 +26,8 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_REVIEW` — Milestones 1 and 3 approved, 2 rejected/reverted/skipped, 4
-(Listing Detail) implemented and awaiting founder visual approval before
-Milestone 5.
+`IN_PROGRESS` — Milestones 1, 3, and 4 approved, 2 rejected/reverted/
+skipped, 5 (Post + Edit Listing) starting.
 
 ## Owner
 
@@ -182,7 +181,7 @@ milestone: Product Designer spec → implementation → type-check/lint/test/
 build → manual smoke check → commit → push → PR/preview update → stop for
 founder visual review.
 
-### Milestone 4 — Listing Detail — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+### Milestone 4 — Listing Detail — **APPROVED**
 
 Scope: `ListingDetail.tsx` (the full listing-detail modal), plus token-level
 consistency passes on `ListingLocationMap.tsx`, `DeleteListingDialog.tsx`,

@@ -12,13 +12,12 @@ interface BadgeProps {
 // `rounded-control` (not full/pill) so it reads as a tag rather than a
 // toggle control -- Chip is the pill-shaped, interactive counterpart.
 //
-// This is the shared replacement for any per-category color-coded badge
-// (e.g. lib/utils.ts's audienceColor(), which currently gives Brothers/
-// Sisters/Couples/Families each their own hue -- explicitly what the
-// overhaul's "no rainbow category colors" direction rules out). Callers
+// This is the shared replacement for any per-category color-coded badge.
+// Milestone 3 used this to fix ListingCard.tsx/ListingDetail.tsx's audience
+// badge, which used to give Brothers/Sisters/Couples/Families each their
+// own hue via a now-deleted lib/utils.ts helper -- explicitly what the
+// overhaul's "no rainbow category colors" direction rules out. Callers
 // should differentiate meaning by label text, never by badge hue.
-// ListingCard.tsx itself isn't touched in this milestone (that's Milestone
-// 3's "improve listing cards"), but any new badge usage should use this.
 export default function Badge({ children, variant = 'neutral', className }: BadgeProps) {
   return (
     <span

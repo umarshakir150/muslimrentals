@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
-import { Bed, Bath, MapPin, Heart, Clock, MessageSquare, Map } from 'lucide-react';
+import { Bed, Bath, MapPin, Heart, Clock, MessageSquare, Map, Home as HomeIcon } from 'lucide-react';
 import { Listing } from '@/types';
-import { formatCAD, audienceLabel, audienceColor, formatTimeAgo, cn } from '@/lib/utils';
+import { formatCAD, audienceLabel, formatTimeAgo, cn } from '@/lib/utils';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
+import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
 
 interface ListingCardProps {
   listing: Listing;
@@ -47,11 +49,11 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: index * 0.05 }}
-      className="bg-white border border-ink/8 rounded-3xl overflow-hidden card-hover cursor-pointer group"
+      className="bg-white border border-neutral-200 rounded-surface overflow-hidden card-hover cursor-pointer group"
       onClick={() => onView(listing)}
     >
       {/* Image */}
-      <div className="relative h-48 bg-brand-100 overflow-hidden">
+      <div className="relative h-48 bg-neutral-100 overflow-hidden">
         {imgSrc ? (
           <Image
             src={imgSrc}
@@ -61,25 +63,27 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-brand-100 to-brand-200 flex items-center justify-center">
-            <span className="text-4xl opacity-40">🏠</span>
+          <div className="w-full h-full bg-forest-50 flex items-center justify-center">
+            <HomeIcon size={32} strokeWidth={1.5} className="text-forest-300" />
           </div>
         )}
 
         {/* Badges */}
         <div className="absolute top-3 left-3 right-3 flex justify-between items-start">
           <div className="flex gap-2">
-            <span className={cn('px-3 py-1 rounded-full text-xs font-bold', audienceColor(listing.audience))}>
-              {audienceLabel(listing.audience)}
-            </span>
-            {isNew && <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gold-400 text-white">NEW</span>}
+            <Badge variant="emphasis">{audienceLabel(listing.audience)}</Badge>
+            {isNew && (
+              <span className="inline-flex items-center rounded-control px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide bg-gold-400 text-white">
+                New
+              </span>
+            )}
           </div>
           <button
             onClick={handleSave}
             disabled={savingState}
             className={cn(
               'w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200',
-              saved ? 'bg-red-500 text-white' : 'bg-white/90 text-ink hover:bg-red-50 hover:text-red-500'
+              saved ? 'bg-destructive text-white' : 'bg-white/90 text-neutral-900 hover:bg-red-50 hover:text-destructive'
             )}
           >
             <Heart size={14} fill={saved ? 'currentColor' : 'none'} />
@@ -87,23 +91,23 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
         </div>
 
         {/* Price */}
-        <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1 rounded-full border border-ink/8 text-sm font-bold text-brand-700">
-          {formatCAD(listing.price)}<span className="font-normal text-muted">/mo</span>
+        <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1 rounded-control border border-neutral-200 text-sm font-bold text-forest-700">
+          {formatCAD(listing.price)}<span className="font-normal text-neutral-600">/mo</span>
         </div>
       </div>
 
       {/* Body */}
       <div className="p-4">
-        <h3 className="font-semibold text-base leading-snug mb-2 line-clamp-2 group-hover:text-brand-700 transition-colors">
+        <h3 className="font-semibold text-base leading-snug mb-2 line-clamp-2 group-hover:text-forest-700 transition-colors">
           {listing.title}
         </h3>
 
-        <div className="flex items-center gap-1 text-muted text-xs mb-3">
+        <div className="flex items-center gap-1 text-neutral-600 text-xs mb-3">
           <MapPin size={12} className="shrink-0" />
           <span className="truncate">{listing.neighbourhood ? `${listing.neighbourhood}, ` : ''}{listing.city}</span>
         </div>
 
-        <div className="flex items-center gap-4 text-sm text-muted mb-3">
+        <div className="flex items-center gap-4 text-sm text-neutral-600 mb-3">
           <span className="flex items-center gap-1.5"><Bed size={13} /> {listing.bedrooms} bed{listing.bedrooms !== 1 ? 's' : ''}</span>
           <span className="flex items-center gap-1.5"><Bath size={13} /> {listing.bathrooms} bath</span>
           <span className="flex items-center gap-1.5 ml-auto text-xs"><Clock size={11} /> {formatTimeAgo(listing.createdAt)}</span>
@@ -112,32 +116,31 @@ export default function ListingCard({ listing, onView, onMap, onMessage, onSaveC
         {listing.amenities.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mb-3">
             {listing.amenities.slice(0, 3).map(a => (
-              <span key={a} className="px-2.5 py-1 rounded-full bg-brand-50 text-brand-700 text-[11px] font-semibold">{a}</span>
+              <Badge key={a} variant="neutral">{a}</Badge>
             ))}
           </div>
         )}
 
-        <div className="flex gap-2 mt-1 pt-3 border-t border-ink/6">
-          <button
+        <div className="flex gap-2 mt-1 pt-3 border-t border-neutral-200">
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={(e) => { e.stopPropagation(); onMessage(listing); }}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted bg-gray-50 rounded-xl py-2.5 hover:bg-brand-50 hover:text-brand-700 transition-colors"
+            className="flex-1 gap-1.5 font-semibold border-transparent bg-neutral-100 hover:bg-forest-50 hover:text-forest-700"
           >
             <MessageSquare size={13} /> Message
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={(e) => { e.stopPropagation(); if (hasCoords) onMap(listing); }}
             disabled={!hasCoords}
             aria-disabled={!hasCoords}
             title={hasCoords ? undefined : 'Location not available for this listing'}
-            className={cn(
-              'flex items-center justify-center gap-1.5 px-4 text-xs font-semibold rounded-xl py-2.5 transition-colors',
-              hasCoords
-                ? 'text-muted bg-gray-50 hover:bg-brand-50 hover:text-brand-700'
-                : 'text-muted/40 bg-gray-50 cursor-not-allowed'
-            )}
+            className="gap-1.5 font-semibold border-transparent bg-neutral-100 hover:bg-forest-50 hover:text-forest-700"
           >
             <Map size={13} /> Map
-          </button>
+          </Button>
         </div>
       </div>
     </motion.article>

@@ -26,8 +26,8 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_PROGRESS` — Milestones 1 approved, 2 rejected/reverted/skipped, 3
-starting.
+`IN_REVIEW` — Milestones 1 approved, 2 rejected/reverted/skipped, 3
+implemented and awaiting founder visual approval before Milestone 4.
 
 ## Owner
 
@@ -97,14 +97,57 @@ name. Milestone numbering below continues from the original plan's
 Milestone 3 onward; there is no renumbering, and "Milestone 2" refers only
 to this rejected/reverted/skipped homepage attempt.
 
-### Milestone 3 — Browse + Integrated Map (including listing-card UX) — **IN PROGRESS**
+### Milestone 3 — Browse + Integrated Map (including listing-card UX) — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
 
 Scope: Browse page, the integrated map experience, filters, listing cards,
 responsive behavior — the full original Milestone 3 scope, not narrowed to
-"listing cards" alone. Preserve all existing search/filter/radius/map/
-listing/location/privacy behavior and every existing API contract exactly.
-No new product functionality. See this file's later updates / the eventual
-PR description for the actual spec and implementation once complete.
+"listing cards" alone. Implemented per a Product Designer spec, entirely a
+visual/layout/token pass on the Milestone 1 design system — no behavioral,
+API-contract, filter-logic, autocomplete, radius-search, geolocation, or
+map-interaction change of any kind.
+
+Key changes:
+- **Listing cards** (`ListingCard.tsx`, `ListingDetail.tsx`): fixed the
+  real "rainbow category colors" anti-pattern — `lib/utils.ts`'s
+  `audienceColor()` (BROTHERS=blue/SISTERS=pink/COUPLES=purple/
+  FAMILIES=amber) deleted; both components now use the shared `Badge`
+  component (single forest-tinted treatment, differentiated by label text
+  only). Card container/price pill/amenity tags/no-photo placeholder
+  migrated to Milestone 1 tokens (`rounded-surface`, `neutral-*`,
+  `forest-*`), Message/Map buttons migrated to the `Button` primitive.
+- **Browse page** (`browse/page.tsx`): loading grid now uses `Skeleton`,
+  zero-results/load-error states now use `EmptyState`, "load more"/"try
+  again" now use `Button` — same copy, same handlers, same data.
+- **Filters** (`ListingFilters.tsx`, `LocationRadiusSearch.tsx`,
+  `SearchRadiusMiniMap.tsx`): keyword/sort/beds/baths controls migrated to
+  `Input`/`SelectField`, amenity toggles migrated to `Chip`, "More
+  filters" panel and the location-radius search widget migrated to
+  `Surface` containers, More/Reset buttons migrated to `Button`. Audience
+  pills deliberately left untouched (already the correct neutral pattern).
+  Radius slider, autocomplete debounce/cache, geolocation, and the
+  suggestion dropdown's logic are byte-for-byte unchanged — only
+  color/border/radius tokens moved to the Milestone 1 scale.
+- **Map page** (`map/page.tsx`, `FullMap.tsx`): className-only token
+  migration on the header and map-card border/shadow; the loading
+  overlay's inner spinner/text swapped for the `Spinner` primitive. The
+  fragile exact-pixel layout (`100dvh`/`paddingTop: 72px` flex column) and
+  the `isolation: 'isolate'` stacking-context fix on the map card's inline
+  style are untouched byte-for-byte — only the wrapper's separate
+  `className` (border/shadow) was touched, never the inline style object.
+  Added one new, previously-missing state: a small non-interactive
+  "No listings match your filters" banner when a filtered search returns
+  zero results (was previously just an empty basemap with no explanation),
+  positioned inside the same isolated stacking context, `pointer-events:
+  none`, z-index 10 (well below the loading overlay's 1000).
+- `map/page.test.tsx`'s CSS-selector target was updated to match the new
+  class names (same "sync the selector to the real classes" pattern as
+  Milestone 1's own test fix) — the actual regression assertions
+  (`isolation: isolate`, `position: relative`) are byte-for-byte unchanged.
+
+Verified: type-check clean, lint clean (only pre-existing unrelated
+warnings), full suite 395/395 passing, production build succeeds, and a
+manual dev-server smoke check of `/browse` and `/map` (200 responses,
+skeleton loading state renders, no runtime errors).
 
 ## UX considerations
 

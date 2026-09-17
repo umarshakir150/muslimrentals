@@ -43,7 +43,7 @@ describe('Map page stacking context', () => {
     // the render/effects-settled signal.
     await waitFor(() => expect(screen.getByTestId('dynamic-stub')).toBeInTheDocument());
 
-    const card = container.querySelector('.border.border-ink\\/8.shadow-card.bg-white') as HTMLElement;
+    const card = container.querySelector('.border.border-neutral-200.shadow-elevation1.bg-white') as HTMLElement;
     expect(card).toBeInTheDocument();
     expect(card.style.isolation).toBe('isolate');
     expect(card.style.position).toBe('relative');

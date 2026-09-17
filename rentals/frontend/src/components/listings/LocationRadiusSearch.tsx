@@ -7,6 +7,7 @@ import { geocodeApi, PlaceSuggestion } from '@/lib/api';
 import { requestUserLocation, GEOLOCATION_ERROR_TITLE, type GeolocationFailureReason } from '@/lib/geolocation';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import Surface from '@/components/ui/Surface';
 import SearchRadiusMiniMap from './SearchRadiusMiniMap';
 
 const MIN_RADIUS_KM = 0.5;
@@ -312,7 +313,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
   const miniMapRadiusKm = hasActiveLocation ? (filters.radiusKm || MIN_RADIUS_KM) : null;
 
   return (
-    <div className="p-4 bg-white border border-ink/8 rounded-2xl shadow-card">
+    <Surface>
       {/* The grid (and the mini-map itself) only exists once a location is
           active -- showing an empty map before any search feels redundant,
           so the widget starts in its plain, compact single-column form and
@@ -321,12 +322,12 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           (natural DOM order) and sits beside the controls at lg+. */}
       <div className={hasActiveLocation ? 'lg:grid lg:grid-cols-2 lg:gap-5 lg:items-start' : undefined}>
       <div>
-      <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+      <label className="block text-xs font-semibold text-neutral-600 uppercase tracking-wider mb-1.5">
         Search a location
       </label>
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+          <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
           <input
             ref={inputRef}
             type="text"
@@ -341,13 +342,13 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
             className="input-field pl-8 pr-16 py-2 text-sm h-10"
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {searching && <Loader2 size={13} className="text-muted animate-spin" />}
+            {searching && <Loader2 size={13} className="text-neutral-500 animate-spin" />}
             {query && !searching && (
               <button
                 type="button"
                 onClick={clearQueryText}
                 aria-label="Clear search text"
-                className="text-muted hover:text-ink transition-colors p-1"
+                className="text-neutral-500 hover:text-neutral-900 transition-colors p-1"
               >
                 <X size={13} />
               </button>
@@ -355,7 +356,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           </div>
 
           {open && (suggestions.length > 0 || searchedEmpty) && (
-            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-ink/8 rounded-2xl shadow-elevated z-50 overflow-hidden">
+            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-neutral-200 rounded-surface shadow-elevation2 z-50 overflow-hidden">
               {suggestions.length > 0 ? (
                 suggestions.map((s, i) => (
                   <button
@@ -364,14 +365,14 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
                     onMouseDown={() => selectSuggestion(s)}
                     className={cn(
                       'w-full text-left px-4 py-2.5 text-sm transition-colors',
-                      i === focusIdx ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50'
+                      i === focusIdx ? 'bg-forest-50 text-forest-700' : 'hover:bg-gray-50'
                     )}
                   >
                     {s.label}
                   </button>
                 ))
               ) : (
-                <p className="px-4 py-3 text-sm text-muted">No matching places found. Try a different search.</p>
+                <p className="px-4 py-3 text-sm text-neutral-600">No matching places found. Try a different search.</p>
               )}
             </div>
           )}
@@ -382,7 +383,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           disabled={!query.trim() || searching}
           aria-label="Search this location"
           title="Search this location"
-          className="w-10 h-10 shrink-0 rounded-full bg-brand-600 text-white flex items-center justify-center hover:bg-brand-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-10 h-10 shrink-0 rounded-full bg-forest-600 text-white flex items-center justify-center hover:bg-forest-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Search size={16} />
         </button>
@@ -392,14 +393,14 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
           disabled={locating}
           aria-label="Use my current location"
           title="Use my current location"
-          className="w-10 h-10 shrink-0 rounded-full border border-ink/10 flex items-center justify-center hover:bg-gray-50 transition-colors disabled:opacity-60"
+          className="w-10 h-10 shrink-0 rounded-full border border-neutral-300 flex items-center justify-center hover:bg-gray-50 transition-colors disabled:opacity-60"
         >
-          <LocateFixed size={16} className={cn('text-brand-700', locating && 'animate-pulse')} />
+          <LocateFixed size={16} className={cn('text-forest-700', locating && 'animate-pulse')} />
         </button>
       </div>
 
       {directSearchState === 'not_found' && (
-        <p className="mt-1.5 text-xs font-medium text-red-500">
+        <p className="mt-1.5 text-xs font-medium text-destructive">
           Location not found. Try refining your search, or pick a suggestion from the dropdown.
         </p>
       )}
@@ -407,8 +408,8 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
       {hasActiveLocation && (
         <div className="mt-3">
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-xs text-muted">
-              Showing listings near <span className="font-semibold text-ink">{resolvedLabel || 'the selected location'}</span>
+            <p className="text-xs text-neutral-600">
+              Showing listings near <span className="font-semibold text-neutral-900">{resolvedLabel || 'the selected location'}</span>
               {isApproximateLocation && (
                 <span className="ml-1.5 text-amber-600" title="This address wasn't confirmed to rooftop precision -- the marker is an estimate along the correct street.">
                   (Approximate location)
@@ -418,15 +419,15 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
             <button
               type="button"
               onClick={handleClear}
-              className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-600"
+              className="flex items-center gap-1 text-xs font-semibold text-destructive hover:text-destructive-hover"
             >
               <X size={12} /> Clear
             </button>
           </div>
 
           <div className="flex justify-between mb-1">
-            <label className="text-xs font-semibold text-muted uppercase tracking-wider">Radius</label>
-            <span className="text-xs font-bold text-brand-700">{filters.radiusKm || MIN_RADIUS_KM} km</span>
+            <label className="text-xs font-semibold text-neutral-600 uppercase tracking-wider">Radius</label>
+            <span className="text-xs font-bold text-forest-700">{filters.radiusKm || MIN_RADIUS_KM} km</span>
           </div>
           <input
             type="range"
@@ -437,7 +438,7 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
             onChange={(e) => setFilters({ radiusKm: parseFloat(e.target.value) })}
             className="w-full"
           />
-          <div className="flex justify-between text-[10px] text-muted mt-0.5">
+          <div className="flex justify-between text-[10px] text-neutral-500 mt-0.5">
             <span>{MIN_RADIUS_KM} km</span><span>{MAX_RADIUS_KM} km</span>
           </div>
         </div>
@@ -453,6 +454,6 @@ export default function LocationRadiusSearch({ listings = [] }: LocationRadiusSe
         />
       )}
       </div>
-    </div>
+    </Surface>
   );
 }

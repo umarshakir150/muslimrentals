@@ -11,6 +11,7 @@ import { useFilterStore } from '@/store/filterStore';
 import { useIsAuthenticated } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
 import { buildListingSearchParams } from '@/lib/listingSearchParams';
+import Spinner from '@/components/ui/Spinner';
 
 // FullMap is heavy - load client-side only. No SSR loading fallback needed
 // because the map container is always rendered with real dimensions.
@@ -72,7 +73,7 @@ function MapPageInner() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '72px', minHeight: 0 }}>
         <div style={{ maxWidth: '1280px', width: '100%', margin: '0 auto', padding: '24px 24px 0', flexShrink: 0 }}>
           <h1 className="section-title text-2xl md:text-3xl mb-0.5">Rental map</h1>
-          <p className="text-muted text-sm mb-4">Find rentals across Canada. Click any marker to view details.</p>
+          <p className="text-neutral-600 text-sm mb-4">Find rentals across Canada. Click any marker to view details.</p>
         </div>
 
         {/*
@@ -83,7 +84,7 @@ function MapPageInner() {
           measures the real container dimensions.
         */}
         <div
-          className="border border-ink/8 shadow-card bg-white"
+          className="border border-neutral-200 shadow-elevation1 bg-white"
           style={{
             flex: 1,
             margin: '0 24px 24px',
@@ -130,9 +131,24 @@ function MapPageInner() {
               }}
             >
               <div className="text-center">
-                <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                <p className="text-sm text-muted">Loading listings...</p>
+                <Spinner size={32} className="text-forest-600 mb-3" />
+                <p className="text-sm text-neutral-600">Loading listings...</p>
               </div>
+            </div>
+          )}
+
+          {/* Zero-results banner -- purely informational, never intercepts map
+              interaction (pointer-events-none), and sits at z-index 10, well
+              below the loading overlay's 1000, so it can never compete with a
+              modal either -- same isolated stacking context as everything
+              else in this card (see the wrapper's isolation:isolate above). */}
+          {!loading && listings.length === 0 && (
+            <div
+              style={{ position: 'absolute', top: 16, left: 0, right: 0, zIndex: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}
+            >
+              <p className="bg-white/95 border border-neutral-200 shadow-elevation1 rounded-control px-3.5 py-1.5 text-xs font-medium text-neutral-700">
+                No listings match your filters
+              </p>
             </div>
           )}
 

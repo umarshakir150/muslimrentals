@@ -5,7 +5,8 @@ import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import Image from 'next/image';
 import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink, Trash2 } from 'lucide-react';
 import { Listing, ListingImage } from '@/types';
-import { formatCAD, audienceLabel, audienceColor, formatTimeAgo, cn } from '@/lib/utils';
+import { formatCAD, audienceLabel, formatTimeAgo, cn } from '@/lib/utils';
+import Badge from '@/components/ui/Badge';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
@@ -96,9 +97,7 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
 
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-ink/8 shrink-0">
-            <span className={cn('px-3 py-1.5 rounded-full text-xs font-bold', audienceColor(listing.audience))}>
-              {audienceLabel(listing.audience)}
-            </span>
+            <Badge variant="emphasis">{audienceLabel(listing.audience)}</Badge>
             <div className="flex items-center gap-2">
               <button onClick={handleSave} disabled={saving} aria-label={saved ? 'Unsave listing' : 'Save listing'}
                 className={cn('p-2.5 rounded-full transition-colors', saved ? 'bg-red-50 text-red-500' : 'hover:bg-gray-100')}>

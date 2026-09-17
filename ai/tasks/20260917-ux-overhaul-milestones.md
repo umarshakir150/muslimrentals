@@ -26,8 +26,9 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_PROGRESS` — Milestones 1 and 3 approved, 2 rejected/reverted/skipped,
-4 (Listing Detail) starting.
+`IN_REVIEW` — Milestones 1 and 3 approved, 2 rejected/reverted/skipped, 4
+(Listing Detail) implemented and awaiting founder visual approval before
+Milestone 5.
 
 ## Owner
 
@@ -180,6 +181,69 @@ single PR (#32), single Deploy Preview URL, updated per milestone. Each
 milestone: Product Designer spec → implementation → type-check/lint/test/
 build → manual smoke check → commit → push → PR/preview update → stop for
 founder visual review.
+
+### Milestone 4 — Listing Detail — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+
+Scope: `ListingDetail.tsx` (the full listing-detail modal), plus token-level
+consistency passes on `ListingLocationMap.tsx`, `DeleteListingDialog.tsx`,
+and the shared `ReportModal.tsx` (used beyond just listings — for user and
+message reports too — so left structurally/behaviorally untouched, only
+its color tokens/buttons migrated). Implemented per a Product Designer
+spec. Presentation-only — no change to auth requirements, contactInfo
+gating, approximate-location/privacy behavior, messaging/report/save
+flows, gallery/lightbox interaction logic, or any API contract.
+
+Key changes:
+- **Hierarchy**: header simplified to a plain icon-action strip
+  (save/report/close, now `Button` ghost icon-circular); the audience
+  badge moved out of the header into the content flow as a kicker line
+  directly above the title, closer to price — a deliberate reposition
+  (same `Badge`, same text, no behavior change, not covered by any test
+  assertion). Price bumped to `text-3xl font-bold text-forest-700` as the
+  clear second-priority element, now on its own line.
+- **Gallery**: presentation-only — swipe/tap/arrow/lightbox behavior is
+  byte-for-byte unchanged. Desktop gallery height increased (`h-72` →
+  `sm:h-[400px]`) to make photos the visual lead per the founder's
+  "property itself is the priority" direction; arrow buttons and counter
+  chip migrated to Milestone 1 tokens. Zero-image placeholder swapped
+  from a literal 🏠 emoji + gradient background to a flat `bg-forest-50`
+  fill with a labeled lucide `Home` icon (`role="img"
+  aria-label="No photos available"`) — consistent with `ListingCard.tsx`'s
+  own Milestone 3 placeholder fix. This is the one required test-contract
+  sync: `ListingDetail.test.tsx`'s emoji assertion was updated to query
+  the icon's accessible role/name instead; the underlying guarantee (an
+  intentional, non-blank placeholder with no arrows/counter) is preserved
+  and still verified.
+- **Location**: presentation-only retoken of the location line and the
+  approximate-location privacy caption (exact required phrases
+  "approximate location" / "exact address hidden for privacy" kept
+  verbatim — test-locked). `ListingLocationMap`'s own container migrated
+  to `rounded-panel`/`neutral-200`; its actual marker/circle/privacy-zone
+  drawing (from `mapMarkers.ts`, shared with `FullMap.tsx`) is untouched.
+- **Amenities**: migrated from an ad hoc pill span to the shared `Badge`
+  (`variant="neutral"`), matching `ListingCard.tsx`'s Milestone 3
+  treatment — still shows the full list, same data.
+- **Footer actions**: "Message landlord" → `Button variant="primary"
+  size="lg"`; "Contact" → `Button variant="secondary" size="lg"`,
+  contactInfo reveal mechanism (an explicit-click toast) unchanged;
+  owner-only "Delete listing" → `Button variant="destructive-ghost"
+  size="sm"`. Same conditions, same handlers.
+- **Posted-by block**: demoted from a `bg-gray-50` mini-card (a
+  card-in-card) to a plain row above a `border-t` divider; its avatar
+  circle's gradient fill replaced with a flat `bg-forest-600`.
+- **DeleteListingDialog / ReportModal**: token-level only — warning/report
+  icon circles retoned to the `destructive` color token, action buttons
+  migrated to `Button`'s `destructive-solid`/`ghost` variants (using
+  `Button`'s built-in `loading` prop instead of hand-rolled spinners).
+  Copy, step flow, and reason taxonomy are unchanged; `ReportModal` is
+  shared with the user/message report surfaces, so this was intentionally
+  scoped to tokens only, not a structural redesign.
+
+Verified: type-check clean, lint clean (only pre-existing unrelated
+warnings), full suite 395/395 passing (including the one updated
+assertion), production build succeeds, and a manual dev-server smoke
+check of `/browse`, `/saved`, and `/my-listings` (all pages that render
+`ListingDetail`).
 
 ## Files likely affected
 

@@ -143,7 +143,11 @@ describe('ListingDetail image gallery', () => {
     render(<ListingDetail listing={makeListing([])} onClose={vi.fn()} onMessage={vi.fn()} />);
 
     await waitFor(() => expect(getByIdMock).toHaveBeenCalled());
-    expect(screen.getByText('🏠')).toBeInTheDocument();
+    // Milestone 4: the placeholder is now an icon (consistent with ListingCard's
+    // own Milestone 3 fix), not a literal emoji -- assert the same underlying
+    // guarantee (an intentional, labeled placeholder is shown) via its
+    // accessible role/name instead.
+    expect(screen.getByRole('img', { name: /no photos available/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next photo' })).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument();
   });

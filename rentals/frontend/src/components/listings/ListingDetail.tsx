@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import Image from 'next/image';
-import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, ExternalLink, Trash2 } from 'lucide-react';
+import { X, MapPin, Bed, Bath, Phone, Clock, Heart, Flag, ChevronLeft, ChevronRight, MessageSquare, Trash2, Home as HomeIcon } from 'lucide-react';
 import { Listing, ListingImage } from '@/types';
 import { formatCAD, audienceLabel, formatTimeAgo, cn } from '@/lib/utils';
 import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
 import { listingsApi } from '@/lib/api';
 import { useIsAuthenticated, useUser } from '@/store/authStore';
 import { useToast } from '@/components/ui/use-toast';
@@ -95,26 +96,44 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
           transition={{ type: 'spring', damping: 25 }}
           className="w-full sm:max-w-2xl bg-white rounded-t-3xl sm:rounded-3xl shadow-elevated overflow-hidden max-h-[95dvh] flex flex-col">
 
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-ink/8 shrink-0">
-            <Badge variant="emphasis">{audienceLabel(listing.audience)}</Badge>
-            <div className="flex items-center gap-2">
-              <button onClick={handleSave} disabled={saving} aria-label={saved ? 'Unsave listing' : 'Save listing'}
-                className={cn('p-2.5 rounded-full transition-colors', saved ? 'bg-red-50 text-red-500' : 'hover:bg-gray-100')}>
-                <Heart size={18} fill={saved ? 'currentColor' : 'none'} />
-              </button>
-              <button onClick={handleReport} aria-label="Report listing" className="p-2.5 rounded-full hover:bg-gray-100 text-muted">
-                <Flag size={18} />
-              </button>
-              <button onClick={onClose} aria-label="Close listing details" className="p-2.5 rounded-full hover:bg-gray-100"><X size={18} /></button>
-            </div>
+          {/* Header -- a plain icon-action strip now that the audience badge
+              (below) has moved into the content flow, closer to price/facts. */}
+          <div className="flex items-center justify-end gap-1 px-3 py-2.5 border-b border-neutral-200 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSave}
+              disabled={saving}
+              aria-label={saved ? 'Unsave listing' : 'Save listing'}
+              className={cn('w-9 h-9 p-0 rounded-full', saved && 'bg-destructive/10 text-destructive hover:bg-destructive/15')}
+            >
+              <Heart size={18} fill={saved ? 'currentColor' : 'none'} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleReport}
+              aria-label="Report listing"
+              className="w-9 h-9 p-0 rounded-full text-neutral-600"
+            >
+              <Flag size={18} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label="Close listing details"
+              className="w-9 h-9 p-0 rounded-full"
+            >
+              <X size={18} />
+            </Button>
           </div>
 
           {/* Scrollable content */}
           <div className="flex-1 overflow-y-auto">
             {/* Images */}
             {hasImgs ? (
-              <div className="relative h-64 sm:h-72 bg-brand-100 overflow-hidden">
+              <div className="relative h-72 sm:h-[400px] bg-neutral-100 overflow-hidden">
                 <motion.div
                   key={imgIdx}
                   drag={hasMultipleImgs ? 'x' : false}
@@ -135,40 +154,42 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                 {hasMultipleImgs && (
                   <>
                     <button onClick={goPrevImg} aria-label="Previous photo"
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 shadow flex items-center justify-center hover:bg-white">
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white shadow-elevation1 flex items-center justify-center hover:bg-neutral-50">
                       <ChevronLeft size={18} />
                     </button>
                     <button onClick={goNextImg} aria-label="Next photo"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 shadow flex items-center justify-center hover:bg-white">
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white shadow-elevation1 flex items-center justify-center hover:bg-neutral-50">
                       <ChevronRight size={18} />
                     </button>
-                    <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-ink/60 text-white text-xs font-semibold">
+                    <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-neutral-900/70 text-white text-xs font-semibold">
                       {imgIdx + 1} / {imgs.length}
                     </div>
                   </>
                 )}
               </div>
             ) : (
-              <div className="h-48 bg-gradient-to-br from-brand-100 to-brand-200 flex items-center justify-center">
-                <span className="text-6xl opacity-25">🏠</span>
+              <div className="h-48 sm:h-64 bg-forest-50 flex items-center justify-center">
+                <HomeIcon size={48} strokeWidth={1.5} className="text-forest-300" role="img" aria-label="No photos available" />
               </div>
             )}
 
             {/* Details */}
-            <div className="p-5">
-              <div className="flex items-start justify-between gap-4 mb-1">
-                <h2 className="font-serif text-xl leading-snug">{listing.title}</h2>
-                <p className="text-2xl font-bold text-brand-700 shrink-0">{formatCAD(listing.price)}<span className="text-sm font-normal text-muted">/mo</span></p>
-              </div>
+            <div className="p-5 sm:p-6">
+              <Badge variant="emphasis" className="mb-2">{audienceLabel(listing.audience)}</Badge>
+
+              <h2 className="font-serif text-xl leading-snug mb-1">{listing.title}</h2>
+              <p className="text-3xl font-bold text-forest-700 mb-3">
+                {formatCAD(listing.price)}<span className="text-sm font-normal text-neutral-500">/mo</span>
+              </p>
 
               <div className="mb-4">
-                <div className="flex items-center gap-1.5 text-muted text-sm">
+                <div className="flex items-center gap-1.5 text-neutral-600 text-sm">
                   <MapPin size={14} className="shrink-0" />
                   <span>{[listing.neighbourhood, listing.city, listing.province].filter(Boolean).join(', ')}</span>
                 </div>
                 {listing.locationApproximate && (
-                  <p className="text-xs text-muted mt-1">
-                    <span className="font-semibold text-ink/70">Approximate location.</span>{' '}
+                  <p className="text-xs text-neutral-500 mt-1">
+                    <span className="font-semibold text-neutral-700">Approximate location.</span>{' '}
                     <span className="italic">Exact address hidden for privacy.</span>
                   </p>
                 )}
@@ -178,15 +199,15 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                 <ListingLocationMap listing={listing} />
               </div>
 
-              <div className="flex flex-wrap gap-4 text-sm mb-5 pb-5 border-b border-ink/8">
-                <span className="flex items-center gap-2 font-semibold"><Bed size={16} className="text-muted" /> {listing.bedrooms === 0 ? 'Studio' : `${listing.bedrooms} bed`}</span>
-                <span className="flex items-center gap-2 font-semibold"><Bath size={16} className="text-muted" /> {listing.bathrooms} bath</span>
-                <span className="flex items-center gap-2 text-muted ml-auto"><Clock size={14} /> {formatTimeAgo(listing.createdAt)}</span>
+              <div className="flex flex-wrap gap-4 text-sm mb-5 pb-5 border-b border-neutral-200">
+                <span className="flex items-center gap-2 font-semibold"><Bed size={16} className="text-neutral-500" /> {listing.bedrooms === 0 ? 'Studio' : `${listing.bedrooms} bed`}</span>
+                <span className="flex items-center gap-2 font-semibold"><Bath size={16} className="text-neutral-500" /> {listing.bathrooms} bath</span>
+                <span className="flex items-center gap-2 text-neutral-600 ml-auto"><Clock size={14} /> {formatTimeAgo(listing.createdAt)}</span>
               </div>
 
               <div className="mb-5">
                 <h3 className="font-semibold text-sm mb-2">About this rental</h3>
-                <p className="text-sm text-muted leading-relaxed whitespace-pre-line">{listing.description}</p>
+                <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line">{listing.description}</p>
               </div>
 
               {listing.amenities?.length > 0 && (
@@ -194,48 +215,45 @@ export default function ListingDetail({ listing, onClose, onMessage, onDeleted }
                   <h3 className="font-semibold text-sm mb-2">Amenities & features</h3>
                   <div className="flex flex-wrap gap-2">
                     {listing.amenities.map(a => (
-                      <span key={a} className="px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 text-xs font-semibold">{a}</span>
+                      <Badge key={a} variant="neutral">{a}</Badge>
                     ))}
                   </div>
                 </div>
               )}
 
-
-
-              {/* Posted by */}
-              <div className="flex items-center gap-3 py-3 px-4 bg-gray-50 rounded-2xl mb-5">
-                <div className="w-10 h-10 rounded-full bg-brand-gradient flex items-center justify-center text-white font-bold text-sm">
+              {/* Posted by -- a plain row above a divider, not a card-in-card */}
+              <div className="flex items-center gap-3 pt-4 border-t border-neutral-200">
+                <div className="w-10 h-10 rounded-full bg-forest-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
                   {listing.user?.name?.charAt(0) || '?'}
                 </div>
                 <div>
                   <p className="text-sm font-semibold">{listing.user?.name}</p>
-                  <p className="text-xs text-muted">Posted {formatTimeAgo(listing.createdAt)}</p>
+                  <p className="text-xs text-neutral-500">Posted {formatTimeAgo(listing.createdAt)}</p>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Footer actions */}
-          <div className="px-5 py-4 border-t border-ink/8 flex items-center gap-3 shrink-0 bg-white">
+          <div className="px-5 py-4 border-t border-neutral-200 flex items-center gap-3 shrink-0 bg-white">
             {!isOwner && (
-              <button onClick={() => onMessage(listing)} className="btn-brand flex-1 py-3 flex items-center justify-center gap-2">
+              <Button variant="primary" size="lg" onClick={() => onMessage(listing)} className="flex-1">
                 <MessageSquare size={16} /> Message landlord
-              </button>
+              </Button>
             )}
             {listing.contactInfo && (
-              <button
+              <Button
+                variant="secondary"
+                size="lg"
                 onClick={() => { toast({ title: 'Contact info', description: listing.contactInfo }); }}
-                className="btn-ghost px-5 py-3 flex items-center gap-2 text-sm">
+              >
                 <Phone size={16} /> Contact
-              </button>
+              </Button>
             )}
             {isOwner && (
-              <button
-                onClick={() => setDeleteOpen(true)}
-                className="ml-auto flex items-center gap-1.5 text-sm font-semibold text-red-600 hover:text-red-700 px-3 py-2"
-              >
+              <Button variant="destructive-ghost" size="sm" onClick={() => setDeleteOpen(true)} className="ml-auto">
                 <Trash2 size={15} /> Delete listing
-              </button>
+              </Button>
             )}
           </div>
         </motion.div>

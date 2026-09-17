@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Flag, Loader2, ChevronLeft } from 'lucide-react';
+import { Flag, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import Button from '@/components/ui/Button';
 
 export type ReportTargetType = 'LISTING' | 'USER' | 'MESSAGE';
 
@@ -115,14 +116,14 @@ export default function ReportModal({ open, onClose, targetType, contextLabel, o
             className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-elevated p-6 max-h-[90dvh] overflow-y-auto"
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                <Flag size={18} className="text-red-500" />
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
+                <Flag size={18} className="text-destructive" />
               </div>
               <div className="min-w-0">
                 <h3 id="report-modal-title" className="font-serif text-xl leading-snug">
                   Report this {TARGET_LABEL[targetType]}
                 </h3>
-                <p className="text-sm text-muted truncate">{contextLabel}</p>
+                <p className="text-sm text-neutral-600 truncate">{contextLabel}</p>
               </div>
             </div>
 
@@ -134,18 +135,14 @@ export default function ReportModal({ open, onClose, targetType, contextLabel, o
                     key={r}
                     type="button"
                     onClick={() => selectReason(r)}
-                    className="w-full min-h-[44px] text-left px-4 py-3 rounded-xl border border-ink/8 hover:bg-brand-50 hover:border-brand-200 transition-colors text-sm font-medium"
+                    className="w-full min-h-[44px] text-left px-4 py-3 rounded-control border border-neutral-200 hover:bg-forest-50 hover:border-forest-200 transition-colors text-sm font-medium"
                   >
                     {r}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  className="btn-ghost w-full min-h-[44px] py-2.5 text-sm mt-2"
-                >
+                <Button type="button" variant="ghost" onClick={handleClose} className="w-full min-h-[44px] mt-2">
                   Cancel
-                </button>
+                </Button>
               </div>
             )}
 
@@ -155,13 +152,13 @@ export default function ReportModal({ open, onClose, targetType, contextLabel, o
                   type="button"
                   onClick={() => setStep('reason')}
                   disabled={submitting}
-                  className="flex items-center gap-1 text-sm text-muted hover:text-ink mb-3 min-h-[44px] -ml-2 px-2"
+                  className="flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 mb-3 min-h-[44px] -ml-2 px-2"
                 >
                   <ChevronLeft size={16} /> {reason}
                 </button>
 
                 <label htmlFor="report-description" className="text-sm font-semibold mb-1.5 block">
-                  Anything else we should know? <span className="font-normal text-muted">(optional)</span>
+                  Anything else we should know? <span className="font-normal text-neutral-600">(optional)</span>
                 </label>
                 <textarea
                   id="report-description"
@@ -175,27 +172,22 @@ export default function ReportModal({ open, onClose, targetType, contextLabel, o
                 />
 
                 {error && (
-                  <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2 mb-4">{error}</p>
+                  <p className="text-sm text-destructive bg-destructive/10 rounded-control px-3 py-2 mb-4">{error}</p>
                 )}
 
                 <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    disabled={submitting}
-                    className="btn-ghost flex-1 min-h-[44px] py-2.5 text-sm"
-                  >
+                  <Button type="button" variant="ghost" onClick={handleClose} disabled={submitting} className="flex-1 min-h-[44px]">
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="destructive-solid"
                     onClick={handleSubmit}
-                    disabled={submitting}
-                    className="flex-1 min-h-[44px] py-2.5 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    loading={submitting}
+                    className="flex-1 min-h-[44px]"
                   >
-                    {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
                     {submitting ? 'Submitting…' : error ? 'Retry' : 'Submit report'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

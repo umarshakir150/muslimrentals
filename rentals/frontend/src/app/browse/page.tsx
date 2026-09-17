@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
 import { listingsApi } from '@/lib/api';
@@ -79,7 +78,6 @@ export default function BrowsePage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       <div className="pt-[72px]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">

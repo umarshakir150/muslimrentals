@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Navbar from '@/components/layout/Navbar';
 
 const SUBJECT_LABELS: Record<string, string> = {
   listing: 'Listing issue',
@@ -51,7 +50,6 @@ export default function ContactPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
       <main className="pt-[72px]">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-16">
           <h1 className="font-serif text-4xl mb-2">Contact us</h1>

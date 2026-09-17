@@ -3,7 +3,6 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
 import { usersApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -34,7 +33,6 @@ function ConfirmEmailForm() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
       <main className="pt-[72px]">
         <div className="max-w-md mx-auto px-4 sm:px-6 py-16 text-center">
           {status === 'confirming' && (

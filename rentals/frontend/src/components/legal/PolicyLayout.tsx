@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import Navbar from '@/components/layout/Navbar';
 import { cn } from '@/lib/utils';
 
 export interface PolicySection {
@@ -31,7 +30,6 @@ const POLICY_PAGES = [
 export default function PolicyLayout({ title, effectiveDate, intro, sections }: PolicyLayoutProps) {
   return (
     <div className="min-h-dvh bg-white">
-      <Navbar />
       <main className="pt-[72px]">
         <div className="max-w-[860px] mx-auto px-6 sm:px-10 py-14">
           <h1 className="text-[28px] sm:text-3xl font-serif font-normal text-ink mb-1">{title}</h1>

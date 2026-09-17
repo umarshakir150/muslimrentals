@@ -24,8 +24,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock('@/components/layout/Navbar', () => ({ default: () => <nav data-testid="navbar" /> }));
-
 vi.mock('@/lib/api', () => ({
   listingsApi: { getAll: vi.fn().mockResolvedValue({ data: [] }) },
 }));
@@ -40,7 +38,10 @@ describe('Map page stacking context', () => {
   it('isolates the map card so its loading overlay (and Leaflet panes) can never paint above a modal', async () => {
     const { container } = render(<MapPage />);
 
-    await waitFor(() => expect(screen.getByTestId('navbar')).toBeInTheDocument());
+    // Milestone 1: Navbar is no longer rendered by this page itself (it's
+    // now global, from app/layout.tsx) -- wait on the map stub instead as
+    // the render/effects-settled signal.
+    await waitFor(() => expect(screen.getByTestId('dynamic-stub')).toBeInTheDocument());
 
     const card = container.querySelector('.border.border-ink\\/8.shadow-card.bg-white') as HTMLElement;
     expect(card).toBeInTheDocument();

@@ -4,7 +4,6 @@ import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Heart } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
 import ListingCard from '@/components/listings/ListingCard';
 import AuthModal from '@/components/auth/AuthModal';
 import SendMessageModal from '@/components/messaging/SendMessageModal';
@@ -50,7 +49,6 @@ export default function SavedPage() {
   if (!isAuth) {
     return (
       <div className="min-h-dvh">
-        <Navbar />
         <div className="pt-[72px] flex items-center justify-center min-h-[calc(100dvh-72px)]">
           <div className="text-center px-4">
             <h1 className="section-title text-2xl mb-2">Saved listings</h1>
@@ -64,7 +62,6 @@ export default function SavedPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       <div className="pt-[72px]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">

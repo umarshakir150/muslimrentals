@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Navbar from '@/components/layout/Navbar';
 import AuthModal from '@/components/auth/AuthModal';
 import SendMessageModal from '@/components/messaging/SendMessageModal';
 import { listingsApi } from '@/lib/api';
@@ -68,7 +67,6 @@ function MapPageInner() {
   return (
     // page root: full viewport height, no overflow clip so Leaflet can measure
     <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
-      <Navbar />
 
       {/* content area below navbar */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '72px', minHeight: 0 }}>

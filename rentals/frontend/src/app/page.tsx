@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { MapIcon, Users, Shield, MessageSquare, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
-import Navbar from '@/components/layout/Navbar';
 import AuthModal from '@/components/auth/AuthModal';
 
 export default function Home() {
@@ -19,7 +18,6 @@ export default function Home() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       {/* Hero */}
       <section className="relative pt-[72px] overflow-hidden">
@@ -89,44 +87,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-ink text-white py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="grid md:grid-cols-4 gap-8 mb-10">
-            <div className="md:col-span-2">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-[13px] bg-brand-gradient flex items-center justify-center">
-                  <span className="text-white text-lg">M</span>
-                </div>
-                <span className="font-serif text-xl">muslimrentals.ca</span>
-              </div>
-              <p className="text-white/60 text-sm leading-relaxed max-w-xs">
-                A halal-friendly rental platform built for Canada's Muslim community. Find your home with trust.
-              </p>
-            </div>
-            <div>
-              <h4 className="font-semibold text-sm mb-4 text-white/80">Platform</h4>
-              <ul className="space-y-2">
-                {[['Browse listings', '/browse'], ['Post a listing', '/post'], ['Map view', '/map'], ['Messages', '/messages']].map(([label, href]) => (
-                  <li key={label}><Link href={href} className="text-white/50 hover:text-white text-sm transition-colors">{label}</Link></li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-sm mb-4 text-white/80">Legal</h4>
-              <ul className="space-y-2">
-                {[['Terms of Service', '/terms'], ['Privacy Policy', '/privacy'], ['Content & Community Guidelines', '/community-guidelines'], ['Safety Guidelines', '/safety'], ['Contact Us', '/contact']].map(([label, href]) => (
-                  <li key={label}><Link href={href} className="text-white/50 hover:text-white text-sm transition-colors">{label}</Link></li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          <div className="border-t border-white/10 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3">
-            <p className="text-white/40 text-sm">© {new Date().getFullYear()} muslimrentals.ca. All rights reserved.</p>
-            <p className="text-white/30 text-xs">Made for the Ummah</p>
-          </div>
-        </div>
-      </footer>
+      {/* Footer is now rendered globally from app/layout.tsx (Milestone 1) --
+          this page no longer needs its own copy. */}
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>

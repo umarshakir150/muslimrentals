@@ -5,7 +5,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Home, Trash2, Pencil } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
 import AuthModal from '@/components/auth/AuthModal';
 import DeleteListingDialog from '@/components/listings/DeleteListingDialog';
 import { usersApi } from '@/lib/api';
@@ -76,7 +75,6 @@ export default function MyListingsPage() {
   if (!isAuth) {
     return (
       <div className="min-h-dvh">
-        <Navbar />
         <div className="pt-[72px] flex items-center justify-center min-h-[calc(100dvh-72px)]">
           <div className="text-center px-4">
             <h1 className="section-title text-2xl mb-2">My listings</h1>
@@ -90,7 +88,6 @@ export default function MyListingsPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       <div className="pt-[72px]">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">

@@ -1,39 +1,34 @@
 # Current State
 
-Last verified against the repository: 2026-09-09. **`main` and production
-are decoupled again, deliberately — but this is ONE pending deploy, not
-several.** Production Netlify (deploy `6a972323ac04d013c488bc29`,
-published 2026-09-01 19:16:20Z) is still serving commit `49d4bb7` — the
-multi-feature milestone (Gallery/lightbox, Settings/Account, Messaging,
-Legal/Policy Pages, Forgot Password + Change Email). `main` has since
-advanced through PR #7 (report-a-user/report-a-message, merged
-2026-09-02, commit `c771c07`), PR #8 (admin Remove/Restore Listing,
-ADMIN-only permanent account deletion, ADMIN-only User Search, merged
-2026-09-03, commit `83ff9417`), PR #9 (Locate Me, privacy-safe
-approximate listing locations, the universal confirm-property-location
-flow, and a Spiderfy fix, merged 2026-09-05, commit `87d23a7`), PR #10
-(fixes the report qualifying-interaction evidence contract mismatch from
-PR #9's Trust & Safety follow-up, merged 2026-09-06, commit `f8c20c4`),
-and **PR #21** (Browse place/address search + radius, QA-cleared and
-Security-approved, merged 2026-09-09, merge commit `bddc8eb`, see its own
-section below for the full architecture) — see `ai/decisions.md` for the
-full history of all five. **Re-verified 2026-09-09 (before PR #21's
-merge, and again confirmed after):** each of these PRs' merge commits is
-a real ancestor of `main`'s current head (`git merge-base --is-ancestor`
-against each PR's head SHA, not just trusting GitHub's "merged" label) —
-their code is simply what `main` already contains; there is no separate
-deploy tracked per PR. That combined work is implementation-complete,
-founder-approved via its own Netlify Deploy Previews, merged to `main`,
-its schema migrations are live on the production Supabase database, and
-the Render backend is deployed and healthy on it — but **the production
-Netlify frontend has not been redeployed to pick any of it up**, at the
-founder's explicit request: one single accumulated production deploy is
-being saved for whatever `main` HEAD is the intended final release
-point, rather than deploying each PR as it merges. Until that one deploy
-happens, do not describe report-a-user/message, the admin moderation
-toolkit, the location/privacy work, the qualifying-interaction evidence,
-or the Browse place/address search below as "in production" — they are
-real and live in `main`/Render, not yet on `muslimrentals.ca`.
+Last verified against the repository: 2026-09-17. **The accumulated
+production deploy has happened — `main` and production are no longer
+decoupled.** The founder manually triggered the long-pending single
+accumulated Netlify production deploy from `main` HEAD `00d1f29` on
+2026-09-17. Production Netlify now serves that build (not the old
+`49d4bb7` milestone), and the Render backend was separately synced to
+match it (`5edcaf49...`, see `ai/decisions.md`'s 2026-09-16/17 entries).
+Everything previously tracked as "merged but not yet in production" —
+report-a-user/report-a-message, the admin moderation toolkit
+(Remove/Restore Listing, ADMIN-only permanent account deletion,
+ADMIN-only User Search), Locate Me + privacy-safe approximate listing
+locations + Spiderfy fix + the universal confirm-property-location flow,
+the qualifying-interaction evidence fix, Browse place/address search +
+radius, Edit Listing, notifications backend, and the contactInfo
+auth-gating security fix — is now genuinely live on `muslimrentals.ca`,
+not just on `main`/Render.
+
+**Immediately after that deploy, a real production incident occurred and
+was resolved** (see `ai/decisions.md`): the production Supabase project
+had auto-paused, which broke every database-touching request (login,
+Browse listings, cities) with a pooler-level "tenant not found" error —
+unrelated to the new deploy's own code, and not a CORS or frontend
+issue. The founder resumed the paused project directly; no code or config
+changes were required, and production was verified healthy within
+minutes via real logs (successful DB-backed `200`s on `/listings` and
+`/geocode`, zero further errors). Supabase's free-tier auto-pause is a
+standing operational risk worth the founder deciding on (e.g. a plan
+upgrade) — flagged, not yet acted on.
+
 Update this file whenever the picture materially changes — don't let it
 drift into fiction.
 
@@ -57,31 +52,33 @@ drift into fiction.
   forgot/reset password, and change-email (both with real, verified
   transactional email delivery via Resend).
 - Admin panel — **live in production**: stats, user search, ban/unban,
-  role change, listing soft-removal, report triage (listings only).
-  **Merged to `main` + Render, NOT yet in production** (see the note at
-  the top of this file): reporting a listing, a user, or a message
-  directly (server-enforced reason taxonomy per target type, a required
-  prior-interaction gate for user reports); the admin Reports panel
-  branching on target type (listing/user/message) with per-report
+  role change, listing soft-removal; reporting a listing, a user, or a
+  message directly (server-enforced reason taxonomy per target type, a
+  required prior-interaction gate for user reports); the admin Reports
+  panel branching on target type (listing/user/message) with per-report
   Restrict-from-messaging and messageSnapshot retention policy; a
   moderation audit trail (who/when/why) plus Restore on listing removal;
   ADMIN-only permanent account deletion, distinct from ban; and the
-  ADMIN-only directory-search-driven User Search section itself (the
-  production user search above is the older, simpler admin/moderator
-  search, not this one).
+  ADMIN-only directory-search-driven User Search section (a separate,
+  more capable search than the older admin/moderator search bullet
+  above).
 - Static policy pages: Safety, Terms, Privacy, Content & Community
   Guidelines, Contact.
 - User-initiated account deletion (Settings), anonymizing rather than
   hard-deleting to preserve other users' shared conversation history.
 - Seeded reference data: mosques and Canadian cities.
-- **Merged to `main`, NOT yet in production** (PR #21, see its own
-  section below): Browse's location-radius search now resolves
+- **Live in production** (PR #21, see its own section below): Browse's
+  location-radius search now resolves
   POIs/buildings/businesses/schools/landmarks/neighbourhoods/cities
   (Nominatim) and full street addresses (Geocodio, with real
   rooftop/approximate precision) via manual Search/Enter, independent of
   autocomplete suggestions; search radius now goes down to 0.5km (was
   1km); an embedded mini-map previews the searched point/radius/listings
   inline.
+- **Live in production**: Edit Listing (reuses the Post form), Locate Me
+  + privacy-safe approximate listing locations + Spiderfy fix, listing
+  notifications backend, and raw `Listing.contactInfo` gated behind
+  authentication (anonymous viewers no longer receive it at all).
 
 ## Incomplete / not-yet-built features
 
@@ -116,13 +113,14 @@ drift into fiction.
 - **Push or digest email notifications** — only transactional email exists.
 - **Payments/monetization** — not built, not currently planned.
 
-## PR #21 — Browse place/address search + radius (merged into `main`, not yet in production)
+## PR #21 — Browse place/address search + radius (live in production)
 
-**Status (2026-09-09): implementation-complete, founder browser-QA-passed
-on Deploy Preview #21, formally QA-cleared and Security-approved, backend
-already live and verified on the shared Render-tracked branch — merged
-into `main` by the founder's explicit approval (merge commit `bddc8eb`),
-not yet deployed to production.** Two rounds of independent QA re-review
+**Status (2026-09-09 merge, live in production since 2026-09-17):
+implementation-complete, founder browser-QA-passed on Deploy Preview #21,
+formally QA-cleared and Security-approved, backend already live and
+verified on the shared Render-tracked branch, merged into `main` by the
+founder's explicit approval (merge commit `bddc8eb`), and now part of the
+accumulated production deploy.** Two rounds of independent QA re-review
 each caught a real, narrow gap in the address-shaped-query fallback logic added late in
 this PR (a numbered-POI query like "24 Hour Fitness" being misrouted to
 Geocodio with no fallback, then a follow-up fix that fell back to
@@ -175,13 +173,10 @@ on, the address-geocoding fixes in this PR, which are complete and
 merged. Founder has not yet decided whether/when to migrate off
 Nominatim for this feature.
 
-**Merged to `main` (2026-09-09, merge commit `bddc8eb`), not yet deployed
-to production:** this is now ordinary `main` content awaiting the same
-single accumulated production deploy described at the top of this file —
-not a separate pending-deploy item of its own.
+**Merged to `main` (2026-09-09, merge commit `bddc8eb`) and live in
+production since the founder's 2026-09-17 accumulated deploy.**
 
-**Revisit when:** the founder decides on the Nominatim migration question
-and/or is ready to trigger the one accumulated production deploy.
+**Revisit when:** the founder decides on the Nominatim migration question.
 
 ## Testing status
 

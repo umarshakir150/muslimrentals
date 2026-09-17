@@ -155,10 +155,11 @@ No `RoommateProfile` (or similar) model exists.
   `README.md`.
 - **Frontend/deployment target ambiguity** — see the Netlify vs. Vercel note
   above.
-- **`Listing.contactInfo` is visible to any viewer**, including
-  unauthenticated ones, on `GET /listings/:id`. This may be intentional
-  (reduces friction to contact a poster) but is a real privacy tradeoff
-  worth confirming with the founder before changing adjacent behavior.
+- ~~`Listing.contactInfo` is visible to any viewer, including
+  unauthenticated ones~~ — **fixed** (PR #29, live in production since the
+  2026-09-17 accumulated deploy): anonymous `GET /listings` and
+  `GET /listings/:id` responses omit `contactInfo` entirely; only
+  authenticated viewers (including the owner) receive it.
 - **`accessToken` is persisted to `localStorage`** on the frontend
   (`authStore.ts`), which is more exposed to XSS-based token theft than an
   in-memory-only token would be. The backend's CSP (`script-src 'self'`)

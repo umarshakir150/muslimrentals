@@ -26,8 +26,8 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_REVIEW` — Milestones 1 approved, 2 rejected/reverted/skipped, 3
-implemented and awaiting founder visual approval before Milestone 4.
+`IN_PROGRESS` — Milestones 1 and 3 approved, 2 rejected/reverted/skipped,
+4 (Listing Detail) starting.
 
 ## Owner
 
@@ -97,7 +97,7 @@ name. Milestone numbering below continues from the original plan's
 Milestone 3 onward; there is no renumbering, and "Milestone 2" refers only
 to this rejected/reverted/skipped homepage attempt.
 
-### Milestone 3 — Browse + Integrated Map (including listing-card UX) — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+### Milestone 3 — Browse + Integrated Map (including listing-card UX) — **APPROVED**
 
 Scope: Browse page, the integrated map experience, filters, listing cards,
 responsive behavior — the full original Milestone 3 scope, not narrowed to

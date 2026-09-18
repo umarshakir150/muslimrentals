@@ -36,7 +36,7 @@ export default function ContactPage() {
     e.preventDefault();
     const subjectLabel = SUBJECT_LABELS[form.subject] || 'General inquiry';
     const body = `${form.message}\n\n—\nFrom: ${form.name} <${form.email}>`;
-    const mailto = `mailto:support@muslimrentals.ca?subject=${encodeURIComponent(`[${subjectLabel}] Muslim Rentals contact form`)}&body=${encodeURIComponent(body)}`;
+    const mailto = `mailto:muslimrentals.ca@gmail.com?subject=${encodeURIComponent(`[${subjectLabel}] Muslim Rentals contact form`)}&body=${encodeURIComponent(body)}`;
 
     // A long, detailed message -- exactly what "Safety concern" or "Report
     // a user" realistically need -- risks the mailto: URL being silently
@@ -58,8 +58,8 @@ export default function ContactPage() {
           <h1 className="font-serif text-4xl mb-2">Contact us</h1>
           <p className="text-neutral-600 mb-8">
             We aim to respond within 24 hours, in sha Allah. You can also email us directly at{' '}
-            <a href="mailto:support@muslimrentals.ca" className="text-forest-700 hover:underline font-medium">
-              support@muslimrentals.ca
+            <a href="mailto:muslimrentals.ca@gmail.com" className="text-forest-700 hover:underline font-medium">
+              muslimrentals.ca@gmail.com
             </a>
             .
           </p>
@@ -71,8 +71,8 @@ export default function ContactPage() {
                 We don't want to risk part of a detailed report getting cut off. Please copy what you wrote below
                 and paste it into an email to us directly instead:
               </p>
-              <a href="mailto:support@muslimrentals.ca" className="text-sm text-forest-700 hover:underline font-semibold block mb-4">
-                support@muslimrentals.ca
+              <a href="mailto:muslimrentals.ca@gmail.com" className="text-sm text-forest-700 hover:underline font-semibold block mb-4">
+                muslimrentals.ca@gmail.com
               </a>
               <Textarea
                 readOnly
@@ -88,15 +88,8 @@ export default function ContactPage() {
             </Surface>
           ) : sent ? (
             <Surface className="p-10 text-center">
-              <h2 className="font-serif text-2xl mb-2">Opening your email app…</h2>
-              <p className="text-neutral-600 mb-4">
-                We've pre-filled a message to <strong>support@muslimrentals.ca</strong> with what you wrote. If
-                nothing opened, your browser may not have a default email app set up — you can email us directly
-                instead.
-              </p>
-              <a href="mailto:support@muslimrentals.ca" className="text-sm text-forest-700 hover:underline font-semibold">
-                support@muslimrentals.ca
-              </a>
+              <h2 className="font-serif text-2xl mb-2">Message ready to send</h2>
+              <p className="text-neutral-600">Thank you for contacting Muslim Rentals.</p>
             </Surface>
           ) : (
             <Surface className="p-6">

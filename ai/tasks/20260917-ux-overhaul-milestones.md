@@ -479,17 +479,17 @@ public/supporting page exists). Implemented per a Product Designer spec
 `PolicyLayout.tsx` and the Milestone 1 design-system primitives before
 proposing anything — no guessing).
 
-**Deliberate scoping call, flagged for the founder to override if wanted:**
+**"How It Works" — confirmed founder decision, not open/unfinished work:**
 the original brief lists "How It Works" as a Milestone 7 refresh target,
 but no such page/route/section exists anywhere in this codebase (confirmed
 via grep — nothing in `src/app/`, nothing on the homepage). Building a
-brand-new page from scratch would mean inventing explanatory marketing-
-adjacent copy about how the product works, which risks exactly the
+brand-new page from scratch would have meant inventing explanatory
+marketing-adjacent copy about how the product works, risking exactly the
 "generic template copy"/"invented claims" anti-patterns the brief
-repeatedly warns against, and is arguably a content decision beyond a "UX
-refresh." Milestone 7 is scoped to the 5 pages that actually exist; a
-How It Works page was not built. If the founder wants one, that's a
-product/content decision for a future milestone (or this one, reopened).
+repeatedly warns against. This was raised to the founder as a scoping
+call in the first Milestone 7 report, and the founder has since
+explicitly confirmed: **no How It Works page is wanted.** Milestone 7 is
+complete without one — this is a closed decision, not a gap to revisit.
 
 Key changes:
 - **Contact** (`contact/page.tsx`) — the one real redesign in this
@@ -534,6 +534,49 @@ Key changes:
   network round-trip that can fail (Contact's `mailto:` handoff is
   client-side only), so no new loading/empty/error states were needed,
   matching the design spec's own assessment.
+
+**Founder correction round (post first Milestone 7 preview):**
+1. **Real contact address.** `support@muslimrentals.ca` is not a real
+   inbox — the founder confirmed the actual address is
+   `muslimrentals.ca@gmail.com`. Replaced every occurrence within
+   `contact/page.tsx` (the `mailto:` handoff itself, the intro-paragraph
+   link, the `tooLong` fallback's visible address/link, and the removed
+   `sent`-state reference) and updated `contact/page.test.tsx`'s
+   `mailto:` assertion to match. **Scoped strictly to the Contact
+   experience per the founder's explicit instruction** — `support@
+   muslimrentals.ca` still appears in Terms/Privacy/Community
+   Guidelines' own legal body copy (as a general contact-for-concerns
+   mention) and was deliberately left unchanged there, since editing
+   legal-document text (even just an email address) is a content change
+   outside a presentation-only pass and outside what was asked. Flagging
+   this explicitly in case the founder wants that address corrected in
+   the legal pages too, as a separate, explicit call. The founder's
+   `noreply@muslimrentals.ca` caution was about not conflating this fix
+   with the backend's actual transactional-email `EMAIL_FROM` address
+   (`rentals/backend/src/utils/email.ts`/`.env` — genuinely a
+   no-reply automated sender, unrelated to Contact and untouched here).
+2. **Simplified post-submit confirmation.** The `sent` state's heading
+   ("Opening your email app…") and its explanatory paragraph (default-
+   email-app caveat + "email us directly instead" + a redundant repeated
+   address/link) were removed per the founder's explicit "I don't want
+   this explanatory copy" instruction. Replaced with two lines: "Message
+   ready to send" / "Thank you for contacting Muslim Rentals." **Not
+   literally "Message sent"** — the founder's own instruction required
+   this: the mechanism is still a `mailto:` handoff that opens the
+   visitor's own email client with a pre-filled draft, so this page has
+   no way to confirm the visitor's mail client actually transmitted
+   anything. "Ready to send" is accurate to what actually happened (the
+   draft was successfully prepared and handed off) without claiming
+   verified delivery, honoring both the founder's "keep it short and
+   professional" ask and their explicit "don't claim sent if it can't be
+   verified" constraint. Updated `contact/page.test.tsx` to assert the
+   new copy and to explicitly assert against both the old fake-success
+   phrasing (`Message sent!`, pre-existing regression coverage) and a
+   literal unqualified "Message sent." claim.
+3. Verified: full suite 403/403 passing (all 3 Contact tests updated and
+   passing, confirming the new address and copy without weakening the
+   underlying mailto/truncation-guard coverage), type-check clean, lint
+   clean, production build succeeds.
 
 Verified: full suite 403/403 passing (contact page's 3 tests pass
 unmodified, confirming the mailto mechanism and all form field

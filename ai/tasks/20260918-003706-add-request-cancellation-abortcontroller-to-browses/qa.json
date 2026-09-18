@@ -1,0 +1,23 @@
+{
+  "role": "qa",
+  "taskId": "20260918-003706-add-request-cancellation-abortcontroller-to-browses",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "Aborted fetch's generic error message ('Unable to reach the server...') is swallowed by the pre-existing requestId-mismatch check in the catch block, so no error state or toast ever surfaces to the user for a superseded/aborted request — verified by reading the full catch/finally logic.",
+      "evidence": "rentals/frontend/src/app/browse/page.tsx: catch { if (requestIdRef.current !== requestId) return; ... }"
+    },
+    {
+      "severity": "info",
+      "finding": "Double-abort (effect cleanup aborting the previous controller, then fetchListings() itself calling abort() again on the same already-aborted controller before creating a new one) is a harmless no-op per the AbortController spec.",
+      "evidence": "rentals/frontend/src/app/browse/page.tsx lines 47-51 and 85-87"
+    },
+    {
+      "severity": "info",
+      "finding": "map/page.tsx's existing listingsApi.getAll() call site is unaffected since the new signal parameter is optional and omitted there.",
+      "evidence": "grep confirms only browse/page.tsx passes controller.signal; map/page.tsx call unchanged"
+    }
+  ],
+  "notes": "Diff is minimal and scoped exactly to the stated task (2 files, 17/8 lines changed in the actual task commit f33c7ee — the large git diff against main includes unrelated prior UX-overhaul commits already on this branch, not part of this task). No node_modules available in this sandbox so no build/test run was possible; verification here is CODE_REVIEWED only, matching the implementer's own honest self-report. Logic traced end-to-end: the pre-existing requestIdRef guard already prevented the user-visible append bug from the QA finding; this change additionally cancels the superseded network request via AbortController without introducing any new correctness or regression risk. Backward compatibility of api.ts's get()/getAll() signature change confirmed against all call sites."
+}

@@ -57,7 +57,7 @@ function emailShell(bodyHtml: string): string {
       ${bodyHtml}
       <hr style="border:none;border-top:1px solid #e0ece5;margin:24px 0"/>
       <p style="color:#aaa;font-size:12px;text-align:center">
-        Muslim Rentals · <a href="mailto:support@muslimrentals.ca" style="color:#aaa">support@muslimrentals.ca</a><br/>
+        Muslim Rentals · <a href="mailto:muslimrentals.ca@gmail.com" style="color:#aaa">muslimrentals.ca@gmail.com</a><br/>
         This is an automated message. Please don't reply directly to this email.
       </p>
     </div>
@@ -97,7 +97,7 @@ ${resetUrl}
 If you did not request this, no action is needed — your password has not been changed, and this link will simply expire.
 
 — Muslim Rentals
-support@muslimrentals.ca`;
+muslimrentals.ca@gmail.com`;
 }
 
 export function emailChangeVerificationEmail(name: string, newEmail: string, confirmUrl: string): string {
@@ -121,7 +121,7 @@ ${confirmUrl}
 Your login email will not change until you confirm. If you did not request this, no action is needed — your account is secure and this link will simply expire.
 
 — Muslim Rentals
-support@muslimrentals.ca`;
+muslimrentals.ca@gmail.com`;
 }
 
 export function welcomeEmail(name: string): string {
@@ -144,5 +144,29 @@ Explore listings: ${process.env.FRONTEND_URL || ''}
 May Allah grant you a blessed and comfortable home. Ameen.
 
 — Muslim Rentals
-support@muslimrentals.ca`;
+muslimrentals.ca@gmail.com`;
+}
+
+// Contact-form submission, relayed to the public contact inbox. Unlike the
+// account emails above (sent TO the user), this is sent FROM the site TO
+// muslimrentals.ca@gmail.com -- name/email/message are visitor-supplied, but
+// the global sanitizeInputs middleware (src/middleware/sanitize.ts) already
+// strips HTML/script tags from every request-body string before this ever
+// runs, so no separate escaping is needed here.
+export function contactFormEmail(name: string, email: string, subjectLabel: string, message: string): string {
+  return emailShell(`
+    <h2 style="color:#12201a">New contact form message</h2>
+    <p style="color:#5a6e63"><strong>From:</strong> ${name} &lt;${email}&gt;</p>
+    <p style="color:#5a6e63"><strong>Subject:</strong> ${subjectLabel}</p>
+    <p style="color:#5a6e63;white-space:pre-wrap">${message}</p>
+  `);
+}
+
+export function contactFormEmailText(name: string, email: string, subjectLabel: string, message: string): string {
+  return `New contact form message
+
+From: ${name} <${email}>
+Subject: ${subjectLabel}
+
+${message}`;
 }

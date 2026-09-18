@@ -63,7 +63,7 @@ const sections: PolicySection[] = [
         <p>
           A listing may be reported directly from its page. Other concerns, including harassment through
           messaging, may be reported to{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>{' '}
+          <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
           or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
         </p>
         <p>Filing a false report, or reporting a listing in retaliation, is prohibited.</p>

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Surface from '@/components/ui/Surface';
 import Button from '@/components/ui/Button';
 import { Input, Textarea, SelectField } from '@/components/ui/Field';
+import { contactApi } from '@/lib/api';
 
 const SUBJECT_LABELS: Record<string, string> = {
   listing: 'Listing issue',
@@ -13,42 +14,34 @@ const SUBJECT_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-// Many browsers/OSes/mail clients start truncating or silently refusing a
-// mailto: URL somewhere around 2000 characters. Below this we can trust the
-// prefilled handoff actually carries the full message; above it, claiming
-// success would risk a truncated safety/abuse report going out incomplete
-// -- so that case gets a different, honest state instead of a false "sent."
-const SAFE_MAILTO_LENGTH = 1800;
-
 export default function ContactPage() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
+  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [tooLong, setTooLong] = useState(false);
+  const [error, setError] = useState('');
 
-  // There's no backend endpoint (and no working outbound email delivery
-  // yet) to receive an in-app submission, so a form that claimed to "send"
-  // and showed a fake success state was silently discarding every message.
-  // Building on the browser's own mailto: handoff instead is guaranteed to
-  // actually reach someone, with zero new backend surface -- it opens the
-  // visitor's own email client with the message pre-filled, addressed to
-  // our real support inbox.
-  const handleSubmit = (e: React.FormEvent) => {
+  // Submits directly to POST /contact (utils/email.ts's existing Resend
+  // infrastructure -- the same one already sending password-reset/welcome/
+  // email-change emails, no new provider or credential). This used to only
+  // build a mailto: link, which silently does nothing without a configured
+  // default desktop email client -- confirmed as the actual cause of a
+  // founder test where nothing arrived. Awaited (unlike auth's fire-and-
+  // forget forgot-password send, which deliberately never reveals delivery
+  // status to prevent email enumeration -- a concern that doesn't apply
+  // here), so a real failure surfaces as a real, honest error instead of a
+  // false success.
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const subjectLabel = SUBJECT_LABELS[form.subject] || 'General inquiry';
-    const body = `${form.message}\n\n—\nFrom: ${form.name} <${form.email}>`;
-    const mailto = `mailto:muslimrentals.ca@gmail.com?subject=${encodeURIComponent(`[${subjectLabel}] Muslim Rentals contact form`)}&body=${encodeURIComponent(body)}`;
-
-    // A long, detailed message -- exactly what "Safety concern" or "Report
-    // a user" realistically need -- risks the mailto: URL being silently
-    // truncated by the browser or OS before it ever reaches the mail
-    // client. Rather than optimistically claim success either way, only
-    // claim it when we can trust the full message actually made it through.
-    if (mailto.length > SAFE_MAILTO_LENGTH) {
-      setTooLong(true);
-      return;
+    setError('');
+    setSending(true);
+    try {
+      await contactApi.submit(form);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send your message right now. Please try again.');
+    } finally {
+      setSending(false);
     }
-    window.location.href = mailto;
-    setSent(true);
   };
 
   return (
@@ -64,31 +57,9 @@ export default function ContactPage() {
             .
           </p>
 
-          {tooLong ? (
+          {sent ? (
             <Surface className="p-10 text-center">
-              <h2 className="font-serif text-2xl mb-2">Your message is a bit too long to pre-fill</h2>
-              <p className="text-neutral-600 mb-4">
-                We don't want to risk part of a detailed report getting cut off. Please copy what you wrote below
-                and paste it into an email to us directly instead:
-              </p>
-              <a href="mailto:muslimrentals.ca@gmail.com" className="text-sm text-forest-700 hover:underline font-semibold block mb-4">
-                muslimrentals.ca@gmail.com
-              </a>
-              <Textarea
-                readOnly
-                value={form.message}
-                rows={6}
-                wrapperClassName="mb-4 text-left"
-                className="resize-none"
-                onClick={e => (e.target as HTMLTextAreaElement).select()}
-              />
-              <Button type="button" variant="ghost" onClick={() => setTooLong(false)}>
-                Back to edit
-              </Button>
-            </Surface>
-          ) : sent ? (
-            <Surface className="p-10 text-center">
-              <h2 className="font-serif text-2xl mb-2">Message ready to send</h2>
+              <h2 className="font-serif text-2xl mb-2">Message sent</h2>
               <p className="text-neutral-600">Thank you for contacting Muslim Rentals.</p>
             </Surface>
           ) : (
@@ -101,6 +72,7 @@ export default function ContactPage() {
                     onChange={e => setForm(f => ({...f, name: e.target.value}))}
                     placeholder="Your name"
                     required
+                    disabled={sending}
                   />
                   <Input
                     type="email"
@@ -109,6 +81,7 @@ export default function ContactPage() {
                     onChange={e => setForm(f => ({...f, email: e.target.value}))}
                     placeholder="your@email.com"
                     required
+                    disabled={sending}
                   />
                 </div>
                 <SelectField
@@ -116,6 +89,7 @@ export default function ContactPage() {
                   value={form.subject}
                   onChange={e => setForm(f => ({...f, subject: e.target.value}))}
                   required
+                  disabled={sending}
                 >
                   <option value="">Select a topic...</option>
                   {Object.entries(SUBJECT_LABELS).map(([value, label]) => (
@@ -128,9 +102,14 @@ export default function ContactPage() {
                   onChange={e => setForm(f => ({...f, message: e.target.value}))}
                   placeholder="Describe your issue..."
                   rows={5}
+                  maxLength={5000}
                   required
+                  disabled={sending}
                 />
-                <Button type="submit" size="lg" className="w-full">Send message</Button>
+                {error && <p className="text-[13px] text-destructive">{error}</p>}
+                <Button type="submit" size="lg" className="w-full" loading={sending} disabled={sending}>
+                  Send message
+                </Button>
               </form>
             </Surface>
           )}

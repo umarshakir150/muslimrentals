@@ -326,6 +326,12 @@ export const geocodeApi = {
   } }>(`/geocode/resolve?q=${encodeURIComponent(q)}`),
 };
 
+// ─── Contact API ──────────────────────────────────────────────────────────────
+export const contactApi = {
+  submit: (data: { name: string; email: string; subject: string; message: string }) =>
+    api.post<{ success: boolean; message: string }>('/contact', data),
+};
+
 // ─── Users API ────────────────────────────────────────────────────────────────
 export const usersApi = {
   getProfile: (id: string) => api.get<{ data: any }>(`/users/${id}`),

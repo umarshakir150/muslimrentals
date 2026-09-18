@@ -13,7 +13,7 @@ const sections: PolicySection[] = [
         Muslim Rentals is currently operated without a separate registered corporate legal entity. The operator
         of the Platform is responsible for the personal information described in this policy. Privacy-related
         questions, concerns, and requests may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>.
+        <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>.
       </p>
     ),
   },
@@ -200,7 +200,7 @@ const sections: PolicySection[] = [
         <p>
           Requests to access personal information, questions about this policy, or other privacy-related concerns
           may be directed to{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>.
+          <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>.
           Users may also file a complaint with the{' '}
           <a href="https://www.priv.gc.ca" target="_blank" rel="noopener noreferrer" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">
             Office of the Privacy Commissioner of Canada
@@ -238,7 +238,7 @@ const sections: PolicySection[] = [
     body: (
       <p>
         Questions regarding this policy may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>{' '}
+        <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
         or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
       </p>
     ),

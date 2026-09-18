@@ -13,7 +13,7 @@ const sections: PolicySection[] = [
         Muslim Rentals is currently operated without a separate registered corporate legal entity. The operator
         of the Platform is responsible for the personal information described in this policy. Privacy-related
         questions, concerns, and requests may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>.
+        <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>.
       </p>
     ),
   },
@@ -62,8 +62,8 @@ const sections: PolicySection[] = [
       <p>
         Information is used to create and secure accounts; to display and manage listings; to enable messaging
         between users; to review and act on reports of violations of the{' '}
-        <Link href="/terms" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Terms of Service</Link> or{' '}
-        <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link>;
+        <Link href="/terms" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Terms of Service</Link> or{' '}
+        <Link href="/community-guidelines" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Content &amp; Community Guidelines</Link>;
         to maintain the security of the Platform, including detecting and preventing abuse; to respond to support
         inquiries; and to comply with applicable legal obligations.
       </p>
@@ -200,9 +200,9 @@ const sections: PolicySection[] = [
         <p>
           Requests to access personal information, questions about this policy, or other privacy-related concerns
           may be directed to{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>.
+          <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>.
           Users may also file a complaint with the{' '}
-          <a href="https://www.priv.gc.ca" target="_blank" rel="noopener noreferrer" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+          <a href="https://www.priv.gc.ca" target="_blank" rel="noopener noreferrer" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">
             Office of the Privacy Commissioner of Canada
           </a>.
         </p>
@@ -216,7 +216,7 @@ const sections: PolicySection[] = [
       <p>
         The Platform is intended for users 18 years of age and older, consistent with the eligibility
         requirement in the{' '}
-        <Link href="/terms" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Terms of Service</Link>. Muslim
+        <Link href="/terms" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Terms of Service</Link>. Muslim
         Rentals does not knowingly collect personal information from individuals under 18.
       </p>
     ),
@@ -238,8 +238,8 @@ const sections: PolicySection[] = [
     body: (
       <p>
         Questions regarding this policy may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>{' '}
-        or through the <Link href="/contact" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Contact page</Link>.
+        <a href="mailto:support@muslimrentals.ca" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">support@muslimrentals.ca</a>{' '}
+        or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
       </p>
     ),
   },

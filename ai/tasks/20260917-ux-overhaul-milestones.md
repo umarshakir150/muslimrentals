@@ -28,12 +28,13 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 `IN_REVIEW` — Milestones 1, 3, 4, 5, and 6 (Account + Marketplace
 Utilities, including the Messages page-scroll fix) approved, 2
-rejected/reverted/skipped. Milestone 7 (Supporting/content pages) starting
-now on the same branch/PR per the founder's explicit confirmation that PR
-#32 stays open and accumulating through Milestone 9 — merge/production
-release happens once, at the end, exactly as the original brief specifies
-("Do not merge milestone-by-milestone into production... accumulated,
-fully reviewed, regression-tested, and then released all at once").
+rejected/reverted/skipped. Milestone 7 (Supporting/content pages)
+implemented and awaiting founder visual review, on the same branch/PR per
+the founder's explicit confirmation that PR #32 stays open and
+accumulating through Milestone 9 — merge/production release happens once,
+at the end, exactly as the original brief specifies ("Do not merge
+milestone-by-milestone into production... accumulated, fully reviewed,
+regression-tested, and then released all at once").
 
 **2026-09-18 clarification (no plan change):** the founder asked to
 "complete the normal PR #32 closeout/merge workflow" after approving the
@@ -467,6 +468,88 @@ warning category, unrelated to this file), production build succeeds.
 Manual reasoning: `Element.scrollTo()` scoped strictly to the element it's
 invoked on is a DOM API guarantee, not a jsdom quirk, so this fix holds in
 real browsers exactly as it does in the test double.
+
+### Milestone 7 — Supporting/content pages — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+
+Scope: Contact, Safety Guidelines, Content & Community Guidelines, Privacy
+Policy, Terms of Service — the full set of public/supporting pages
+actually linked from the site (per `Footer.tsx`'s "Legal" column; no other
+public/supporting page exists). Implemented per a Product Designer spec
+(agent read the actual current implementation of all 5 pages plus
+`PolicyLayout.tsx` and the Milestone 1 design-system primitives before
+proposing anything — no guessing).
+
+**Deliberate scoping call, flagged for the founder to override if wanted:**
+the original brief lists "How It Works" as a Milestone 7 refresh target,
+but no such page/route/section exists anywhere in this codebase (confirmed
+via grep — nothing in `src/app/`, nothing on the homepage). Building a
+brand-new page from scratch would mean inventing explanatory marketing-
+adjacent copy about how the product works, which risks exactly the
+"generic template copy"/"invented claims" anti-patterns the brief
+repeatedly warns against, and is arguably a content decision beyond a "UX
+refresh." Milestone 7 is scoped to the 5 pages that actually exist; a
+How It Works page was not built. If the founder wants one, that's a
+product/content decision for a future milestone (or this one, reopened).
+
+Key changes:
+- **Contact** (`contact/page.tsx`) — the one real redesign in this
+  milestone, not just a token pass. Removed the 3-tile emoji info-card row
+  (📧 Email / 🕒 Response time / 🌐 Coverage) entirely, per the brief's
+  explicit instruction to simplify Contact rather than use "generic
+  information cards/emoji blocks" — the email address now appears once, as
+  a plain inline link in the intro paragraph. Form migrated from raw
+  `input-field`/`btn-brand`/manual `<label>` markup to the Milestone 1
+  primitives: `Surface` wraps the form, `Input`/`Textarea`/`SelectField`
+  (from `components/ui/Field.tsx`) replace the native fields (their
+  `label` prop generates the same visual field labels the old manual
+  `<label>` markup did), `Button` (`size="lg"`) replaces the submit
+  button. The `tooLong`/`sent` states got the same primitive migration
+  plus their own emoji (📧/✍️) removed and `bg-brand-50` tint replaced
+  with a plain `Surface`. **Mechanism completely unchanged**: still no
+  backend endpoint, still the `mailto:` handoff with the same
+  `SAFE_MAILTO_LENGTH` truncation guard, same copy, same subject-label
+  mapping — this is presentation-only, confirmed by `contact/page.test.tsx`
+  passing unmodified (all 3 tests target placeholders/roles/button text
+  that didn't change, not styling).
+- **Safety, Community Guidelines, Privacy, Terms** — no structural
+  redesign; `PolicyLayout.tsx`'s existing shell (bare text column, `border-t`
+  numbered sections, linked table of contents, cross-navigation footer) was
+  already the correct Milestone-1-era "plain document" pattern per the
+  design spec's own finding — redesigning it would itself have been the
+  "cards-inside-cards"/decorative-container mistake the overhaul is moving
+  away from. Applied only a token sync: `text-ink`/`text-muted`/`border-ink`
+  (pre-overhaul tokens) → `neutral-900`/`neutral-600`/`neutral-200` to match
+  Milestones 1–6; the one repeated inline pattern across all 4 pages'
+  actual body content (`underline decoration-ink/30 underline-offset-2
+  hover:decoration-ink`, used on every cross-reference link between policy
+  pages, ~26 occurrences) → `underline decoration-neutral-400
+  underline-offset-2 hover:decoration-neutral-900` via a scripted
+  literal-string replacement across all 4 files, confirmed no test
+  asserts on the old class string first. **No legal wording changed
+  anywhere** — every edit is a `className` change only, confirmed via
+  `git diff` showing zero changes to any JSX text content in these 4
+  files; `legal-pages-fact-check.test.tsx` (which checks the legal pages'
+  actual factual claims/wording) passed unmodified.
+- **No new UI states** — all 5 pages are static content with no
+  network round-trip that can fail (Contact's `mailto:` handoff is
+  client-side only), so no new loading/empty/error states were needed,
+  matching the design spec's own assessment.
+
+Verified: full suite 403/403 passing (contact page's 3 tests pass
+unmodified, confirming the mailto mechanism and all form field
+identifiers survived the primitive migration), type-check clean, lint
+clean (same pre-existing `<img>`-element warning category, unrelated),
+production build succeeds. Manual dev-server smoke check: started the
+dev server, curled all 5 routes (200 on each, confirmed the retoned
+`text-neutral-900` heading class and `decoration-neutral-400`/
+`decoration-neutral-900` link classes actually render), and verified the
+Contact form's placeholders (`Your name`/`your@email.com`/`Describe your
+issue...`) are unchanged in the rendered HTML. A full Playwright
+screenshot pass was attempted but blocked by an `npm install` registry
+503 in this environment — not treated as a substitute for the test
+suite/build/curl verification above, which fully covers the actual
+changes made (className-only edits, one form-primitive migration with
+its mechanism untouched).
 
 ## Files likely affected
 

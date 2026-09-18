@@ -63,7 +63,7 @@ const sections: PolicySection[] = [
       <p>
         Listings may indicate a preferred audience, such as sisters-only or family-friendly households. Users are
         expected to respect stated preferences. See the{' '}
-        <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link>{' '}
+        <Link href="/community-guidelines" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Content &amp; Community Guidelines</Link>{' '}
         for applicable standards and reporting procedures.
       </p>
     ),

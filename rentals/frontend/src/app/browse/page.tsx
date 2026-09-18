@@ -40,10 +40,16 @@ export default function BrowsePage() {
 
   // Guards against a slower, earlier request (e.g. a page-2+ "Load more" fetch)
   // resolving after a newer one (e.g. a filter change back to page 1) and
-  // overwriting/appending onto its results.
+  // overwriting/appending onto its results. abortControllerRef additionally
+  // cancels the superseded request outright rather than just ignoring its
+  // result once it arrives.
   const requestIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchListings = useCallback(async () => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     const requestId = ++requestIdRef.current;
     const isFirstPage = page === 1;
     if (isFirstPage) {
@@ -60,12 +66,12 @@ export default function BrowsePage() {
         page,
         limit: 24,
       };
-      const res = await listingsApi.getAll(params);
+      const res = await listingsApi.getAll(params, controller.signal);
       if (requestIdRef.current !== requestId) return; // superseded by a newer request
       setListings(prev => (isFirstPage ? res.data : [...prev, ...res.data]));
       setTotal(res.pagination?.total ?? res.data.length);
     } catch {
-      if (requestIdRef.current !== requestId) return;
+      if (requestIdRef.current !== requestId) return; // superseded/aborted, not a real failure
       if (isFirstPage) setHasError(true);
       else setLoadMoreError(true);
     } finally {
@@ -76,7 +82,10 @@ export default function BrowsePage() {
     }
   }, [filters, page]);
 
-  useEffect(() => { fetchListings(); }, [fetchListings]);
+  useEffect(() => {
+    fetchListings();
+    return () => abortControllerRef.current?.abort();
+  }, [fetchListings]);
 
   const handleLoadMore = () => useFilterStore.getState().setFilter('page', page + 1);
 

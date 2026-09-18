@@ -159,8 +159,8 @@ class ApiClient {
     return data;
   }
 
-  get<T>(endpoint: string) {
-    return this.request<T>(endpoint, { method: 'GET' });
+  get<T>(endpoint: string, options?: { signal?: AbortSignal }) {
+    return this.request<T>(endpoint, { method: 'GET', ...options });
   }
 
   post<T>(endpoint: string, body: unknown) {
@@ -234,13 +234,13 @@ export function needsLocationConfirmation(res: ListingWriteResponse): res is Nee
 
 // ─── Listings API ─────────────────────────────────────────────────────────────
 export const listingsApi = {
-  getAll: (params: Record<string, string | number | boolean | undefined>) => {
+  getAll: (params: Record<string, string | number | boolean | undefined>, signal?: AbortSignal) => {
     const qs = new URLSearchParams(
       Object.entries(params)
         .filter(([_, v]) => v !== undefined && v !== '' && v !== false)
         .map(([k, v]) => [k, String(v)])
     ).toString();
-    return api.get<{ data: any[]; pagination: any }>(`/listings?${qs}`);
+    return api.get<{ data: any[]; pagination: any }>(`/listings?${qs}`, { signal });
   },
   getById: (id: string) => api.get<{ data: any }>(`/listings/${id}`),
   create: (data: any) => api.post<ListingWriteResponse>('/listings', data),

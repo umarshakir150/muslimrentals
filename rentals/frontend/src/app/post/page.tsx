@@ -3,7 +3,6 @@
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Navbar from '@/components/layout/Navbar';
 import AuthModal from '@/components/auth/AuthModal';
 import { useIsAuthenticated } from '@/store/authStore';
 
@@ -26,7 +25,6 @@ export default function PostPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
       <div className="pt-[72px] flex items-center justify-center min-h-[calc(100dvh-72px)]">
         <div className="text-center px-4">
           <h1 className="section-title text-2xl mb-2">Post a listing</h1>

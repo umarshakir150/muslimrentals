@@ -4,14 +4,18 @@ import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Home, Trash2, Pencil } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
+import { Home, Trash2, Pencil, AlertCircle } from 'lucide-react';
 import AuthModal from '@/components/auth/AuthModal';
 import DeleteListingDialog from '@/components/listings/DeleteListingDialog';
 import { usersApi } from '@/lib/api';
 import { Listing } from '@/types';
 import { useIsAuthenticated } from '@/store/authStore';
-import { formatCAD, cn } from '@/lib/utils';
+import { formatCAD } from '@/lib/utils';
+import Surface from '@/components/ui/Surface';
+import Button from '@/components/ui/Button';
+import Badge from '@/components/ui/Badge';
+import Skeleton from '@/components/ui/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
@@ -19,15 +23,22 @@ const PostListingModal = dynamic(() => import('@/components/listings/PostListing
 const STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'Active',
   INACTIVE: 'Inactive',
-  PENDING: 'Pending',
+  PENDING: 'Pending review',
   REMOVED: 'Removed',
 };
 
+// ACTIVE/INACTIVE/PENDING/REMOVED is a status indicator, not the audience/
+// suitability rainbow-color bug fixed in Milestone 3 -- these three tones
+// carry real, distinct meaning for an owner (a light positive accent for
+// the normal live state; one neutral tone covering both paused states,
+// differentiated by label text; a destructive flag for REMOVED, since that
+// can mean moderation took it down, the one state an owner most needs to
+// notice), not decorative per-category color-coding.
 const STATUS_STYLE: Record<string, string> = {
-  ACTIVE: 'bg-green-50 text-green-700',
-  INACTIVE: 'bg-gray-100 text-gray-600',
-  PENDING: 'bg-gold-50 text-gold-700',
-  REMOVED: 'bg-red-50 text-red-700',
+  ACTIVE: 'bg-forest-50 text-forest-700',
+  INACTIVE: 'bg-neutral-100 text-neutral-600',
+  PENDING: 'bg-neutral-100 text-neutral-600',
+  REMOVED: 'bg-destructive/10 text-destructive',
 };
 
 export default function MyListingsPage() {
@@ -76,7 +87,6 @@ export default function MyListingsPage() {
   if (!isAuth) {
     return (
       <div className="min-h-dvh">
-        <Navbar />
         <div className="pt-[72px] flex items-center justify-center min-h-[calc(100dvh-72px)]">
           <div className="text-center px-4">
             <h1 className="section-title text-2xl mb-2">My listings</h1>
@@ -90,13 +100,12 @@ export default function MyListingsPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       <div className="pt-[72px]">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
           <div className="mb-6">
             <h1 className="section-title text-3xl md:text-4xl mb-1">My listings</h1>
-            <p className="text-muted text-sm">
+            <p className="text-neutral-600 text-sm">
               {loading
                 ? 'Loading your listings...'
                 : hasError
@@ -108,38 +117,39 @@ export default function MyListingsPage() {
           {loading ? (
             <div className="space-y-3">
               {[...Array(4)].map((_, i) => (
-                <div key={i} className="bg-white rounded-2xl border border-ink/8 p-4 flex gap-4 animate-pulse">
-                  <div className="w-20 h-20 rounded-xl bg-gray-100 shrink-0" />
+                <div key={i} className="bg-white rounded-surface border border-neutral-200 p-4 flex gap-4">
+                  <Skeleton className="w-20 h-20 rounded-control shrink-0" />
                   <div className="flex-1 space-y-2 py-1">
-                    <div className="h-4 bg-gray-100 rounded-lg w-1/2" />
-                    <div className="h-3 bg-gray-100 rounded-lg w-1/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                    <Skeleton className="h-3 w-1/3" />
                   </div>
                 </div>
               ))}
             </div>
           ) : hasError ? (
-            <div className="text-center py-20">
-              <p className="text-muted mb-4">Unable to load your listings right now.</p>
-              <button onClick={fetchMyListings} className="btn-brand px-6 py-2.5 text-sm">Try again</button>
-            </div>
+            <EmptyState
+              icon={AlertCircle}
+              title="Couldn't load your listings"
+              description="Something went wrong. Try refreshing."
+              action={{ label: 'Try again', onClick: fetchMyListings }}
+            />
           ) : listings.length === 0 ? (
-            <div className="text-center py-20">
-              <Home size={32} className="mx-auto mb-3 opacity-20" />
-              <h3 className="font-serif text-2xl mb-2">No listings yet</h3>
-              <p className="text-muted mb-6">Post a rental listing to reach the community.</p>
-              <button onClick={() => router.push('/post')} className="btn-brand px-8 py-3">
-                Post a listing
-              </button>
-            </div>
+            <EmptyState
+              icon={Home}
+              title="No listings yet"
+              description="Post a rental listing to reach the community."
+              action={{ label: 'Post a listing', onClick: () => router.push('/post') }}
+            />
           ) : (
             <div className="space-y-3">
               {listings.map(listing => (
-                <div
+                <Surface
                   key={listing.id}
-                  className="bg-white rounded-2xl border border-ink/8 p-4 flex items-center gap-4 cursor-pointer card-hover"
+                  hoverable
+                  className="p-4 flex items-center gap-4 cursor-pointer"
                   onClick={() => setSelectedListing(listing)}
                 >
-                  <div className="w-20 h-20 rounded-xl bg-brand-100 overflow-hidden shrink-0 relative">
+                  <div className="w-20 h-20 rounded-control bg-neutral-100 overflow-hidden shrink-0 relative">
                     {listing.thumbnailUrl || listing.images?.[0]?.url ? (
                       <Image
                         src={listing.thumbnailUrl || listing.images[0].url}
@@ -155,31 +165,33 @@ export default function MyListingsPage() {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={cn('px-2 py-0.5 rounded-full text-[11px] font-bold', STATUS_STYLE[listing.status] || 'bg-gray-100 text-gray-600')}>
+                      <Badge className={STATUS_STYLE[listing.status] || 'bg-neutral-100 text-neutral-600'}>
                         {STATUS_LABEL[listing.status] || listing.status}
-                      </span>
+                      </Badge>
                     </div>
                     <h3 className="font-semibold text-sm truncate mb-0.5">{listing.title}</h3>
-                    <p className="text-xs text-muted truncate">
+                    <p className="text-xs text-neutral-600 truncate">
                       {[listing.neighbourhood, listing.city].filter(Boolean).join(', ')} · {formatCAD(listing.price)}/mo
                     </p>
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={(e) => { e.stopPropagation(); setEditTarget(listing); }}
-                      className="flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:text-brand-800 px-3 py-2"
                     >
                       <Pencil size={14} /> Edit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="destructive-ghost"
+                      size="sm"
                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(listing); }}
-                      className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 px-3 py-2"
                     >
                       <Trash2 size={14} /> Delete
-                    </button>
+                    </Button>
                   </div>
-                </div>
+                </Surface>
               ))}
             </div>
           )}

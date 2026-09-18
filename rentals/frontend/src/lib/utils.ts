@@ -30,17 +30,6 @@ export function audienceLabel(audience: string): string {
   return map[audience] || audience;
 }
 
-export function audienceColor(audience: string): string {
-  const map: Record<string, string> = {
-    BROTHERS: 'bg-blue-100 text-blue-800',
-    SISTERS: 'bg-pink-100 text-pink-800',
-    COUPLES: 'bg-purple-100 text-purple-800',
-    FAMILIES: 'bg-amber-100 text-amber-800',
-    ALL: 'bg-brand-100 text-brand-800',
-  };
-  return map[audience] || 'bg-gray-100 text-gray-800';
-}
-
 export function distKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;

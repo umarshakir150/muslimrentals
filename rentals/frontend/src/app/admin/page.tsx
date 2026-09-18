@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import Navbar from '@/components/layout/Navbar';
 import { api } from '@/lib/api';
 import { useUser } from '@/store/authStore';
 import { useRouter } from 'next/navigation';
@@ -159,7 +158,6 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
       <main className="pt-[72px] max-w-7xl mx-auto px-4 sm:px-6 py-10">
         <h1 className="font-serif text-3xl mb-8">Admin Panel</h1>
 

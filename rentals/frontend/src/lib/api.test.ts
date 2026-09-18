@@ -33,7 +33,7 @@ describe('api.request(): a machine-readable suspension code forces a full logout
   it('clears the session and disconnects the socket on ACCOUNT_SUSPENDED from an arbitrary (non-auth) endpoint', async () => {
     (fetch as any).mockResolvedValue(jsonResponse(403, {
       success: false,
-      message: 'Your account has been suspended. Contact support@muslimrentals.ca',
+      message: 'Your account has been suspended. Contact muslimrentals.ca@gmail.com',
       code: 'ACCOUNT_SUSPENDED',
     }));
 
@@ -74,7 +74,7 @@ describe('api.request(): a machine-readable suspension code forces a full logout
   it('does not force a logout for ACCOUNT_SUSPENDED returned from a public auth endpoint (e.g. a banned account failing to log in) -- there is no session to tear down, and the login form already shows this message inline', async () => {
     (fetch as any).mockResolvedValue(jsonResponse(403, {
       success: false,
-      message: 'Account suspended. Contact support@muslimrentals.ca',
+      message: 'Account suspended. Contact muslimrentals.ca@gmail.com',
       code: 'ACCOUNT_SUSPENDED',
     }));
 

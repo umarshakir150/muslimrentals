@@ -47,6 +47,16 @@
   input[type='range'] {
     @apply w-full accent-brand-600;
   }
+
+  /* Milestone 1: a single global keyboard-focus treatment, applied via
+     :focus-visible only (never plain :focus, which would also ring on a
+     mouse click) so every new/restyled interactive element gets a
+     consistent, genuinely visible focus ring without repeating this rule
+     per component. */
+  :focus-visible {
+    outline: 2px solid #174C3C;
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -77,6 +87,25 @@
   .section-title {
     @apply font-serif text-4xl md:text-5xl tracking-tight leading-[1.05];
   }
+
+  /* Milestone 1: shared skeleton-loading shimmer (see components/ui/Skeleton.tsx).
+     Neutral, slow, no colored pulse -- the calmer default loading pattern
+     for known-shape content (grids, list rows, detail pages). */
+  .skeleton-shimmer {
+    @apply bg-neutral-100 relative overflow-hidden;
+  }
+
+  .skeleton-shimmer::after {
+    content: '';
+    @apply absolute inset-0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* ─── Leaflet / marker overrides ─────────────────────────────────────────────

@@ -39,6 +39,7 @@ import userRoutes    from './routes/users';
 import adminRoutes   from './routes/admin';
 import uploadRoutes  from './routes/uploads';
 import geocodeRoutes from './routes/geocode';
+import contactRoutes from './routes/contact';
 
 // ─── Validate required env variables at startup ───────────────────────────────
 // Fails fast if critical secrets are missing, preventing silent misconfigurations.
@@ -160,6 +161,7 @@ app.use(`${v1}/users`,    userRoutes);
 app.use(`${v1}/admin`,    adminRoutes);
 app.use(`${v1}/uploads`,  uploadRoutes);
 app.use(`${v1}/geocode`,  geocodeRoutes);
+app.use(`${v1}/contact`,  contactRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {

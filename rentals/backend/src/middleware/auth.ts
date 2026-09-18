@@ -51,7 +51,7 @@ export async function authenticate(req: AuthRequest, _res: Response, next: NextF
       throw new AppError('Account not found or inactive.', 401, 'ACCOUNT_INACTIVE');
     }
     if (user.isBanned) {
-      throw new AppError('Your account has been suspended. Contact support@muslimrentals.ca', 403, 'ACCOUNT_SUSPENDED');
+      throw new AppError('Your account has been suspended. Contact muslimrentals.ca@gmail.com', 403, 'ACCOUNT_SUSPENDED');
     }
 
     req.user = { id: user.id, email: user.email, role: user.role, name: user.name };

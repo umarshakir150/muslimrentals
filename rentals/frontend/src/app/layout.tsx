@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { DM_Serif_Display, Outfit } from 'next/font/google';
 import { Toaster } from '@/components/ui/toaster';
 import { Providers } from '@/components/layout/Providers';
+import Navbar from '@/components/layout/Navbar';
+import Footer from '@/components/layout/Footer';
 import './globals.css';
 
 const outfit = Outfit({
@@ -39,7 +41,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${outfit.variable} ${dmSerif.variable}`} suppressHydrationWarning>
       <body className="bg-surface font-sans text-ink antialiased">
         <Providers>
+          {/* Milestone 1: Navbar and Footer are rendered once here rather
+              than by each page individually -- previously inconsistent
+              (several pages had no footer at all, and two pages rendered
+              Navbar twice across their loading/loaded states). Pages keep
+              their own existing top-clearance padding for the fixed
+              header, since some (e.g. /map) depend on an exact pixel
+              value for real container measurements and shouldn't be
+              touched incidentally by this change. */}
+          <Navbar />
           {children}
+          <Footer />
           <Toaster />
         </Providers>
       </body>

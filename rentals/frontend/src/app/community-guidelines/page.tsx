@@ -12,7 +12,7 @@ const sections: PolicySection[] = [
       <p>
         These guidelines describe the standards for listings, messages, and conduct on Muslim Rentals. They
         supplement and should be read together with the{' '}
-        <Link href="/terms" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Terms of Service</Link>, which is the
+        <Link href="/terms" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Terms of Service</Link>, which is the
         governing agreement.
       </p>
     ),
@@ -35,7 +35,7 @@ const sections: PolicySection[] = [
     body: (
       <ul className="list-disc pl-5 space-y-1.5">
         <li>Fake or duplicate listings, including listings for properties that do not exist, are unavailable, or that the poster does not have the right to rent.</li>
-        <li>Requests for a deposit, application fee, or other payment before a viewing and signed lease. See <Link href="/safety" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Safety Guidelines</Link>.</li>
+        <li>Requests for a deposit, application fee, or other payment before a viewing and signed lease. See <Link href="/safety" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Safety Guidelines</Link>.</li>
         <li>Discrimination on a legally protected ground unrelated to a genuine tenancy consideration.</li>
         <li>Harassment or abuse directed at another user, through a listing, a message, or a profile.</li>
         <li>Impersonation of a landlord, agent, or property owner.</li>
@@ -51,7 +51,7 @@ const sections: PolicySection[] = [
       <p>
         Messaging must be used for genuine communication about a listing. Harassment, pressure, solicitation
         unrelated to a listing, and requests to move a conversation off-platform before identity has been
-        verified are prohibited. See <Link href="/safety" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Safety Guidelines</Link>.
+        verified are prohibited. See <Link href="/safety" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Safety Guidelines</Link>.
       </p>
     ),
   },
@@ -63,8 +63,8 @@ const sections: PolicySection[] = [
         <p>
           A listing may be reported directly from its page. Other concerns, including harassment through
           messaging, may be reported to{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>{' '}
-          or through the <Link href="/contact" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Contact page</Link>.
+          <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
+          or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
         </p>
         <p>Filing a false report, or reporting a listing in retaliation, is prohibited.</p>
       </>
@@ -78,7 +78,7 @@ const sections: PolicySection[] = [
         Reports are reviewed prior to any content removal or account action. Muslim Rentals may remove a listing,
         restrict account features, or suspend or terminate an account depending on the nature and severity of a
         violation. See Reporting, Moderation, and Account Actions in the{' '}
-        <Link href="/terms" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Terms of Service</Link>.
+        <Link href="/terms" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Terms of Service</Link>.
       </p>
     ),
   },

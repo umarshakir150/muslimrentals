@@ -78,7 +78,7 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response, next:
     // OWASP: same error message for "not found" and "wrong password" to prevent enumeration
     if (!user || !user.passwordHash) throw new AppError('Invalid email or password.', 401);
     if (!user.isActive)               throw new AppError('Account is inactive.', 401, 'ACCOUNT_INACTIVE');
-    if (user.isBanned)                throw new AppError('Account suspended. Contact support@muslimrentals.ca', 403, 'ACCOUNT_SUSPENDED');
+    if (user.isBanned)                throw new AppError('Account suspended. Contact muslimrentals.ca@gmail.com', 403, 'ACCOUNT_SUSPENDED');
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw new AppError('Invalid email or password.', 401);

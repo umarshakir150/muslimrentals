@@ -18,8 +18,8 @@ const sections: PolicySection[] = [
         </p>
         <p>
           These Terms incorporate by reference the{' '}
-          <Link href="/privacy" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Privacy Policy</Link> and the{' '}
-          <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link>.
+          <Link href="/privacy" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Privacy Policy</Link> and the{' '}
+          <Link href="/community-guidelines" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Content &amp; Community Guidelines</Link>.
           Where a rule about conduct or content is described in general terms in these Terms, the Content &amp;
           Community Guidelines provide additional detail and examples. In the event of a conflict, these Terms
           govern.
@@ -39,8 +39,8 @@ const sections: PolicySection[] = [
       <p>
         Muslim Rentals is currently operated without a separate registered corporate legal entity. Inquiries
         relating to these Terms, an account, a listing, or a safety concern may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>{' '}
-        or through the <Link href="/contact" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Contact page</Link>.
+        <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
+        or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
       </p>
     ),
   },
@@ -84,7 +84,7 @@ const sections: PolicySection[] = [
           Users are responsible for maintaining the confidentiality of their password and for all activity
           occurring under their account. A user who suspects unauthorized access to their account should change
           their password immediately, if able to sign in, and contact{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>.
+          <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>.
         </p>
         <p>
           Each individual may hold one account. Creating additional accounts to circumvent a ban, rate limit, or
@@ -92,7 +92,7 @@ const sections: PolicySection[] = [
         </p>
         <p>
           Users may close their account at any time through account settings. See the{' '}
-          <Link href="/privacy" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Privacy Policy</Link> for
+          <Link href="/privacy" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Privacy Policy</Link> for
           information on account deletion. Muslim Rentals may also suspend or close an account under Reporting,
           Moderation, and Account Actions below.
         </p>
@@ -128,7 +128,7 @@ const sections: PolicySection[] = [
           housing; infringe another party's copyright or other rights; scrape or systematically collect data from
           the Platform; or attempt to bypass a rate limit, ban, or other access control. This list is illustrative
           and not exhaustive; see the{' '}
-          <Link href="/community-guidelines" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Content &amp; Community Guidelines</Link>{' '}
+          <Link href="/community-guidelines" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Content &amp; Community Guidelines</Link>{' '}
           for additional detail.
         </p>
         <p>
@@ -152,11 +152,11 @@ const sections: PolicySection[] = [
         <p>
           Users should not share sensitive financial or identification information through messaging or any other
           channel before verifying the other party. See{' '}
-          <Link href="/safety" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Safety Guidelines</Link>.
+          <Link href="/safety" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Safety Guidelines</Link>.
         </p>
         <p>
           Messages are stored to maintain a conversation history for the participants. See the{' '}
-          <Link href="/privacy" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Privacy Policy</Link> for
+          <Link href="/privacy" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Privacy Policy</Link> for
           information on message storage and access.
         </p>
       </>
@@ -195,8 +195,8 @@ const sections: PolicySection[] = [
       <>
         <p>
           A listing may be reported directly from its page. Other concerns, including conduct or messages, may be
-          reported to <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>{' '}
-          or through the <Link href="/contact" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Contact page</Link>.
+          reported to <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
+          or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
         </p>
         <p>
           Reports are reviewed prior to any listing removal or account action. Depending on the nature and
@@ -206,7 +206,7 @@ const sections: PolicySection[] = [
         </p>
         <p>
           A user who disputes a moderation decision may contact{' '}
-          <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a> for
+          <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a> for
           reconsideration.
         </p>
         <p>
@@ -238,7 +238,7 @@ const sections: PolicySection[] = [
         rental transaction are the sole responsibility of the user. Muslim Rentals does not verify listings or
         users prior to publication, and the presence of a listing on the Platform does not constitute an
         endorsement. See{' '}
-        <Link href="/safety" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Safety Guidelines</Link>.
+        <Link href="/safety" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Safety Guidelines</Link>.
       </p>
     ),
   },
@@ -283,8 +283,8 @@ const sections: PolicySection[] = [
     body: (
       <p>
         Questions regarding these Terms may be directed to{' '}
-        <a href="mailto:support@muslimrentals.ca" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">support@muslimrentals.ca</a>{' '}
-        or through the <Link href="/contact" className="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">Contact page</Link>.
+        <a href="mailto:muslimrentals.ca@gmail.com" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">muslimrentals.ca@gmail.com</a>{' '}
+        or through the <Link href="/contact" className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">Contact page</Link>.
       </p>
     ),
   },

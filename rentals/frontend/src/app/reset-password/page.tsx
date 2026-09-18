@@ -6,7 +6,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Eye, EyeOff, Loader2, CheckCircle2 } from 'lucide-react';
-import Navbar from '@/components/layout/Navbar';
 import { authApi } from '@/lib/api';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -45,7 +44,6 @@ function ResetPasswordForm() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
       <main className="pt-[72px]">
         <div className="max-w-md mx-auto px-4 sm:px-6 py-16">
           {!token ? (

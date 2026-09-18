@@ -1,27 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ContactPage from './page';
 
 /**
- * Regression coverage: the form used to call setSent(true) directly with a
- * comment "In production, POST to /api/v1/contact" -- no such endpoint
- * exists, so every submission was silently discarded while the user saw a
- * fake "Message sent!" success screen. Fixed by handing off to a mailto:
- * link (the browser's own email client), which actually delivers the
- * message with no new backend needed.
+ * Regression coverage: the form used to only build a mailto: link, which
+ * silently does nothing without a configured default desktop email client
+ * -- confirmed as the actual cause of a founder test where nothing arrived
+ * at the real contact inbox. Fixed by submitting to POST /contact (backed
+ * by the existing Resend transactional-email infrastructure), so success
+ * and failure states here reflect what the backend actually confirmed,
+ * not just what the browser attempted.
  */
 
-vi.mock('@/components/layout/Navbar', () => ({ default: () => <nav data-testid="navbar" /> }));
+const { submitMock } = vi.hoisted(() => ({ submitMock: vi.fn() }));
+vi.mock('@/lib/api', () => ({
+  contactApi: { submit: submitMock },
+}));
+
+beforeEach(() => {
+  submitMock.mockReset();
+});
 
 describe('ContactPage', () => {
-  let originalHref: string;
-
-  beforeEach(() => {
-    originalHref = window.location.href;
-  });
-
-  it('builds a mailto: link to the real support address with the form contents, rather than silently discarding the submission', async () => {
+  it('submits the form to the real backend endpoint with the exact field values, and shows a genuine success confirmation', async () => {
+    submitMock.mockResolvedValueOnce({ success: true, message: 'Message sent.' });
     const user = userEvent.setup();
     render(<ContactPage />);
 
@@ -29,29 +32,22 @@ describe('ContactPage', () => {
     await user.type(screen.getByPlaceholderText('your@email.com'), 'amina@example.com');
     await user.selectOptions(screen.getByRole('combobox'), 'safety');
     await user.type(screen.getByPlaceholderText('Describe your issue...'), 'Someone asked for a deposit before a viewing.');
-
-    let capturedHref = '';
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: {
-        get href() { return capturedHref; },
-        set href(v: string) { capturedHref = v; },
-      },
-    });
-
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
-    expect(capturedHref).toMatch(/^mailto:support@muslimrentals\.ca\?/);
-    expect(decodeURIComponent(capturedHref)).toContain('Safety concern');
-    expect(decodeURIComponent(capturedHref)).toContain('Someone asked for a deposit before a viewing.');
-    expect(decodeURIComponent(capturedHref)).toContain('Amina');
-    expect(decodeURIComponent(capturedHref)).toContain('amina@example.com');
+    await waitFor(() => expect(submitMock).toHaveBeenCalledWith({
+      name: 'Amina',
+      email: 'amina@example.com',
+      subject: 'safety',
+      message: 'Someone asked for a deposit before a viewing.',
+    }));
 
-    // Restore for other tests / the environment.
-    Object.defineProperty(window, 'location', { configurable: true, value: { href: originalHref } });
+    // Only claimed once the backend actually confirmed it -- not before.
+    expect(await screen.findByText('Message sent')).toBeInTheDocument();
+    expect(screen.getByText('Thank you for contacting Muslim Rentals.')).toBeInTheDocument();
   });
 
-  it('shows honest "opening your email app" copy after submit, not a false claim the message was already received', async () => {
+  it('never claims success when delivery actually fails -- shows the real error and keeps the form editable to retry', async () => {
+    submitMock.mockRejectedValueOnce(new Error('Could not send your message right now. Please try again in a moment, or email us directly.'));
     const user = userEvent.setup();
     render(<ContactPage />);
 
@@ -61,37 +57,29 @@ describe('ContactPage', () => {
     await user.type(screen.getByPlaceholderText('Describe your issue...'), 'Just a question.');
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
-    expect(screen.getByText(/Opening your email app/)).toBeInTheDocument();
-    expect(screen.queryByText(/Message sent!/)).not.toBeInTheDocument();
+    expect(await screen.findByText('Could not send your message right now. Please try again in a moment, or email us directly.')).toBeInTheDocument();
+    expect(screen.queryByText('Message sent')).not.toBeInTheDocument();
+    // The form is still there, with the visitor's own input intact, so they can retry.
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Your name')).toHaveValue('Amina');
   });
 
-  it('does not claim success for a message long enough to risk mailto: truncation -- offers a copy-paste fallback instead', async () => {
+  it('disables the form and shows a loading submit button while the request is in flight', async () => {
+    let resolveSubmit!: (v: any) => void;
+    submitMock.mockReturnValue(new Promise((resolve) => { resolveSubmit = resolve; }));
     const user = userEvent.setup();
-    const { container } = render(<ContactPage />);
-
-    let capturedHref = '';
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: {
-        get href() { return capturedHref; },
-        set href(v: string) { capturedHref = v; },
-      },
-    });
+    render(<ContactPage />);
 
     await user.type(screen.getByPlaceholderText('Your name'), 'Amina');
     await user.type(screen.getByPlaceholderText('your@email.com'), 'amina@example.com');
-    await user.selectOptions(screen.getByRole('combobox'), 'safety');
-    const longMessage = 'This is a detailed scam report. '.repeat(80); // well over the safe mailto: length
-    fireEvent.change(screen.getByPlaceholderText('Describe your issue...'), { target: { value: longMessage } });
+    await user.selectOptions(screen.getByRole('combobox'), 'other');
+    await user.type(screen.getByPlaceholderText('Describe your issue...'), 'Just a question.');
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
-    expect(screen.getByText(/a bit too long to pre-fill/)).toBeInTheDocument();
-    expect(screen.queryByText(/Opening your email app/)).not.toBeInTheDocument();
-    expect(capturedHref).toBe(''); // never navigated to a (possibly truncated) mailto: link
-    // The full message is still available to copy, not lost.
-    const fallbackTextarea = container.querySelector('textarea[readonly]') as HTMLTextAreaElement;
-    expect(fallbackTextarea.value).toBe(longMessage);
+    expect(screen.getByPlaceholderText('Your name')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Send message/ })).toBeDisabled();
 
-    Object.defineProperty(window, 'location', { configurable: true, value: { href: originalHref } });
+    resolveSubmit({ success: true, message: 'Message sent.' });
+    await waitFor(() => expect(screen.getByText('Message sent')).toBeInTheDocument());
   });
 });

@@ -61,6 +61,15 @@ vi.mock('@/components/ui/CityAutocomplete', () => ({
   ),
 }));
 
+// Milestone 5: the wizard is now 5 named steps (Property -> Details ->
+// Preferences -> Photos -> Review) instead of the old 3 generic ones, with
+// fields regrouped: Property = city/address/unit/town/beds/baths, Details =
+// title/description/price/contactInfo, Preferences = audience/amenities,
+// Photos unchanged, Review is new (a read-only summary + the real submit
+// action). Every helper below reflects that regrouping; the underlying
+// behavioral guarantees each test protects (never-create-early, the
+// universal confirm-location gate, create-vs-edit divergence, immediate
+// existing-photo removal, etc.) are unchanged from before the redesign.
 describe('PostListingModal', () => {
   beforeEach(() => {
     createMock.mockReset();
@@ -76,25 +85,37 @@ describe('PostListingModal', () => {
     deleteImageMock.mockResolvedValue({ success: true, message: 'Image deleted.' });
   });
 
-  async function fillStep1(user: ReturnType<typeof userEvent.setup>) {
+  async function continueTo(user: ReturnType<typeof userEvent.setup>, stepNumber: number) {
+    await user.click(screen.getByRole('button', { name: /Continue/ }));
+    await waitFor(() => expect(screen.getByText(new RegExp(`Step ${stepNumber} of 5`))).toBeInTheDocument());
+  }
+
+  async function fillProperty(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByText('Pick Toronto'));
+    await user.type(screen.getByPlaceholderText(/123 Main Street/), '456 Spadina Avenue');
+  }
+
+  async function fillDetails(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByPlaceholderText(/Bright 2BR/), 'A lovely test listing');
     await user.type(screen.getByPlaceholderText(/Describe the rental/), 'A description that is definitely long enough to pass validation.');
     await user.type(screen.getByPlaceholderText('1200'), '1500');
-  }
-
-  async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
-    await fillStep1(user);
-    await user.click(screen.getByRole('button', { name: /Continue/ }));
-    await waitFor(() => expect(screen.getByText('Step 2 of 3')).toBeInTheDocument());
-  }
-
-  async function goToStep3(user: ReturnType<typeof userEvent.setup>) {
-    await goToStep2(user);
-    await user.click(screen.getByText('Pick Toronto'));
-    await user.type(screen.getByPlaceholderText(/123 Main Street/), '456 Spadina Avenue');
     await user.type(screen.getByPlaceholderText(/Phone, WhatsApp/), '555-0100');
-    await user.click(screen.getByRole('button', { name: /Continue/ }));
-    await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());
+  }
+
+  // Reaches the Photos step (step 4) with everything up to it valid --
+  // the direct analogue of the old suite's `goToStep3` (its old step 3 was
+  // also Photos).
+  async function goToPhotos(user: ReturnType<typeof userEvent.setup>) {
+    await fillProperty(user);
+    await continueTo(user, 2); // -> Details
+    await fillDetails(user);
+    await continueTo(user, 3); // -> Preferences
+    await continueTo(user, 4); // -> Photos
+  }
+
+  async function goToReview(user: ReturnType<typeof userEvent.setup>) {
+    await goToPhotos(user);
+    await continueTo(user, 5); // -> Review
   }
 
   it('does not close or reset the form when the backdrop is clicked outside the modal', async () => {
@@ -102,6 +123,8 @@ describe('PostListingModal', () => {
     const onClose = vi.fn();
     render(<PostListingModal open onClose={onClose} />);
 
+    await fillProperty(user);
+    await continueTo(user, 2); // -> Details
     const titleInput = screen.getByPlaceholderText(/Bright 2BR/);
     await user.type(titleInput, 'Data that must survive');
 
@@ -126,26 +149,38 @@ describe('PostListingModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('reaching step 3 via Continue never calls listingsApi.create', async () => {
+  it('reaching the Photos step via Continue never calls listingsApi.create', async () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToPhotos(user);
 
     expect(screen.getByText(/Drag photos here/)).toBeInTheDocument();
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it('submits via the explicit "Post listing" button and uploads selected images', async () => {
+  it('reaching the Review step never calls listingsApi.create, and shows the entered data back', async () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToReview(user);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(screen.getByText('A lovely test listing')).toBeInTheDocument();
+    expect(screen.getByText('Toronto')).toBeInTheDocument();
+  });
+
+  it('submits via the explicit "Post listing" button on Review and uploads selected images', async () => {
+    const user = userEvent.setup();
+    render(<PostListingModal open onClose={vi.fn()} />);
+
+    await goToPhotos(user);
 
     const file = new File(['fake-image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, file);
 
+    await continueTo(user, 5);
     await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
@@ -156,7 +191,7 @@ describe('PostListingModal', () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
     await waitFor(() => expect(createMock).toHaveBeenCalledWith(
@@ -168,7 +203,7 @@ describe('PostListingModal', () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
@@ -180,10 +215,11 @@ describe('PostListingModal', () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToPhotos(user);
     const file = new File(['fake-image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, file);
+    await continueTo(user, 5);
     await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
     await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
@@ -205,10 +241,11 @@ describe('PostListingModal', () => {
     const user = userEvent.setup();
     render(<PostListingModal open onClose={vi.fn()} />);
 
-    await goToStep3(user);
+    await goToPhotos(user);
     const file = new File(['fake-image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, file);
+    await continueTo(user, 5);
     await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
     await waitFor(() => expect(deletePermanentMock).toHaveBeenCalledWith('listing-1'));
@@ -218,12 +255,39 @@ describe('PostListingModal', () => {
     );
   });
 
+  describe('Photos step: reordering pending photos', () => {
+    it('moves a pending photo earlier/later without touching existing photos (none, in create mode)', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+      await goToPhotos(user);
+
+      const fileA = new File(['a'], 'a.jpg', { type: 'image/jpeg' });
+      const fileB = new File(['b'], 'b.jpg', { type: 'image/jpeg' });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, [fileA, fileB]);
+
+      // Two pending photos -> the first gets a "move later" control, the
+      // second a "move earlier" one (no control past either end).
+      expect(screen.queryByRole('button', { name: 'Move photo earlier' })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Move photo earlier' }));
+
+      await continueTo(user, 5);
+      await user.click(screen.getByRole('button', { name: 'Post listing' }));
+
+      // Reordering changed which File is uploaded first -- swapped A/B.
+      await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [fileB, fileA]));
+    });
+  });
+
   // The universal confirm-property-location flow: EVERY address submission
   // comes back as `needsLocationConfirmation` instead of a created listing
   // (see routes/listings.ts's resolveGeocodedLocation) -- the frontend
   // response shape carries no confidence info at all (just matchedLat/
   // matchedLng), so the exact same UI/flow below handles a precise
-  // (house-level) match and a street-level-only match identically.
+  // (house-level) match and a street-level-only match identically. This is
+  // reached from the new Review step's submit action instead of the old
+  // step 3's, but the gate itself (and "Back" returning to wherever
+  // submission was initiated, with nothing created) is unchanged.
   describe('universal confirm-property-location flow', () => {
     beforeEach(() => {
       createMock.mockReset();
@@ -241,7 +305,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} />);
 
-      await goToStep3(user);
+      await goToReview(user);
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
 
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
@@ -260,7 +324,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} />);
 
-      await goToStep3(user);
+      await goToReview(user);
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
 
@@ -285,7 +349,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} />);
 
-      await goToStep3(user);
+      await goToReview(user);
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
 
@@ -296,7 +360,7 @@ describe('PostListingModal', () => {
       ));
     });
 
-    it('the "Back" button returns to the form without creating anything', async () => {
+    it('the "Back" button returns to Review without creating anything', async () => {
       createMock.mockResolvedValueOnce({
         success: true,
         needsLocationConfirmation: true,
@@ -305,13 +369,13 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} />);
 
-      await goToStep3(user);
+      await goToReview(user);
       await user.click(screen.getByRole('button', { name: 'Post listing' }));
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: 'Back' }));
 
-      expect(screen.getByText('Post rental listing')).toBeInTheDocument();
+      expect(screen.getByText(/Step 5 of 5/)).toBeInTheDocument();
       expect(createMock).toHaveBeenCalledTimes(1); // only the original attempt -- nothing further submitted
     });
   });
@@ -341,9 +405,8 @@ describe('PostListingModal', () => {
     it('prefills every field from the listing prop', async () => {
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      expect(screen.getByDisplayValue('Existing listing title')).toBeInTheDocument();
-      expect(screen.getByDisplayValue(EXISTING_LISTING.description)).toBeInTheDocument();
-      expect(screen.getByDisplayValue('1800')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('123 Existing Street')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Unit 2')).toBeInTheDocument();
     });
 
     it('shows "Edit listing" / "Save changes" instead of the create-mode copy', async () => {
@@ -351,18 +414,18 @@ describe('PostListingModal', () => {
 
       expect(screen.getByText('Edit listing')).toBeInTheDocument();
       const user = userEvent.setup();
-      await goToStep3(user, /* alreadyFilled */ true);
+      await goToReviewEdit(user);
       expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
     });
 
-    // Reuses the same step-3 navigation helper, but the fields are already
-    // prefilled in edit mode -- Continue just needs valid data, which the
-    // prefilled listing already provides, so no re-typing is needed.
-    async function goToStep3(user: ReturnType<typeof userEvent.setup>, _alreadyFilled = true) {
-      await user.click(screen.getByRole('button', { name: /Continue/ }));
-      await waitFor(() => expect(screen.getByText('Step 2 of 3')).toBeInTheDocument());
-      await user.click(screen.getByRole('button', { name: /Continue/ }));
-      await waitFor(() => expect(screen.getByText('Step 3 of 3')).toBeInTheDocument());
+    // Edit mode prefills every field from a real, already-valid listing, so
+    // Continue's per-step validation passes without retyping anything --
+    // this just walks the same 5 steps to Review.
+    async function goToReviewEdit(user: ReturnType<typeof userEvent.setup>) {
+      await continueTo(user, 2); // Property -> Details
+      await continueTo(user, 3); // Details -> Preferences
+      await continueTo(user, 4); // Preferences -> Photos
+      await continueTo(user, 5); // Photos -> Review
     }
 
     // Milestone follow-up: Edit must show the same final
@@ -387,7 +450,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
@@ -410,7 +473,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={onClose} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       // First submit: must land on the confirm-location step, not a
@@ -439,7 +502,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       await waitFor(() => expect(screen.getByTestId('confirm-map-initial')).toHaveTextContent('43.65321234,-79.38321234'));
@@ -454,7 +517,7 @@ describe('PostListingModal', () => {
       const approximateListing = { ...EXISTING_LISTING, lat: 40.0, lng: -80.0, locationApproximate: true };
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={approximateListing} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       await waitFor(() => expect(screen.getByTestId('confirm-map-initial')).toHaveTextContent('43.6532,-79.3832'));
@@ -466,7 +529,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await saveAndConfirm(user);
 
       await waitFor(() => expect(updateMock).toHaveBeenLastCalledWith(
@@ -480,7 +543,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
@@ -499,7 +562,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
       await waitFor(() => expect(screen.getByText('Confirm property location')).toBeInTheDocument());
 
@@ -519,7 +582,7 @@ describe('PostListingModal', () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
 
-      await goToStep3(user);
+      await goToReviewEdit(user);
       await saveAndConfirm(user);
 
       expect(updateMock).toHaveBeenNthCalledWith(1, 'listing-42', expect.objectContaining({ title: 'Existing listing title' }));
@@ -530,7 +593,7 @@ describe('PostListingModal', () => {
     it('renders existing photos and removes one immediately via listingsApi.deleteImage on click', async () => {
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
-      await goToStep3(user);
+      await continueTo(user, 2); await continueTo(user, 3); await continueTo(user, 4);
 
       expect(document.querySelectorAll('img')).toHaveLength(2);
 
@@ -545,7 +608,7 @@ describe('PostListingModal', () => {
       deleteImageMock.mockRejectedValueOnce(new Error('Not authorized.'));
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
-      await goToStep3(user);
+      await continueTo(user, 2); await continueTo(user, 3); await continueTo(user, 4);
 
       const removeButtons = screen.getAllByRole('button', { name: 'Remove photo' });
       await user.click(removeButtons[0]);
@@ -554,15 +617,25 @@ describe('PostListingModal', () => {
       expect(document.querySelectorAll('img')).toHaveLength(2); // never actually removed
     });
 
+    it('never shows a reorder control on existing (already-uploaded) photos', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+      await continueTo(user, 2); await continueTo(user, 3); await continueTo(user, 4);
+
+      expect(screen.queryByRole('button', { name: 'Move photo earlier' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Move photo later' })).not.toBeInTheDocument();
+    });
+
     it('uploads newly added photos to the SAME listing id after a successful save (post-confirmation)', async () => {
       mockNeedsConfirmationThenSaved({ matchedLat: 43.6532, matchedLng: -79.3832 });
       const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
-      await goToStep3(user);
+      await continueTo(user, 2); await continueTo(user, 3); await continueTo(user, 4);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       await user.upload(fileInput, file);
+      await continueTo(user, 5);
       await saveAndConfirm(user);
 
       await waitFor(() => expect(uploadImagesMock).toHaveBeenCalledWith('listing-1', [file]));
@@ -575,10 +648,11 @@ describe('PostListingModal', () => {
       const file = new File(['x'], 'new-photo.jpg', { type: 'image/jpeg' });
       const user = userEvent.setup();
       render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} onSaved={onSaved} />);
-      await goToStep3(user);
+      await continueTo(user, 2); await continueTo(user, 3); await continueTo(user, 4);
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       await user.upload(fileInput, file);
+      await continueTo(user, 5);
       await saveAndConfirm(user);
 
       await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -589,6 +663,39 @@ describe('PostListingModal', () => {
       expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'listing-1' }));
       // Never shows the "Listing updated!" success screen for a partial failure.
       expect(screen.queryByText('Listing updated!')).not.toBeInTheDocument();
+    });
+
+    it('the desktop step-jump row lets an owner skip straight to a later step without walking through Continue (edit mode is pre-validated)', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} mode="edit" listing={EXISTING_LISTING} />);
+
+      await user.click(screen.getByRole('button', { name: /Photos/ }));
+
+      expect(screen.getByText(/Step 4 of 5/)).toBeInTheDocument();
+    });
+  });
+
+  describe('create mode: step-jump navigation cannot skip ahead unvalidated', () => {
+    it('the Photos/Review step-jump chips are not clickable before they have been reached via Continue', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      const photosChip = screen.getByRole('button', { name: /Photos/ });
+      expect(photosChip).toBeDisabled();
+      await user.click(photosChip);
+      // Still on step 1 -- the disabled chip did not navigate anywhere.
+      expect(screen.getByText(/Step 1 of 5/)).toBeInTheDocument();
+    });
+
+    it('a step already reached becomes a clickable jump target to go back', async () => {
+      const user = userEvent.setup();
+      render(<PostListingModal open onClose={vi.fn()} />);
+
+      await fillProperty(user);
+      await continueTo(user, 2);
+
+      await user.click(screen.getByRole('button', { name: /Property/ }));
+      expect(screen.getByText(/Step 1 of 5/)).toBeInTheDocument();
     });
   });
 });

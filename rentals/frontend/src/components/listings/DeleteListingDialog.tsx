@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { listingsApi } from '@/lib/api';
 import { useToast } from '@/components/ui/use-toast';
+import Button from '@/components/ui/Button';
 
 interface DeleteListingDialogProps {
   listingId: string;
@@ -50,42 +51,43 @@ export default function DeleteListingDialog({ listingId, listingTitle, open, onC
             className="bg-white rounded-3xl shadow-elevated p-6 max-w-md w-full"
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                <AlertTriangle size={18} className="text-red-500" />
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-destructive" />
               </div>
               <div>
                 <h3 id="delete-listing-title" className="font-serif text-xl leading-snug">Delete this listing?</h3>
               </div>
             </div>
 
-            <p className="text-sm text-muted leading-relaxed mb-5">
+            <p className="text-sm text-neutral-600 leading-relaxed mb-5">
               This will permanently delete &ldquo;{listingTitle}&rdquo; and its photos. This can&apos;t be undone.
               Any existing conversations about this listing will remain, but will no longer link to a live listing.
             </p>
 
             {error && (
-              <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2 mb-4">{error}</p>
+              <p className="text-sm text-destructive bg-destructive/10 rounded-control px-3 py-2 mb-4">{error}</p>
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
                 type="button"
                 autoFocus
+                variant="ghost"
                 onClick={onClose}
                 disabled={deleting}
-                className="btn-ghost flex-1 py-2.5 text-sm"
+                className="flex-1"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="destructive-solid"
                 onClick={handleDelete}
-                disabled={deleting}
-                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                loading={deleting}
+                className="flex-1"
               >
-                {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
                 {deleting ? 'Deleting…' : 'Delete permanently'}
-              </button>
+              </Button>
             </div>
           </motion.div>
         </motion.div>

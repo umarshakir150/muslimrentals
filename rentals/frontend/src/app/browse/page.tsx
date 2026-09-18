@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Navbar from '@/components/layout/Navbar';
+import { AlertCircle, SearchX } from 'lucide-react';
 import ListingCard from '@/components/listings/ListingCard';
 import ListingFilters from '@/components/listings/ListingFilters';
 import { listingsApi } from '@/lib/api';
@@ -13,6 +13,9 @@ import { useIsAuthenticated } from '@/store/authStore';
 import AuthModal from '@/components/auth/AuthModal';
 import SendMessageModal from '@/components/messaging/SendMessageModal';
 import { buildListingSearchParams } from '@/lib/listingSearchParams';
+import Skeleton from '@/components/ui/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
+import Button from '@/components/ui/Button';
 
 const ListingDetail = dynamic(() => import('@/components/listings/ListingDetail'), { ssr: false });
 const PostListingModal = dynamic(() => import('@/components/listings/PostListingModal'), { ssr: false });
@@ -79,7 +82,6 @@ export default function BrowsePage() {
 
   return (
     <div className="min-h-dvh">
-      <Navbar />
 
       <div className="pt-[72px]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
@@ -87,7 +89,7 @@ export default function BrowsePage() {
           {/* Page header */}
           <div className="mb-5">
             <h1 className="section-title text-3xl md:text-4xl mb-1">Browse rentals</h1>
-            <p className="text-muted text-sm">
+            <p className="text-neutral-600 text-sm">
               {loading
                 ? 'Loading listings...'
                 : hasError
@@ -105,28 +107,29 @@ export default function BrowsePage() {
           {loading ? (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {[...Array(6)].map((_, i) => (
-                <div key={i} className="bg-white rounded-3xl overflow-hidden border border-ink/8 animate-pulse">
-                  <div className="h-48 bg-gray-100" />
+                <div key={i} className="bg-white rounded-surface overflow-hidden border border-neutral-200">
+                  <Skeleton className="h-48 rounded-none" />
                   <div className="p-4 space-y-3">
-                    <div className="h-4 bg-gray-100 rounded-lg w-3/4" />
-                    <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
                   </div>
                 </div>
               ))}
             </div>
           ) : hasError ? (
-            <div className="text-center py-20">
-              <p className="text-muted mb-4">Unable to load listings right now.</p>
-              <button onClick={fetchListings} className="btn-brand px-6 py-2.5 text-sm">Try again</button>
-            </div>
+            <EmptyState
+              icon={AlertCircle}
+              title="Couldn't load listings"
+              description="Something went wrong. Try refreshing."
+              action={{ label: 'Try again', onClick: fetchListings }}
+            />
           ) : listings.length === 0 ? (
-            <div className="text-center py-20">
-              <h3 className="font-serif text-2xl mb-2">No listings found</h3>
-              <p className="text-muted mb-6">Try adjusting your filters or searching a different city.</p>
-              <button onClick={() => useFilterStore.getState().resetFilters()} className="btn-brand px-8 py-3">
-                Clear filters
-              </button>
-            </div>
+            <EmptyState
+              icon={SearchX}
+              title="No listings found"
+              description="Try adjusting your filters or searching a different city."
+              action={{ label: 'Clear filters', onClick: () => useFilterStore.getState().resetFilters() }}
+            />
           ) : (
             <>
               <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-5">
@@ -146,19 +149,15 @@ export default function BrowsePage() {
                 <div className="flex flex-col items-center gap-2 mt-8">
                   {loadMoreError ? (
                     <>
-                      <p className="text-sm text-muted">Could not load more listings.</p>
-                      <button onClick={fetchListings} className="btn-ghost px-6 py-2.5 text-sm min-h-[44px]">
+                      <p className="text-sm text-neutral-600">Could not load more listings.</p>
+                      <Button variant="secondary" onClick={fetchListings}>
                         Try again
-                      </button>
+                      </Button>
                     </>
                   ) : (
-                    <button
-                      onClick={handleLoadMore}
-                      disabled={loadingMore}
-                      className="btn-ghost px-8 py-2.5 text-sm min-h-[44px] disabled:opacity-60"
-                    >
+                    <Button variant="secondary" onClick={handleLoadMore} loading={loadingMore}>
                       {loadingMore ? 'Loading more...' : 'Load more listings'}
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}

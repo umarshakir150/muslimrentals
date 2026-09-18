@@ -24,6 +24,43 @@ const config: Config = {
         serif: ['var(--font-dm-serif)', 'Georgia', 'serif'],
       },
       colors: {
+        // ─── UX overhaul design system (Milestone 1) ───────────────────────
+        // New tokens live alongside the legacy `brand`/`gold`/`surface`/
+        // `paper`/`ink`/`muted` scale below rather than replacing it. Pages
+        // migrate to these as each gets its own overhaul milestone; nothing
+        // un-migrated should visually change because of this addition.
+        // `forest` is the sole brand/accent color going forward -- no more
+        // `gold` accent on new work. `neutral` is a warm, ivory-tinted ramp
+        // for backgrounds/borders/text.
+        forest: {
+          50: '#EEF3F1',
+          100: '#D7E6DF',
+          200: '#B0CCC0',
+          300: '#7FAC9B',
+          400: '#4C8873',
+          500: '#2C6B55',
+          600: '#174C3C', // base brand color -- primary actions, links, active states, focus rings
+          700: '#123D30', // hover on solid forest surfaces
+          800: '#0D2E24', // active/pressed
+          900: '#091F18', // reserved for rare deep-bg use, never a repeated section color
+        },
+        neutral: {
+          0: '#FFFFFF',
+          50: '#FAF9F6',  // page background (warm ivory)
+          100: '#F2F0EA', // subtle surface fill (skeletons, disabled fields)
+          200: '#E7E4DC', // default border (cards, dividers, header-on-scroll)
+          300: '#D6D2C7', // default input border
+          400: '#B8B3A4', // hover borders, disabled icon color
+          500: '#8F8A7B', // placeholder / muted text
+          600: '#6B6660', // secondary body text
+          700: '#4A4744',
+          800: '#2E2C2A',
+          900: '#1C211F', // warm charcoal -- primary text, headings, footer background
+        },
+        destructive: {
+          DEFAULT: '#B3261E',
+          hover: '#8C1D17',
+        },
         brand: {
           50: '#edf7f2',
           100: '#d0ece0',
@@ -57,11 +94,20 @@ const config: Config = {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        // New scale (Milestone 1) -- distinct names so they don't collide
+        // with the legacy sm/md/lg pill-radius values above.
+        control: '6px', // buttons, inputs, dropdown/popover panels
+        surface: '10px', // cards, modals
+        panel: '14px', // large image containers
       },
       boxShadow: {
         card: '0 8px 32px rgba(18,32,26,0.10)',
         elevated: '0 24px 80px rgba(18,32,26,0.14)',
         'inner-sm': 'inset 0 1px 3px rgba(18,32,26,0.08)',
+        // New restrained elevation scale (Milestone 1) -- no colored/brand
+        // glow shadows. elevation-0 is the implicit default (no shadow).
+        elevation1: '0 1px 2px rgba(28,33,31,0.06), 0 1px 1px rgba(28,33,31,0.04)',
+        elevation2: '0 8px 24px rgba(28,33,31,0.08)',
       },
       animation: {
         'fade-in': 'fadeIn 0.4s ease forwards',

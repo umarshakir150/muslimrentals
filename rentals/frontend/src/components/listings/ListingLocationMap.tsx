@@ -118,7 +118,7 @@ export default function ListingLocationMap({ listing }: ListingLocationMapProps)
   if (listing.lat == null || listing.lng == null) return null;
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-ink/8" style={{ isolation: 'isolate' }}>
+    <div className="rounded-panel overflow-hidden border border-neutral-200" style={{ isolation: 'isolate' }}>
       <div ref={containerRef} className="w-full" style={{ height: '160px' }} />
     </div>
   );

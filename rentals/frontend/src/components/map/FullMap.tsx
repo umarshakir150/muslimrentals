@@ -418,14 +418,14 @@ export default function FullMap({
         aria-label="Show my location on the map"
         title="Show my location"
         className={cn(
-          'absolute bottom-5 right-3 z-[500] w-11 h-11 rounded-full bg-white shadow-elevated',
+          'absolute bottom-5 right-3 z-[500] w-11 h-11 rounded-full bg-white shadow-elevation2',
           'flex items-center justify-center hover:bg-gray-50 transition-colors disabled:opacity-60'
         )}
       >
         {locating ? (
-          <LocateFixed size={20} className="text-brand-700 animate-pulse" />
+          <LocateFixed size={20} className="text-forest-700 animate-pulse" />
         ) : (
-          <Locate size={20} className="text-brand-700" />
+          <Locate size={20} className="text-forest-700" />
         )}
       </button>
     </div>

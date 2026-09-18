@@ -220,11 +220,11 @@ export default function SearchRadiusMiniMap({ center, radiusKm, listings = [], c
         ref={containerRef}
         role="img"
         aria-label={hasLocation ? 'Map preview of the searched location and radius' : 'Map preview, no location searched yet'}
-        className="w-full h-40 sm:h-48 lg:h-full lg:min-h-[220px] rounded-2xl overflow-hidden border border-ink/8 bg-gray-50"
+        className="w-full h-40 sm:h-48 lg:h-full lg:min-h-[220px] rounded-surface overflow-hidden border border-neutral-200 bg-gray-50"
       />
       {!hasLocation && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-6">
-          <p className="text-xs text-muted text-center bg-white/90 px-3 py-1.5 rounded-full border border-ink/8">
+          <p className="text-xs text-neutral-600 text-center bg-white/90 px-3 py-1.5 rounded-control border border-neutral-200">
             Search a location above to preview it here
           </p>
         </div>

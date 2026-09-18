@@ -26,11 +26,22 @@ explicitly changes UX (and never changes underlying behavior/contracts).
 
 ## Status
 
-`IN_REVIEW` — Milestones 1, 3, 4, and 5 approved, 2 rejected/reverted/
-skipped, 6 (Account + Marketplace Utilities) called "good overall" by the
-founder but held pending one bug fix (Messages: sending a message scrolled
-the outer page, not just the thread — fixed, see Milestone log) before
-final approval and before Milestone 7 starts.
+`IN_REVIEW` — Milestones 1, 3, 4, 5, and 6 (Account + Marketplace
+Utilities, including the Messages page-scroll fix) approved, 2
+rejected/reverted/skipped. Milestone 7 (Supporting/content pages) starting
+now on the same branch/PR per the founder's explicit confirmation that PR
+#32 stays open and accumulating through Milestone 9 — merge/production
+release happens once, at the end, exactly as the original brief specifies
+("Do not merge milestone-by-milestone into production... accumulated,
+fully reviewed, regression-tested, and then released all at once").
+
+**2026-09-18 clarification (no plan change):** the founder asked to
+"complete the normal PR #32 closeout/merge workflow" after approving the
+Milestone 6 fix. Flagged the direct conflict with the original brief's
+explicit "accumulate on one branch, merge/release once at the very end"
+design before acting — founder confirmed the original plan stands: no
+merge to `main` now, PR #32 stays open, "closeout" here means marking
+Milestone 6 approved and continuing to Milestone 7 on the same branch.
 
 **Process correction (applied starting this milestone):** for Milestones
 3–5, the founder had to send a follow-up message before the Deploy
@@ -336,7 +347,14 @@ consistent with its own pre-existing style, no new warning category),
 full suite 401/401 passing, production build succeeds, manual dev-server
 smoke check of `/post` and `/my-listings`.
 
-### Milestone 6 — Account + Marketplace Utilities — **IMPLEMENTED, AWAITING FOUNDER REVIEW**
+### Milestone 6 — Account + Marketplace Utilities — **APPROVED**
+
+Founder reviewed the Deploy Preview and called it "good overall," with one
+fix required before final approval (the Messages page-scroll bug logged
+immediately below). Fix implemented, verified, and confirmed working by
+the founder against the live Deploy Preview on 2026-09-18. Milestone 6 —
+including the fix — is now fully approved, alongside Milestones 1, 3, 4,
+and 5.
 
 Scope (a deliberate scoping call, not a founder-expanded list): the
 account-management page (Settings + `DeleteAccountDialog`) and the three
